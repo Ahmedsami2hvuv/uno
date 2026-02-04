@@ -2,14 +2,15 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from config import TOKEN
 from database import init_db
-from handlers import calc, online # استيراد الملفات المقسمة
+from handlers import common, calc, online # أضفنا common هنا
 
 async def main():
-    init_db() # تشغيل الداتا بيس
+    init_db() 
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
 
-    # ربط الملفات المقسمة بالبوت
+    # ربط الملفات المقسمة بالبوت (الترتيب مهم)
+    dp.include_router(common.router) # الترحيب أولاً
     dp.include_router(calc.router)
     dp.include_router(online.router)
 
