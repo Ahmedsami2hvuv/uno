@@ -1,20 +1,22 @@
 import asyncio
-from aiogram import Bot, Dispatcher
-from config import TOKEN
-from database import init_db
-from handlers import common, calc, online # أضفنا common هنا
+from aiogram import Dispatcher
+from config import bot, init_db # استيراد البوت والداتا بيس
+from handlers import common, calc, online, admin
 
 async def main():
+    # إنشاء الجداول إذا لم تكن موجودة
+    from database import init_db
     init_db() 
-    bot = Bot(token=TOKEN)
+    
     dp = Dispatcher()
 
-    # ربط الملفات المقسمة بالبوت (الترتيب مهم)
-    dp.include_router(common.router) # الترحيب أولاً
+    # ربط الملفات المقسمة
+    dp.include_router(common.router)
     dp.include_router(calc.router)
     dp.include_router(online.router)
+    dp.include_router(admin.router)
 
-    print("🚀 البوت يعمل الآن بنظام الملفات المقسمة!")
+    print("🚀 البوت انطلق بنجاح بدون أخطاء!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
