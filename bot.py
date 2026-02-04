@@ -237,6 +237,16 @@ async def finish_round(callback: types.CallbackQuery, state: FSMContext):
         await send_dir(callback.message, data['direction'])
         await state.set_state(UnoGame.playing)
 
+# كود مؤقت لمعرفة File ID الخاص بصورك
+@dp.message(F.photo)
+async def get_photo_id(message: types.Message):
+    # نأخذ أكبر نسخة من الصورة المرسلة
+    file_id = message.photo[-1].file_id
+    await message.reply(f"كود الصورة (File ID) هو:\n\n<code>{file_id}</code>", parse_mode="HTML")
+    print(f"DEBUG: Photo ID = {file_id}")
+
+
+
 if __name__ == "__main__":
     import asyncio
     init_db()
