@@ -8,5 +8,5 @@ DB_URL = os.getenv("DATABASE_URL")
 IMG_CW = os.getenv("IMG_CW")
 IMG_CCW = os.getenv("IMG_CCW")
 
-# تعريف البوت هنا ليكون متاحاً للكل
+# تعريف البوت
 bot = Bot(token=TOKEN)
