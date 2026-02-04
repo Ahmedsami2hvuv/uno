@@ -1,6 +1,6 @@
-import logging
-import json
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -8,35 +8,59 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- جلب الإعدادات من متغيرات البيئة (Railway) ---
+# --- الإعدادات من ريلوي ---
 TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0)) # تحويل الأيدي إلى رقم
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+DB_URL = os.getenv("DATABASE_URL")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# --- قيم النقاط ---
+# --- قيم أوراق الأونو ---
 CARD_VALUES = {
     "0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
     "+1": 10, "+2": 20, "+4": 50, "منع": 20, "تحويل": 20, "ملونة": 50
 }
 
-STATS_FILE = "stats_data.json"
+# --- إدارة قاعدة البيانات ---
+def init_db():
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    cur.execute('''CREATE TABLE IF NOT EXISTS players_stats (
+                    player_name TEXT PRIMARY KEY,
+                    wins INTEGER DEFAULT 0,
+                    games INTEGER DEFAULT 0)''')
+    conn.commit()
+    cur.close()
+    conn.close()
 
-def load_data():
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"players_stats": {}}
+def get_all_players_from_db():
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    cur.execute("SELECT player_name FROM players_stats")
+    players = [row[0] for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return players
 
-def save_data(data):
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+def update_db_stats(name, is_win=False):
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    if is_win:
+        cur.execute('''INSERT INTO players_stats (player_name, wins, games) VALUES (%s, 1, 1)
+                       ON CONFLICT (player_name) DO UPDATE SET wins = players_stats.wins + 1, games = players_stats.games + 1''', (name,))
+    else:
+        cur.execute('''INSERT INTO players_stats (player_name, wins, games) VALUES (%s, 0, 1)
+                       ON CONFLICT (player_name) DO UPDATE SET games = players_stats.games + 1''', (name,))
+    conn.commit()
+    cur.close()
+    conn.close()
 
+# --- الحالات (FSM) ---
 class UnoGame(StatesGroup):
     selecting_players = State()
-    adding_new_player = State()
+    adding_player = State()
     setting_limit = State()
     playing = State()
     confirm_finish = State()
@@ -44,198 +68,169 @@ class UnoGame(StatesGroup):
     scoring_menu = State()
     entering_cards = State()
 
+# --- دالة التحقق من الاشتراك ---
 async def check_sub(user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
+    except: return False
 
-# --- لوحة الإدارة (مستقبلاً) ---
-@dp.message(Command("admin"))
-async def admin_panel(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return await message.answer("❌ هذا الأمر للمطور فقط.")
-    await message.answer("🛠 لوحة الإدارة:\nيمكنك هنا إضافة ميزات مثل تصفير الإحصائيات أو إرسال إذاعة.")
-
-# --- الأوامر الأساسية ونظام اللعب ---
+# --- أوامر البوت ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     if not await check_sub(message.from_user.id):
-        return await message.answer(f"⚠️ يجب الاشتراك بالقناة أولاً: {CHANNEL_ID}")
+        return await message.answer(f"⚠️ اشترك بالقناة أولاً: {CHANNEL_ID}")
 
-    data = load_data()
-    all_players = list(data["players_stats"].keys())
+    all_p = get_all_players_from_db()
+    await state.update_data(all_players=all_p, selected_players=[])
     
-    kb = [[InlineKeyboardButton(text=f"{p} {'✅' if p in (await state.get_data()).get('selected_players', []) else ''}", 
-                                  callback_data=f"select_{p}")] for p in all_players]
-    kb.append([InlineKeyboardButton(text="➕ إضافة لاعب جديد", callback_data="add_new")])
-    kb.append([InlineKeyboardButton(text="🚀 بدء اللعبة", callback_data="start_game_setup")])
+    kb = [[InlineKeyboardButton(text=p, callback_data=f"sel_{p}")] for p in all_p]
+    kb.append([InlineKeyboardButton(text="➕ إضافة لاعب جديد", callback_data="new_p")])
+    kb.append([InlineKeyboardButton(text="🚀 بدء اللعبة", callback_data="go_limit")])
     
-    await state.update_data(all_players=all_players)
-    if 'selected_players' not in (await state.get_data()):
-        await state.update_data(selected_players=[])
-        
-    await message.answer("🎴 اختر اللاعبين المشاركين:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await message.answer("🃏 اختر اللاعبين أو أضف جديداً:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(UnoGame.selecting_players)
 
-@dp.callback_query(F.data.startswith("select_"), UnoGame.selecting_players)
-async def select_player(callback: types.CallbackQuery, state: FSMContext):
-    player = callback.data.split("_")[1]
+@dp.callback_query(F.data.startswith("sel_"), UnoGame.selecting_players)
+async def toggle_player(callback: types.CallbackQuery, state: FSMContext):
+    p = callback.data.split("_")[1]
     data = await state.get_data()
-    selected = data['selected_players']
-    if player in selected: selected.remove(player)
-    else: selected.append(player)
+    sel = data['selected_players']
+    if p in sel: sel.remove(p)
+    else: sel.append(p)
+    await state.update_data(selected_players=sel)
     
-    await state.update_data(selected_players=selected)
-    kb = [[InlineKeyboardButton(text=f"{p} {'✅' if p in selected else ''}", callback_data=f"select_{p}")] for p in data['all_players']]
-    kb.append([InlineKeyboardButton(text="➕ إضافة لاعب جديد", callback_data="add_new")])
-    kb.append([InlineKeyboardButton(text="🚀 بدء اللعبة", callback_data="start_game_setup")])
+    kb = [[InlineKeyboardButton(text=f"{name} {'✅' if name in sel else ''}", callback_data=f"sel_{name}")] for name in data['all_players']]
+    kb.append([InlineKeyboardButton(text="➕ إضافة لاعب جديد", callback_data="new_p")])
+    kb.append([InlineKeyboardButton(text="🚀 بدء اللعبة", callback_data="go_limit")])
     await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-@dp.callback_query(F.data == "add_new", UnoGame.selecting_players)
-async def ask_new_player(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "new_p", UnoGame.selecting_players)
+async def ask_name(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("أرسل اسم اللاعب الجديد:")
-    await state.set_state(UnoGame.adding_new_player)
+    await state.set_state(UnoGame.adding_player)
 
-@dp.message(UnoGame.adding_new_player)
-async def process_new_player(message: types.Message, state: FSMContext):
-    new_name = message.text.strip()
-    data = load_data()
-    if new_name not in data["players_stats"]:
-        data["players_stats"][new_name] = {"wins": 0, "games": 0}
-        save_data(data)
-    await message.answer(f"تمت إضافة {new_name}!")
+@dp.message(UnoGame.adding_player)
+async def save_new_p(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    update_db_stats(name, is_win=False) # إضافة للقاعدة بـ 0 لعبات حالياً
+    await message.answer(f"تمت إضافة {name}")
     await cmd_start(message, state)
 
-@dp.callback_query(F.data == "start_game_setup", UnoGame.selecting_players)
-async def setup_limit(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "go_limit", UnoGame.selecting_players)
+async def set_limit(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    if len(data['selected_players']) < 2:
-        return await callback.answer("اختر لاعبين اثنين على الأقل!", show_alert=True)
+    if len(data['selected_players']) < 2: return await callback.answer("اختر 2 على الأقل!", show_alert=True)
     
-    kb = [[InlineKeyboardButton(text=str(limit), callback_data=f"set_{limit}")] for limit in [150, 300, 500]]
+    kb = [[InlineKeyboardButton(text=str(x), callback_data=f"lim_{x}")] for x in [150, 300, 500]]
     await callback.message.answer("اختر سقف النقاط:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(UnoGame.setting_limit)
 
-@dp.callback_query(F.data.startswith("set_"), UnoGame.setting_limit)
-async def start_playing(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.startswith("lim_"), UnoGame.setting_limit)
+async def start_game(callback: types.CallbackQuery, state: FSMContext):
     limit = int(callback.data.split("_")[1])
     data = await state.get_data()
-    stats = load_data()
-    for p in data['selected_players']:
-        stats["players_stats"][p]["games"] += 1
-    save_data(stats)
+    for p in data['selected_players']: update_db_stats(p) # تسجيل دخول اللعبة
     await state.update_data(limit=limit, totals={p: 0 for p in data['selected_players']}, direction="clockwise")
-    await send_direction(callback.message, "clockwise")
+    await send_dir(callback.message, "clockwise")
     await state.set_state(UnoGame.playing)
 
-async def send_direction(message, direction):
-    text = "🔄 اتجاه اللعب: " + ("مع عقارب الساعة" if direction == "clockwise" else "عكس عقارب الساعة")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 تحويل الاتجاه", callback_data="toggle_dir")],
-        [InlineKeyboardButton(text="🏁 إنهاء الجولة", callback_data="pre_finish")]
-    ])
-    await message.answer(text, reply_markup=kb)
+async def send_dir(message, d):
+    txt = "🔄 الاتجاه: " + ("مع الساعة" if d == "clockwise" else "عكس الساعة")
+    kb = [[InlineKeyboardButton(text="🔄 تحويل", callback_data="swap")], [InlineKeyboardButton(text="🏁 إنهاء", callback_data="finish")]]
+    await message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-@dp.callback_query(F.data == "toggle_dir", UnoGame.playing)
-async def toggle_dir(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "swap", UnoGame.playing)
+async def swap_dir(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    new_dir = "counter" if data['direction'] == "clockwise" else "clockwise"
-    await state.update_data(direction=new_dir)
+    new = "counter" if data['direction'] == "clockwise" else "clockwise"
+    await state.update_data(direction=new)
     await callback.message.delete()
-    await send_direction(callback.message, new_dir)
+    await send_dir(callback.message, new)
 
-@dp.callback_query(F.data == "pre_finish", UnoGame.playing)
-async def pre_finish(callback: types.CallbackQuery):
-    kb = [[InlineKeyboardButton(text="✅ نعم", callback_data="confirm_yes"), InlineKeyboardButton(text="❌ لا", callback_data="confirm_no")]]
-    await callback.message.answer("متأكد من إنهاء الجولة؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+@dp.callback_query(F.data == "finish", UnoGame.playing)
+async def confirm(callback: types.CallbackQuery):
+    kb = [[InlineKeyboardButton(text="نعم", callback_data="y"), InlineKeyboardButton(text="لا", callback_data="n")]]
+    await callback.message.answer("متأكد؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await UnoGame.confirm_finish.set()
 
-@dp.callback_query(F.data == "confirm_no", UnoGame.confirm_finish)
-async def cancel_finish(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
+@dp.callback_query(F.data == "n", UnoGame.confirm_finish)
+async def cancel(callback: types.CallbackQuery, state: FSMContext):
+    d = (await state.get_data())['direction']
     await callback.message.delete()
-    await send_direction(callback.message, data['direction'])
+    await send_dir(callback.message, d)
     await state.set_state(UnoGame.playing)
 
-@dp.callback_query(F.data == "confirm_yes", UnoGame.confirm_finish)
-async def choose_winner(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "y", UnoGame.confirm_finish)
+async def win_pick(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    kb = [[InlineKeyboardButton(text=n, callback_data=f"win_{n}")] for n in data['selected_players']]
-    await callback.message.edit_text("اختر الفائز بالجولة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    kb = [[InlineKeyboardButton(text=n, callback_data=f"w_{n}")] for n in data['selected_players']]
+    await callback.message.edit_text("من الفائز؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(UnoGame.choosing_winner)
 
-@dp.callback_query(F.data.startswith("win_"), UnoGame.choosing_winner)
-async def start_scoring(callback: types.CallbackQuery, state: FSMContext):
-    winner = callback.data.split("_")[1]
+@dp.callback_query(F.data.startswith("w_"), UnoGame.choosing_winner)
+async def scoring_m(callback: types.CallbackQuery, state: FSMContext):
+    win = callback.data.split("_")[1]
     data = await state.get_data()
-    await state.update_data(current_winner=winner, round_points={p: 0 for p in data['selected_players']}, finished_players=[])
-    await show_scoring_menu(callback.message, state)
+    await state.update_data(winner=win, round_p={p: 0 for p in data['selected_players']}, done_p=[])
+    await show_menu(callback.message, state)
 
-async def show_scoring_menu(message, state):
+async def show_menu(msg, state):
     data = await state.get_data()
-    kb = [[InlineKeyboardButton(text=f"{p} {'✅' if p in data['finished_players'] else '⏳'}", callback_data=f"scorefor_{p}")] 
-          for p in data['selected_players'] if p != data['current_winner']]
-    kb.append([InlineKeyboardButton(text="🧮 تم الحساب", callback_data="final_calc_round")])
-    await message.edit_text("إدخال النقاط:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    kb = [[InlineKeyboardButton(text=f"{p} {'✅' if p in data['done_p'] else '⏳'}", callback_data=f"get_{p}")] 
+          for p in data['selected_players'] if p != data['winner']]
+    kb.append([InlineKeyboardButton(text="🧮 حساب نهائي", callback_data="calc")])
+    await msg.edit_text("أدخل نقاط الخاسرين:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(UnoGame.scoring_menu)
 
-@dp.callback_query(F.data.startswith("scorefor_"), UnoGame.scoring_menu)
-async def show_cards_input(callback: types.CallbackQuery, state: FSMContext):
-    player = callback.data.split("_")[1]
-    await state.update_data(editing_player=player, temp_score=0)
-    await render_cards_kb(callback.message, player, 0)
+@dp.callback_query(F.data.startswith("get_"), UnoGame.scoring_menu)
+async def cards_kb(callback: types.CallbackQuery, state: FSMContext):
+    p = callback.data.split("_")[1]
+    await state.update_data(edit_p=p, temp=0)
+    await render_kb(callback.message, p, 0)
 
-async def render_cards_kb(message, player, current_sum):
-    layout = [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["0", "+1", "+2"], ["+4", "منع", "تحويل"], ["ملونة", "تم ✅"]]
-    kb = [[InlineKeyboardButton(text=item, callback_data=f"add_{item}") for item in row] for row in layout]
-    await message.edit_text(f"اللاعب: {player} | النقاط: {current_sum}", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+async def render_kb(msg, p, s):
+    lay = [["1","2","3"],["4","5","6"],["7","8","9"],["0","+1","+2"],["+4","منع","تحويل"],["ملونة","تم ✅"]]
+    kb = [[InlineKeyboardButton(text=i, callback_data=f"a_{i}") for i in r] for r in lay]
+    await msg.edit_text(f"اللاعب: {p} | النقاط: {s}", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.set_state(UnoGame.entering_cards)
 
-@dp.callback_query(F.data.startswith("add_"), UnoGame.entering_cards)
-async def handle_card_click(callback: types.CallbackQuery, state: FSMContext):
-    val_key = callback.data.split("_")[1]
+@dp.callback_query(F.data.startswith("a_"), UnoGame.entering_cards)
+async def add_c(callback: types.CallbackQuery, state: FSMContext):
+    v = callback.data.split("_")[1]
     data = await state.get_data()
-    if val_key == "تم ✅":
-        finished = data['finished_players']
-        if data['editing_player'] not in finished: finished.append(data['editing_player'])
-        round_pts = data['round_points']
-        round_pts[data['editing_player']] = data['temp_score']
-        await state.update_data(finished_players=finished, round_points=round_pts)
-        await show_scoring_menu(callback.message, state)
+    if v == "تم ✅":
+        done = data['done_p']
+        if data['edit_p'] not in done: done.append(data['edit_p'])
+        rp = data['round_p']
+        rp[data['edit_p']] = data['temp']
+        await state.update_data(done_p=done, round_p=rp)
+        await show_menu(callback.message, state)
     else:
-        new_total = data['temp_score'] + CARD_VALUES.get(val_key, 0)
-        await state.update_data(temp_score=new_total)
-        await render_cards_kb(callback.message, data['editing_player'], new_total)
+        new = data['temp'] + CARD_VALUES.get(v, 0)
+        await state.update_data(temp=new)
+        await render_kb(callback.message, data['edit_p'], new)
 
-@dp.callback_query(F.data == "final_calc_round", UnoGame.scoring_menu)
-async def final_calc(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "calc", UnoGame.scoring_menu)
+async def finish_round(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     totals = data['totals']
-    totals[data['current_winner']] += sum(data['round_points'].values())
+    totals[data['winner']] += sum(data['round_p'].values())
     await state.update_data(totals=totals)
     
-    res = "📊 النتائج:\n" + "\n".join([f"- {p}: {s}" for p, s in totals.items()])
-    winner_overall = [p for p, s in totals.items() if s >= data['limit']]
+    res = "\n".join([f"{p}: {s}" for p, s in totals.items()])
+    win_all = [p for p, s in totals.items() if s >= data['limit']]
     
-    if winner_overall:
-        stats = load_data()
-        stats["players_stats"][winner_overall[0]]["wins"] += 1
-        save_data(stats)
-        await callback.message.answer(f"🏆 الفائز النهائي: {winner_overall[0]}\n{res}")
+    if win_all:
+        update_db_stats(win_all[0], is_win=True)
+        await callback.message.answer(f"🏆 الفائز النهائي: {win_all[0]}\n{res}")
         await state.clear()
     else:
-        await callback.message.answer(res + "\nجولة جديدة!")
-        await send_direction(callback.message, data['direction'])
+        await callback.message.answer(f"📊 النتائج:\n{res}\nجولة جديدة!")
+        await send_dir(callback.message, data['direction'])
         await state.set_state(UnoGame.playing)
-
-@dp.message(Command("stats"))
-async def show_stats(message: types.Message):
-    data = load_data()
-    res = "📈 الإحصائيات:\n" + "\n".join([f"👤 {p}: فاز {s['wins']} | لعب {s['games']}" for p, s in data["players_stats"].items()])
-    await message.answer(res)
 
 if __name__ == "__main__":
     import asyncio
+    init_db()
     asyncio.run(dp.start_polling(bot))
