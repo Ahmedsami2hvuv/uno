@@ -6,18 +6,15 @@ router = Router()
 
 @router.callback_query(F.data == "leaderboard")
 async def show_leaderboard(callback: types.CallbackQuery):
-    # جلب أفضل 10 لاعبين بناءً على نقاط الأونلاين
-    top_players = db_query("SELECT player_name, online_points FROM users WHERE is_registered = TRUE ORDER BY online_points DESC LIMIT 10")
+    # جلب التوب 10
+    top = db_query("SELECT player_name, online_points FROM users WHERE is_registered = TRUE ORDER BY online_points DESC LIMIT 10")
     
-    text = "🏆 **قائمة المتصدرين في أونو أونلاين** 🏆\n\n"
-    if not top_players:
-        text += "لا يوجد متصدرون حالياً. كن الأول!"
+    txt = "🏆 **قائمة المتصدرين (أونلاين)** 🏆\n\n"
+    if not top:
+        txt += "لا يوجد لاعبون مسجلون حالياً."
     else:
-        for i, player in enumerate(top_players, 1):
-            medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-            rank = medals.get(i, f"{i}.")
-            text += f"{rank} **{player['player_name']}** — {player['online_points']} نقطة\n"
+        for i, p in enumerate(top, 1):
+            txt += f"{i}. {p['player_name']} — {p['online_points']} نقطة\n"
     
     kb = [[InlineKeyboardButton(text="🔙 عودة", callback_data="home")]]
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-
+    await callback.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
