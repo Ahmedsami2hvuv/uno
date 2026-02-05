@@ -16,8 +16,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
     
+    # إذا لم يكن مسجلاً
     if not user or not user[0]['is_registered']:
-        await message.answer("👋 أهلاً بك! لإنشاء حسابك، أرسل اسم اللاعب:")
+        await message.answer("👋 أهلاً بك! لإنشاء حسابك، أرسل اسم اللاعب الذي تريده (يجب أن يكون وحيداً):")
         await state.set_state(RegisterStates.wait_name)
     else:
         await show_main_menu(message, user[0]['player_name'])
@@ -25,13 +26,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @router.message(RegisterStates.wait_name)
 async def get_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
-    # التأكد من أن الاسم غير محجوز لمستخدم آخر
+    
+    # فحص إذا كان الاسم محجوزاً لشخص آخر (حل مشكلة التكرار)
     existing = db_query("SELECT user_id FROM users WHERE player_name = %s", (name,))
-    if existing and existing[0]['user_id'] != message.from_user.id:
-        return await message.answer("❌ هذا الاسم محجوز للاعب آخر! اختر اسماً مختلفاً:")
+    if existing:
+        return await message.answer("❌ عذراً، هذا الاسم محجوز للاعب آخر. اختر اسماً مختلفاً:")
     
     await state.update_data(p_name=name)
-    await message.answer(f"تمام {name}، الآن اختر رمزاً سرياً لحسابك:")
+    await message.answer(f"أهلاً {name}! الآن اختر رمزاً سرياً لحماية حسابك:")
     await state.set_state(RegisterStates.wait_password)
 
 @router.message(RegisterStates.wait_password)
@@ -39,27 +41,31 @@ async def get_pass(message: types.Message, state: FSMContext):
     password = message.text.strip()
     data = await state.get_data()
     
+    # حفظ البيانات رسمياً
     db_query("UPDATE users SET player_name = %s, password = %s, is_registered = TRUE WHERE user_id = %s",
              (data['p_name'], password, message.from_user.id), commit=True, fetch=False)
     
-    await message.answer("✅ تم تفعيل حسابك!")
+    await message.answer("✅ تم تفعيل حسابك بنجاح!")
     await show_main_menu(message, data['p_name'])
 
 async def show_main_menu(message, name):
+    # تم توحيد الـ callback_data لتطابق ملفات online.py و calc.py و stats.py
     kb = [
         [InlineKeyboardButton(text="🎲 لعب عشوائي", callback_data="mode_random"),
          InlineKeyboardButton(text="🏠 غرفة لعب", callback_data="create_room")],
         [InlineKeyboardButton(text="🧮 حاسبة اونو", callback_data="mode_calc")],
         [InlineKeyboardButton(text="🏆 المتصدرين", callback_data="leaderboard")]
     ]
-    # التأكد من أن النص يظهر للمستخدم المسجل
+    text = f"🃏 مرحباً بك يا {name}\nاختر نظام اللعب:"
+    
     if hasattr(message, "answer"):
-        await message.answer(f"🃏 مرحباً {name}\nاختر المود:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    else: # في حال كان callback
-        await message.edit_text(f"🃏 مرحباً {name}\nاختر المود:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# لإرجاع المستخدم للقائمة الرئيسية من الملفات الأخرى
+# لإرجاع المستخدم للقائمة من أي مكان
 @router.callback_query(F.data == "home")
 async def go_home(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (callback.from_user.id,))
     await show_main_menu(callback.message, user[0]['player_name'])
