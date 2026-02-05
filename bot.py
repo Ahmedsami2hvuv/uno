@@ -1,39 +1,30 @@
 import asyncio
 import logging
-from aiogram import Dispatcher, types, F
+from aiogram import Dispatcher
 from config import bot
 from database import init_db
 from handlers import common, calc, online, stats, admin
 
-# إعداد السجلات (Logs) لمراقبة الأخطاء
+# إعداد السجلات لمراقبة الأخطاء
 logging.basicConfig(level=logging.INFO)
 
 async def main():
-    # 1. تهيئة قاعدة البيانات عند التشغيل
+    # 1. تهيئة قاعدة البيانات
     print("⏳ جاري تهيئة قاعدة البيانات...")
     init_db()
     
-    # 2. تعريف الموزع (Dispatcher)
+    # 2. تعريف الموزع
     dp = Dispatcher()
 
-    # --- ميزة مستخرج أكواد الصور (إضافة جديدة) ---
-    @dp.message(F.photo)
-    async def get_image_id(message: types.Message):
-        # نأخذ آخر صورة (تكون بأعلى دقة)
-        file_id = message.photo[-1].file_id
-        await message.reply(f"✅ كود الصورة (File ID):\n\n`{file_id}`", parse_mode="MarkdownV2")
-    # -------------------------------------------
+    # 3. ربط ملفات المهام (الرواتر)
+    dp.include_router(common.router)   # ملف الترحيب والتسجيل ومستخرج الصور
+    dp.include_router(calc.router)     # ملف الحاسبة
+    dp.include_router(online.router)   # ملف اللعب أونلاين
+    dp.include_router(stats.router)    # ملف المتصدرين
+    dp.include_router(admin.router)    # ملف الأدمن
 
-    # 3. ربط ملفات المهام (Routers) بالبوت
-    dp.include_router(common.router)
-    dp.include_router(calc.router)
-    dp.include_router(online.router)
-    dp.include_router(stats.router)
-    dp.include_router(admin.router)
-
-    print("🚀 البوت انطلق الآن! أرسل أي صورة للحصول على كودها.")
+    print("🚀 البوت انطلق الآن! أرسل صورة للحصول على الكود.")
     
-    # 4. بدء استقبال الرسائل
     try:
         await dp.start_polling(bot)
     finally:
