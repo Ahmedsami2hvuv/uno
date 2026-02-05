@@ -148,19 +148,66 @@ async def process_play(c: types.CallbackQuery):
 
 # 5. سحب ورقة
 @router.callback_query(F.data.startswith("op_draw_"))
+@router.callback_query(F.data.startswith("op_draw_"))
 async def on_draw(c: types.CallbackQuery):
-    g_id = int(c.data.split("_")[2])
-    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك!")
-    
-    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
-    deck = game['deck'].split(","); hand = (game['p1_hand'] if is_p1 else game['p2_hand']).split(",")
-    if deck:
-        hand.append(deck.pop(0))
+    try:
+        g_id = int(c.data.split("_")[2])
+        game_data = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))
+        if not game_data: return
+        game = game_data[0]
+        
+        if int(c.from_user.id) != int(game['turn']):
+            return await c.answer("مو دورك تسحب! ⏳", show_alert=True)
+        
+        is_p1 = (int(c.from_user.id) == int(game['p1_id']))
+        deck = game['deck'].split(",")
+        hand = (game['p1_hand'] if is_p1 else game['p2_hand']).split(",")
+        top_card = game['top_card']
+        
+        if not deck or deck == ['']:
+            return await c.answer("خلصت الأوراق من السحب! 🎴", show_alert=True)
+            
+        # 1. سحب الورقة الجديدة
+        new_card = deck.pop(0)
+        hand.append(new_card)
+        
+        # 2. فحص هل الورقة الجديدة قابلة للعب؟
+        can_play_new = False
+        if "🌈" in new_card:
+            can_play_new = True
+        else:
+            t_col = top_card[0]
+            p_col = new_card[0]
+            t_val = top_card.split(" ")[1] if " " in top_card else top_card
+            p_val = new_card.split(" ")[1] if " " in new_card else new_card
+            if p_col == t_col or p_val == t_val or "🌈" in top_card:
+                can_play_new = True
+
+        # 3. اتخاذ القرار بناءً على الورقة
+        if can_play_new:
+            # الورقة مناسبة: يبقى الدور عند اللاعب ليلعبها
+            next_turn = c.from_user.id
+            msg = f"📥 سحبت `{new_card}`.. الورقة مناسبة! يمكنك لعبها الآن."
+        else:
+            # الورقة غير مناسبة: ينتقل الدور للخصم
+            next_turn = game['p2_id'] if is_p1 else game['p1_id']
+            msg = f"📥 سحبت `{new_card}`.. غير مناسبة للعب. انتقل الدور للخصم."
+
+        # 4. تحديث قاعدة البيانات
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
-                 (",".join(hand), ",".join(deck), game['p2_id'] if is_p1 else game['p1_id'], g_id), commit=True, fetch=False)
-    
-    await c.message.delete(); await send_player_hand(game['p1_id'], g_id); await send_player_hand(game['p2_id'], g_id)
+                 (",".join(hand), ",".join(deck), next_turn, g_id), commit=True, fetch=False)
+        
+        await c.message.delete()
+        # إرسال تحديث للخصم أيضاً
+        opp_id = game['p2_id'] if is_p1 else game['p1_id']
+        await bot.send_message(opp_id, f"📥 الخصم سحب ورقة وانتقل الدور {'إليك' if not can_play_new else 'بقي عنده'}.")
+        
+        await send_player_hand(game['p1_id'], g_id)
+        await send_player_hand(game['p2_id'], g_id)
+        await c.answer(msg)
+
+    except Exception as e:
+        print(f"❌ Error in on_draw: {e}")
 
 async def ask_color(user_id, game_id):
     kb = [[InlineKeyboardButton(text="🔴", callback_data=f"sc_{game_id}_🔴"), InlineKeyboardButton(text="🔵", callback_data=f"sc_{game_id}_🔵")],
