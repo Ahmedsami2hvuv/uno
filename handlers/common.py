@@ -13,28 +13,25 @@ class RegisterStates(StatesGroup):
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
     user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
     
-    # إذا لم يكن مسجلاً أو لم يكمل بياناته
     if not user or not user[0]['is_registered']:
-        if not user: # تسجيل أولي في الداتا بيس
-            db_query("INSERT INTO users (user_id, username) VALUES (%s, %s)", 
-                     (message.from_user.id, message.from_user.username), commit=True, fetch=False)
-        
-        await message.answer("👋 أهلاً بك في بوت أونو! لكي تبدأ اللعب، نحتاج لإنشاء حساب لك.\n\n👤 أرسل الآن اسم اللاعب الذي تود الظهور به:")
+        await message.answer("👋 أهلاً بك! لإنشاء حسابك، أرسل اسم اللاعب:")
         await state.set_state(RegisterStates.wait_name)
     else:
-        # إذا كان مسجلاً، تظهر القائمة الرئيسية مباشرة
         await show_main_menu(message, user[0]['player_name'])
 
 @router.message(RegisterStates.wait_name)
 async def get_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
-    if len(name) < 3 or len(name) > 15:
-        return await message.answer("⚠️ الاسم يجب أن يكون بين 3 إلى 15 حرفاً. جرب اسماً آخر:")
+    # التأكد من أن الاسم غير محجوز لمستخدم آخر
+    existing = db_query("SELECT user_id FROM users WHERE player_name = %s", (name,))
+    if existing and existing[0]['user_id'] != message.from_user.id:
+        return await message.answer("❌ هذا الاسم محجوز للاعب آخر! اختر اسماً مختلفاً:")
     
     await state.update_data(p_name=name)
-    await message.answer(f"جميل يا {name}! الآن أرسل **رمزاً سرياً** لحماية حسابك (أرقام أو حروف):")
+    await message.answer(f"تمام {name}، الآن اختر رمزاً سرياً لحسابك:")
     await state.set_state(RegisterStates.wait_password)
 
 @router.message(RegisterStates.wait_password)
@@ -45,15 +42,24 @@ async def get_pass(message: types.Message, state: FSMContext):
     db_query("UPDATE users SET player_name = %s, password = %s, is_registered = TRUE WHERE user_id = %s",
              (data['p_name'], password, message.from_user.id), commit=True, fetch=False)
     
-    await message.answer("🎉 مبروك! تم إنشاء حسابك بنجاح. يمكنك الآن اللعب وجمع النقاط.")
-    await state.clear()
+    await message.answer("✅ تم تفعيل حسابك!")
     await show_main_menu(message, data['p_name'])
 
 async def show_main_menu(message, name):
     kb = [
-        [InlineKeyboardButton(text="🎲 لعب عشوائي (أونلاين)", callback_data="mode_random")],
-        [InlineKeyboardButton(text="🧮 حاسبة أونو (يدوية)", callback_data="mode_calc")],
-        [InlineKeyboardButton(text="🏆 قائمة المتصدرين", callback_data="leaderboard")],
-        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_profile")]
+        [InlineKeyboardButton(text="🎲 لعب عشوائي", callback_data="mode_random"),
+         InlineKeyboardButton(text="🏠 غرفة لعب", callback_data="create_room")],
+        [InlineKeyboardButton(text="🧮 حاسبة اونو", callback_data="mode_calc")],
+        [InlineKeyboardButton(text="🏆 المتصدرين", callback_data="leaderboard")]
     ]
-    await message.answer(f"🃏 مرحباً بك {name}\nاختر ما تود فعله:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    # التأكد من أن النص يظهر للمستخدم المسجل
+    if hasattr(message, "answer"):
+        await message.answer(f"🃏 مرحباً {name}\nاختر المود:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else: # في حال كان callback
+        await message.edit_text(f"🃏 مرحباً {name}\nاختر المود:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# لإرجاع المستخدم للقائمة الرئيسية من الملفات الأخرى
+@router.callback_query(F.data == "home")
+async def go_home(callback: types.CallbackQuery, state: FSMContext):
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (callback.from_user.id,))
+    await show_main_menu(callback.message, user[0]['player_name'])
