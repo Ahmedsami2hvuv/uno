@@ -11,14 +11,13 @@ def db_query(query, params=(), commit=False):
     res = None
     try:
         cur.execute(query, params)
-        # الفحص الذكي: إذا كان الاستعلام يرجع بيانات (SELECT)
         if cur.description:
             res = cur.fetchall()
         if commit:
             conn.commit()
     except Exception as e:
-        print(f"❌ خطأ في الاستعلام: {e}")
-        conn.rollback() # تراجع في حال الخطأ لضمان استقرار الداتا بيس
+        print(f"❌ خطأ داتا بيس: {e}")
+        conn.rollback()
     finally:
         cur.close()
         conn.close()
@@ -27,7 +26,7 @@ def db_query(query, params=(), commit=False):
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # إنشاء الجداول الأساسية
+    # جداول المستخدمين والألعاب
     cur.execute('''CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY, username TEXT,
                     player_name TEXT, password TEXT,
@@ -41,4 +40,3 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ قاعدة البيانات جاهزة وبدون أخطاء!")
