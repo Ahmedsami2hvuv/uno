@@ -7,7 +7,7 @@ from config import bot
 
 router = Router()
 
-# 1. محرك الأوراق المحدث (أضفنا الجوكر الجديد)
+# 1. محرك الأوراق المطور
 def generate_deck():
     colors = ["🔴", "🔵", "🟡", "🟢"]
     deck = []
@@ -16,51 +16,51 @@ def generate_deck():
         for n in range(1, 10): deck.extend([f"{c} {n}", f"{c} {n}"])
         for a in ["🚫", "🔄", "➕2"]: deck.extend([f"{c} {a}", f"{c} {a}"])
     
-    deck.extend(["🌈"] * 4)       # 50 نقطة
-    deck.extend(["🌈➕1"] * 4)     # 10 نقاط
-    deck.extend(["🌈➕2"] * 4)     # 20 نقطة
-    deck.extend(["🌈➕4"] * 4)     # 50 نقطة
+    # الأوراق الخاصة اللي طلبتها
+    deck.extend(["🌈"] * 4)       # ملونة (50 نقطة)
+    deck.extend(["🌈➕1"] * 4)     # جوكر +1 (10 نقاط)
+    deck.extend(["🌈➕2"] * 4)     # جوكر +2 (20 نقطة)
+    deck.extend(["🌈➕4"] * 4)     # جوكر +4 (50 نقطة)
     random.shuffle(deck)
     return deck
 
-# 2. واجهة عرض يد اللاعب (أزرار الأوراق)
-async def send_hand(user_id, game_id):
+# 2. وظيفة إرسال يد اللاعب (أزرار الأوراق)
+async def send_player_hand(user_id, game_id):
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))[0]
     is_p1 = (user_id == game['p1_id'])
     hand = game['p1_hand'].split(",") if is_p1 else game['p2_hand'].split(",")
     
-    # تنسيق الرسالة
-    turn_mark = "🟢 دورك الآن!" if game['turn'] == user_id else "⏳ دور الخصم..."
-    opp_count = len(game['p2_hand'].split(',')) if is_p1 else len(game['p1_hand'].split(','))
-    
-    text = (f"🃏 **الورقة المكشوفة:** {game['top_card']}\n"
-            f"{turn_mark}\n"
-            f"🎴 أوراق الخصم: {opp_count}")
+    turn_text = "🟢 دورك الآن!" if game['turn'] == user_id else "⏳ دور الخصم..."
+    opp_id = game['p2_id'] if is_p1 else game['p1_id']
+    opp_hand_count = len(game['p2_hand'].split(',')) if is_p1 else len(game['p1_hand'].split(','))
 
-    # تحويل الأوراق لأزرار (3 في كل سطر)
+    status_msg = (f"🃏 **الورقة المكشوفة:** `{game['top_card']}`\n"
+                  f"━━━━━━━━━━━━━━\n"
+                  f"{turn_text}\n"
+                  f"👤 الخصم لديه: {opp_hand_count} أوراق")
+
     kb = []
     row = []
     for i, card in enumerate(hand):
-        row.append(InlineKeyboardButton(text=card, callback_data=f"play_{game_id}_{i}"))
+        row.append(InlineKeyboardButton(text=card, callback_data=f"op_play_{game_id}_{i}"))
         if len(row) == 3:
             kb.append(row)
             row = []
     if row: kb.append(row)
     
-    # أزرار التحكم
-    kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"draw_{game_id}")])
-    kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"uno_{game_id}")])
+    kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"op_draw_{game_id}")])
+    kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"op_uno_{game_id}")])
 
-    await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    await bot.send_message(user_id, status_msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
 
-# 3. نظام البحث عن لاعب (Matchmaking)
+# 3. نظام البحث عن لاعب
 @router.callback_query(F.data == "mode_random")
-async def start_random(callback: types.CallbackQuery):
+async def start_matchmaking(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    waiting = db_query("SELECT * FROM active_games WHERE status = 'waiting' AND p1_id != %s LIMIT 1", (user_id,))
+    waiting_game = db_query("SELECT * FROM active_games WHERE status = 'waiting' AND p1_id != %s LIMIT 1", (user_id,))
     
-    if waiting:
-        g = waiting[0]
+    if waiting_game:
+        g = waiting_game[0]
         deck = generate_deck()
         p1_h, p2_h = [deck.pop() for _ in range(7)], [deck.pop() for _ in range(7)]
         top = deck.pop()
@@ -70,59 +70,54 @@ async def start_random(callback: types.CallbackQuery):
                 (user_id, ",".join(p1_h), ",".join(p2_h), top, ",".join(deck), g['p1_id'], g['game_id']), commit=True, fetch=False)
         
         await callback.message.edit_text("✅ وجدنا خصماً! بدأت اللعبة...")
-        await send_hand(g['p1_id'], g['game_id'])
-        await send_hand(user_id, g['game_id'])
+        await send_player_hand(g['p1_id'], g['game_id'])
+        await send_player_hand(user_id, g['game_id'])
     else:
         db_query("INSERT INTO active_games (p1_id, status) VALUES (%s, 'waiting')", (user_id,), commit=True, fetch=False)
         await callback.message.edit_text("🔎 جاري البحث عن لاعب... (سيلعب البوت معك بعد 30ث)")
-        
-        # مؤقت الذكاء الاصطناعي (AI)
-        await asyncio.sleep(30)
-        game_check = db_query("SELECT status FROM active_games WHERE p1_id = %s AND status = 'waiting'", (user_id,))
-        if game_check:
-            await callback.message.answer("🤖 لم نجد أحداً، سألعب معك أنا (البوت)!")
-            # كود تشغيل الـ AI يوضع هنا
 
-# 4. منطق لعب الورقة (التحقق والصد)
-@router.callback_query(F.data.startswith("play_"))
+# 4. منطق لعب الورقة والتحقق من الصحة
+@router.callback_query(F.data.startswith("op_play_"))
 async def process_play(c: types.CallbackQuery):
-    _, g_id, idx = c.data.split("_")
+    _, _, g_id, idx = c.data.split("_")
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
     
     if c.from_user.id != game['turn']:
-        return await c.answer("مو دورك! اصبر شوية ⏳", show_alert=True)
+        return await c.answer("مو دورك! انتظر الخصم يلعب ⏳", show_alert=True)
     
     is_p1 = (c.from_user.id == game['p1_id'])
     hand = game['p1_hand'].split(",") if is_p1 else game['p2_hand'].split(",")
-    played = hand[int(idx)]
-    top = game['top_card']
+    played_card = hand[int(idx)]
+    top_card = game['top_card']
     
-    # التحقق من صحة الورقة (Logic)
-    valid = False
-    if "🌈" in played: valid = True
+    # منطق التحقق (نفس اللون أو نفس الرقم/الرمز)
+    can_play = False
+    if "🌈" in played_card: can_play = True
     else:
-        t_col, t_val = top.split(" ")[0], top.split(" ")[1] if " " in top else top
-        p_col, p_val = played.split(" ")[0], played.split(" ")[1] if " " in played else played
-        if p_col == t_col or p_val == t_val: valid = True
+        t_color = top_card.split(" ")[0]
+        t_val = top_card.split(" ")[1] if " " in top_card else top_card
+        p_color = played_card.split(" ")[0]
+        p_val = played_card.split(" ")[1] if " " in played_card else played_card
+        if p_color == t_color or p_val == t_val: can_play = True
 
-    if not valid:
-        # عقوبة الغش
-        await c.answer("❌ ورقة غلط! خذ ورقتين عقوبة 🌚", show_alert=True)
+    if not can_play:
+        await c.answer("❌ ورقة غلط! عقوبة سحب ورقتين.", show_alert=True)
+        # سحب عقوبة
         deck = game['deck'].split(",")
         hand.extend([deck.pop(), deck.pop()])
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", 
                  (",".join(hand), ",".join(deck), g_id), commit=True, fetch=False)
         await c.message.delete()
-        return await send_hand(c.from_user.id, g_id)
+        return await send_player_hand(c.from_user.id, g_id)
 
-    # تنفيذ اللعبة الصحيحة
+    # إذا كانت الورقة صحيحة
     hand.pop(int(idx))
     next_turn = game['p2_id'] if is_p1 else game['p1_id']
     
     db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, turn=%s WHERE game_id=%s",
-             (played, ",".join(hand), next_turn, g_id), commit=True, fetch=False)
+             (played_card, ",".join(hand), next_turn, g_id), commit=True, fetch=False)
     
     await c.message.delete()
-    # تحديث الشاشة للاثنين
-    await send_hand(game['p1_id'], g_id)
-    await send_hand(game['p2_id'], g_id)
+    # تحديث الشاشتين
+    await send_player_hand(game['p1_id'], g_id)
+    await send_player_hand(game['p2_id'], g_id)
