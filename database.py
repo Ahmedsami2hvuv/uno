@@ -26,17 +26,34 @@ def db_query(query, params=(), commit=False):
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # جداول المستخدمين والألعاب
-    cur.execute('''CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY, username TEXT,
-                    player_name TEXT, password TEXT,
-                    online_points INTEGER DEFAULT 0, is_registered BOOLEAN DEFAULT FALSE)''')
     
+    # 1. جدول المستخدمين (للأونلاين)
+    cur.execute('''CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY, 
+                    username TEXT,
+                    player_name TEXT, 
+                    password TEXT,
+                    online_points INTEGER DEFAULT 0, 
+                    is_registered BOOLEAN DEFAULT FALSE)''')
+    
+    # 2. جدول ألعاب الأونلاين
     cur.execute('''CREATE TABLE IF NOT EXISTS active_games (
-                    game_id SERIAL PRIMARY KEY, p1_id BIGINT, p2_id BIGINT,
-                    p1_hand TEXT, p2_hand TEXT, top_card TEXT, deck TEXT,
+                    game_id SERIAL PRIMARY KEY, 
+                    p1_id BIGINT, p2_id BIGINT,
+                    p1_hand TEXT, p2_hand TEXT, 
+                    top_card TEXT, deck TEXT,
                     turn BIGINT, status TEXT DEFAULT 'waiting',
-                    p1_uno BOOLEAN DEFAULT FALSE, p2_uno BOOLEAN DEFAULT FALSE)''')
+                    p1_uno BOOLEAN DEFAULT FALSE, 
+                    p2_uno BOOLEAN DEFAULT FALSE)''')
+
+    # 3. ✨ الجدول الجديد (لحفظ أسماء لاعبي الحاسبة اليدوية)
+    cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
+                    id SERIAL PRIMARY KEY,
+                    player_name TEXT UNIQUE,
+                    wins INTEGER DEFAULT 0,
+                    total_points INTEGER DEFAULT 0)''')
+    
     conn.commit()
     cur.close()
     conn.close()
+    print("✅ تم تحديث قاعدة البيانات بنجاح!")
