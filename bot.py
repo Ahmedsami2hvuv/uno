@@ -1,19 +1,19 @@
 import asyncio
 import logging
 from aiogram import Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage # إضافة الذاكرة
+from aiogram.fsm.storage.memory import MemoryStorage
 from config import bot
 from database import init_db
-from handlers import calc, common, online, stats, admin # ترتيب الاستيراد
+from handlers import calc, common, online, stats, admin
 
 logging.basicConfig(level=logging.INFO)
 
 async def main():
     init_db()
-    # تفعيل الذاكرة ضروري جداً للحاسبة حتى تعرف أنت بأي خطوة
+    # الذاكرة ضرورية جداً للحاسبة
     dp = Dispatcher(storage=MemoryStorage())
     
-    # ربط المجلدات (خلينا calc بالبداية حتى ما تضيع الرسائل)
+    # الترتيب: الحاسبة أولاً لضمان عدم ضياع الرسائل النصية
     dp.include_router(calc.router)
     dp.include_router(common.router)
     dp.include_router(online.router)
