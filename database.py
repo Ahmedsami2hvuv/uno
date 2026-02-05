@@ -46,14 +46,16 @@ def init_db():
                     p1_uno BOOLEAN DEFAULT FALSE, 
                     p2_uno BOOLEAN DEFAULT FALSE)''')
 
-    # ✨ جدول لاعبي الحاسبة (يتحدث تلقائياً)
+    # جدول لاعبي الحاسبة مصلح 100%
     cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
                     id SERIAL PRIMARY KEY,
-                    player_name TEXT UNIQUE,
+                    player_name TEXT,
+                    creator_id BIGINT,
                     wins INTEGER DEFAULT 0,
-                    total_points INTEGER DEFAULT 0)''')
+                    total_points INTEGER DEFAULT 0,
+                    UNIQUE(player_name, creator_id))''')
     
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ تم تحديث الجداول بنجاح!")
+    print("✅ قاعدة البيانات جاهزة ومؤمنة!")
