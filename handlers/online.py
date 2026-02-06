@@ -224,7 +224,7 @@ async def process_play(c: types.CallbackQuery):
     await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"لعبت {played_card}")
     await send_player_hand(opp_id, g_id, None, f"الخصم لعب {played_card}")
 
-# --- 5. معالجة التحدي (الحكم العادل ⚖️) ---
+# --- 5. معالجة التحدي (الحكم العادل ⚖️ - نسخة بدون أخطاء Syntax) ---
 @router.callback_query(F.data.startswith("chal_") | F.data.startswith("nochal_"))
 async def handle_challenge(c: types.CallbackQuery):
     data = c.data.split("_")
@@ -239,13 +239,20 @@ async def handle_challenge(c: types.CallbackQuery):
     is_p2_challenger = (int(challenger_id) == int(game['p2_id']))
     player_id = game['p1_id'] if is_p2_challenger else game['p2_id']
     
-    # جلب الأيدي وتنظيفها من الفراغات
-    p_hand = [h.strip() for h in (game['p1_hand'] if is_p1_player := (int(player_id) == int(game['p1_id'])) else game['p2_hand']).split(",") if h.strip()]
-    o_hand = [h.strip() for h in (game['p2_hand'] if is_p1_player else game['p1_hand']).split(",") if h.strip()]
+    # تحديد "هل اللاعب المنزّل للورقة هو p1؟"
+    is_p1_player = (int(player_id) == int(game['p1_id']))
+    
+    # جلب الأيدي وتنظيفها
+    hand_raw = game['p1_hand'] if is_p1_player else game['p2_hand']
+    p_hand = [h.strip() for h in hand_raw.split(",") if h.strip()]
+    
+    opp_hand_raw = game['p2_hand'] if is_p1_player else game['p1_hand']
+    o_hand = [h.strip() for h in opp_hand_raw.split(",") if h.strip()]
+    
     deck = [d.strip() for d in game['deck'].split(",") if d.strip()]
     top_before = game['top_card']
     
-    # 🚨 فحص الغش: هل كان اللاعب يملك ورقة أخرى صالحة غير الجوكر؟
+    # 🚨 فحص الغش: هل كان اللاعب يملك ورقة أخرى صالحة؟
     is_cheat = any(("🌈" not in h and (h[0] == top_before[0] or (len(h.split()) > 1 and h.split()[-1] == top_before.split()[-1]))) for h in p_hand if h != played_card)
     
     penalty_val = 6 if "➕4" in played_card else (4 if "➕2" in played_card else 3)
@@ -255,7 +262,6 @@ async def handle_challenge(c: types.CallbackQuery):
             for _ in range(penalty_val):
                 if deck: p_hand.append(deck.pop(0))
             
-            # تحديث الداتا بيس: العقوبة ليد اللاعب (p_hand) والدور يبقى عنده
             db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
                      (",".join(p_hand), ",".join(deck), player_id, g_id), commit=True)
             
@@ -270,7 +276,6 @@ async def handle_challenge(c: types.CallbackQuery):
             
             if played_card in p_hand: p_hand.remove(played_card)
             
-            # تحديث الداتا بيس: العقوبة ليد المتحدي (o_hand) واللاعب يكمل
             db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, {'p2_hand' if is_p1_player else 'p1_hand'}=%s, deck=%s, top_card=%s, turn=%s WHERE game_id=%s", 
                      (",".join(p_hand), ",".join(o_hand), ",".join(deck), played_card, player_id, g_id), commit=True)
             
