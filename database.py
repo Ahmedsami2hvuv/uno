@@ -27,15 +27,6 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
     
-    # جدول مستخدمين البوت
-    cur.execute('''CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY, 
-                    username TEXT,
-                    player_name TEXT, 
-                    password TEXT,
-                    online_points INTEGER DEFAULT 0, 
-                    is_registered BOOLEAN DEFAULT FALSE)''')
-    
     # جدول ألعاب الأونلاين
     cur.execute('''CREATE TABLE IF NOT EXISTS active_games (
                     game_id SERIAL PRIMARY KEY, 
@@ -46,7 +37,8 @@ def init_db():
                     p1_uno BOOLEAN DEFAULT FALSE, 
                     p2_uno BOOLEAN DEFAULT FALSE)''')
 
-    # جدول لاعبي الحاسبة مصلح 100%
+    # ✨ الجدول المهم (حفظ أسامي لاعبين الحاسبة)
+    # تأكدنا من وجود creator_id لعزل الأسامي
     cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
                     id SERIAL PRIMARY KEY,
                     player_name TEXT,
@@ -58,4 +50,4 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ قاعدة البيانات جاهزة ومؤمنة!")
+    print("✅ تم تحديث جداول ريلوي بنجاح!")
