@@ -27,21 +27,31 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
     
-    # جدول مستخدمي البوت
+    # 1. جدول مستخدمي البوت
     cur.execute('''CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY, 
                     username TEXT,
                     player_name TEXT, 
                     online_points INTEGER DEFAULT 0)''')
     
-    # جدول ألعاب الأونلاين
+    # 2. جدول ألعاب الأونلاين (مع إضافة أعمدة مسح الرسائل)
     cur.execute('''CREATE TABLE IF NOT EXISTS active_games (
                     game_id SERIAL PRIMARY KEY, 
                     p1_id BIGINT, p2_id BIGINT,
                     p1_hand TEXT, p2_hand TEXT, 
-                    top_card TEXT, turn BIGINT, status TEXT DEFAULT 'waiting')''')
+                    top_card TEXT, turn BIGINT, 
+                    status TEXT DEFAULT 'waiting',
+                    p1_uno BOOLEAN DEFAULT FALSE,
+                    p2_uno BOOLEAN DEFAULT FALSE)''')
 
-    # ✨ الجدول الحاسم (تأكد من كتابته بهذا الشكل بالضبط)
+    # --- تحديث الجدول لإضافة خانات مسح الرسائل إذا لم تكن موجودة ---
+    try:
+        cur.execute("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p1_last_msg BIGINT;")
+        cur.execute("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p2_last_msg BIGINT;")
+    except Exception as e:
+        print(f"تنبيه: الأعمدة موجودة مسبقاً أو حدث خطأ بسيط: {e}")
+
+    # 3. جدول لاعبي الحاسبة (الذاكرة الخاصة بكل مستخدم)
     cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
                     id SERIAL PRIMARY KEY,
                     player_name VARCHAR(100),
@@ -53,4 +63,4 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ جداول ريلوي جاهزة!")
+    print("✅ جداول ريلوي جاهزة ومحدثة بنظام مسح الرسائل!")
