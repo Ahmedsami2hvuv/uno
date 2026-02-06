@@ -84,7 +84,6 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
         db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
     except:
         pass
-
 # --- 3. البداية والربط ---
 @router.callback_query(F.data == "mode_random")
 async def start_random(callback: types.CallbackQuery):
