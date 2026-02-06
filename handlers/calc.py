@@ -21,13 +21,15 @@ def check_and_create_table():
                 UNIQUE(player_name, creator_id))''', commit=True)
 
 def get_saved_players(user_id):
-    check_and_create_table()
-    res = db_query("SELECT player_name FROM calc_players WHERE creator_id = %s", (user_id,))
+    sql = "SELECT player_name FROM calc_players WHERE creator_id = %s"
+    res = db_query(sql, (user_id,))
     return [r['player_name'] for r in res] if res else []
 
 def save_player_to_db(name, user_id):
-    check_and_create_table()
-    db_query("INSERT INTO calc_players (player_name, creator_id) VALUES (%s, %s) ON CONFLICT (player_name, creator_id) DO NOTHING", (name, user_id), commit=True)
+    # استخدام %s ضروري جداً في PostgreSQL بريلوي
+    sql = "INSERT INTO calc_players (player_name, creator_id) VALUES (%s, %s) ON CONFLICT (player_name, creator_id) DO NOTHING"
+    db_query(sql, (name, user_id), commit=True)
+    print(f"✅ تم إصدار أمر الحفظ لـ {name} للمستخدم {user_id}")
 
 def delete_player_from_db(name, user_id):
     db_query("DELETE FROM calc_players WHERE player_name = %s AND creator_id = %s", (name, user_id), commit=True)
