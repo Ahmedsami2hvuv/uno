@@ -10,27 +10,18 @@ from handlers import calc, common, online, stats, admin
 logging.basicConfig(level=logging.INFO)
 
 async def main():
-    # 🚨 عملية تنظيف الجداول القديمة (مرة واحدة فقط)
-    try:
-        db_query("DROP TABLE IF EXISTS calc_players CASCADE;", commit=True)
-        db_query("DROP TABLE IF EXISTS creator_id CASCADE;", commit=True)
-        print("✅ تم تنظيف الجداول القديمة بنجاح")
-    except Exception as e:
-        print(f"⚠️ تنبيه: لم يتم مسح الجداول (ربما هي ممسوحة أصلاً): {e}")
-
-    # بناء الجداول من جديد بالمواصفات الصحيحة
-    init_db() 
+    # تأكد إن أسطر الـ DROP TABLE ممسوحة من هنا 🗑️
+    
+    init_db() # هذا السطر يبني الجداول فقط إذا كانت ممسوحة، وما يأثر على البيانات الموجودة
     
     dp = Dispatcher(storage=MemoryStorage())
-    
-    # ربط الملفات
     dp.include_router(calc.router)
     dp.include_router(common.router)
     dp.include_router(online.router)
     dp.include_router(stats.router)
     dp.include_router(admin.router)
 
-    print("🚀 البوت انطلق بنجاح والجداول تحددت!")
+    print("🚀 البوت انطلق بنجاح والبيانات آمنة!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
