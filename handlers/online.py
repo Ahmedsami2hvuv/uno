@@ -33,8 +33,8 @@ def sort_uno_hand(hand):
         return (rank, card)
     return sorted(hand, key=sort_key)
 
-# --- 2. دالة التعديل اللحظي (مثل نظام الحاسبة) ---
-async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
+# --- 2. دالة التعديل اللحظي (نفس نظام الحاسبة بالضبط) ---
+async def send_player_hand(user_id, game_id, extra_text=""):
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
     game = res[0]
@@ -42,10 +42,8 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     is_p1 = (int(user_id) == int(game['p1_id']))
     
     # جلب الأسماء
-    p1_res = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))
-    p2_res = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))
-    p1_name = p1_res[0]['player_name'] if p1_res else "لاعب 1"
-    p2_name = p2_res[0]['player_name'] if p2_res else "لاعب 2"
+    p1_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))[0]['player_name']
+    p2_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))[0]['player_name']
     opp_name = p2_name if is_p1 else p1_name
     
     raw_hand = [c for c in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if c]
@@ -75,23 +73,18 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
         kb.append([InlineKeyboardButton(text=f"🚨 صيد {opp_name}!", callback_data=f"c_{game_id}")])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-
-    # 🔄 البحث عن الـ ID الحقيقي للرسالة
-    msg_id = old_msg_id if old_msg_id else game['p1_last_msg' if is_p1 else 'p2_last_msg']
+    
+    # الحصول على ID الرسالة من الداتا بيس
+    msg_id = game['p1_last_msg' if is_p1 else 'p2_last_msg']
 
     try:
-        if msg_id:
-            await bot.edit_message_text(text, user_id, msg_id, reply_markup=markup)
-        else:
-            raise Exception("No ID") # اجبار البوت على الارسال الجديد اذا ماكو ID
-    except Exception:
-        # إذا فشل التعديل، نمسح القديم غصباً عنه وننزل جديد
-        if msg_id:
-            try: await bot.delete_message(user_id, msg_id)
-            except: pass
-        
+        # التعديل فقط
+        await bot.edit_message_text(text, user_id, msg_id, reply_markup=markup)
+    except:
+        # إذا فشل التعديل نرسل جديدة ونخزن رقمها
         sent = await bot.send_message(user_id, text, reply_markup=markup)
-        db_query(f"UPDATE active_games SET {'p1_last_msg' if is_p1 else 'p2_last_msg'} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
+        col = "p1_last_msg" if is_p1 else "p2_last_msg"
+        db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
 
 # --- 3. البداية والربط ---
 @router.callback_query(F.data == "mode_random")
@@ -109,14 +102,14 @@ async def start_random(callback: types.CallbackQuery):
                  (user_id, ",".join(p1_h), ",".join(p2_h), top, ",".join(deck), g['p1_id'], g['game_id']), commit=True)
         
         await callback.message.edit_text("✅ تم الربط! بدأت اللعبة.")
-        # ارسال اول مرة لتسجيل الـ IDs
+        # إرسال أول رسائل لضبط الـ IDs
         await send_player_hand(g['p1_id'], g['game_id'])
         await send_player_hand(user_id, g['game_id'])
     else:
         db_query("INSERT INTO active_games (p1_id, status) VALUES (%s, 'waiting')", (user_id,), commit=True)
         await callback.message.edit_text("🔎 جاري البحث عن خصم...")
 
-# --- 4. منطق اللعب (التعديل غصباً عن الرسالة) ---
+# --- 4. منطق اللعب (Edit فقط) ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
     data = c.data.split("_")
@@ -134,54 +127,39 @@ async def process_play(c: types.CallbackQuery):
     can_play = ("🌈" in played_card or "🌈" in top_card or played_card[0] == top_card[0] or 
                 (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
     
-    if not can_play:
-        await c.answer("❌ ورقة خطأ!", show_alert=True)
-        for _ in range(2): 
-            if deck: my_hand.append(deck.pop(0))
-        db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
-        await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت ورقة خطأ وتسحبت ورقتين!")
-        return
+    if not can_play: return await c.answer("❌ ورقة خطأ!", show_alert=True)
 
     my_hand.remove(played_card)
     next_turn = opp_id
     extra_me, extra_opp = f"لعبت {played_card}", f"الخصم لعب {played_card}"
-    uno_reset = f", {'p1_uno' if is_p1 else 'p2_uno'}=FALSE" if len(my_hand) != 1 else ""
 
     if "➕" in played_card:
         val = 1 if "➕1" in played_card else (2 if "➕2" in played_card else 4)
         for _ in range(val): 
             if deck: opp_hand.append(deck.pop(0))
         next_turn = c.from_user.id
-        extra_me, extra_opp = f"🔥 سحبت الخصم {val} أوراق!", f"📥 سحبك الخصم {val} أوراق!"
-        uno_reset += f", {'p2_uno' if is_p1 else 'p1_uno'}=FALSE"
+        extra_me, extra_opp = f"🔥 سحبت الخصم {val}!", f"📥 سحبك الخصم {val}!"
     elif any(x in played_card for x in ["🚫", "🔄"]):
         next_turn = c.from_user.id
         extra_me, extra_opp = "🚫 منعت دور الخصم!", "🚫 الخصم منع دورك!"
 
-    db_query(f'''UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, 
-                {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s {uno_reset} WHERE game_id=%s''', 
+    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
              (played_card, ",".join(my_hand), ",".join(opp_hand), ",".join(deck), next_turn, g_id), commit=True)
     
     if not my_hand:
-        db_query("UPDATE users SET online_points = online_points + 10 WHERE user_id = %s", (c.from_user.id,), commit=True)
         db_query("DELETE FROM active_games WHERE game_id = %s", (g_id,), commit=True)
-        try: await c.message.delete()
-        except: pass
-        await bot.send_message(c.from_user.id, "🏆 مبروك الفوز!")
+        await c.message.edit_text("🏆 مبروك الفوز!")
         await bot.send_message(opp_id, "💀 هاردلك.. خسرتم الجولة.")
         return
 
-    # التحديث اللحظي
     if "🌈" in played_card and "➕" not in played_card:
-        try: await c.message.delete()
-        except: pass
         await ask_color(c.from_user.id, g_id)
     else:
-        # تحديث رسالتي ورسالة الخصم
-        await send_player_hand(c.from_user.id, g_id, c.message.message_id, extra_me)
-        await send_player_hand(opp_id, g_id, None, extra_opp)
+        # تعديل لحظي للطرفين
+        await send_player_hand(c.from_user.id, g_id, extra_me)
+        await send_player_hand(opp_id, g_id, extra_opp)
 
-# --- 5. نظام السحب ---
+# --- 5. السحب ---
 @router.callback_query(F.data.startswith("d_"))
 async def process_draw(c: types.CallbackQuery):
     g_id = c.data.split("_")[1]
@@ -194,50 +172,13 @@ async def process_draw(c: types.CallbackQuery):
     hand = [h for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h]
     top = game['top_card']
     
-    has_match = any(("🌈" in card or card[0] == top[0] or (len(card.split()) > 1 and len(top.split()) > 1 and card.split()[-1] == top.split()[-1])) for card in hand)
     new_c = deck.pop(0); hand.append(new_c)
-    can_p_new = ("🌈" in new_c or new_c[0] == top[0] or (len(new_c.split()) > 1 and len(top.split()) > 1 and new_c.split()[-1] == top.split()[-1]))
+    can_p = ("🌈" in new_c or new_c[0] == top[0] or (len(new_c.split()) > 1 and len(top.split()) > 1 and new_c.split()[-1] == top.split()[-1]))
     
-    nt = c.from_user.id if (can_p_new or has_match) else opp_id
-    msg_me = f"سحبت {new_c} والعب بغيرها!" if has_match else (f"سحبت {new_c} وترهم!" if can_p_new else f"سحبت {new_c} وما ترهم!")
-    
-    db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s, {'p1_uno' if is_p1 else 'p2_uno'}=FALSE WHERE game_id=%s", 
+    nt = c.from_user.id if can_p else opp_id
+    db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
              (",".join(hand), ",".join(deck), nt, g_id), commit=True)
     
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id, msg_me)
+    await send_player_hand(c.from_user.id, g_id, f"سحبت {new_c}")
     if nt == opp_id:
-        await send_player_hand(opp_id, g_id, None, "الخصم سحب وما رهمت.. دورك!")
-
-# --- 6. أونو وصيد ---
-@router.callback_query(F.data.startswith("u_"))
-async def process_uno(c: types.CallbackQuery):
-    g_id = c.data.split("_")[1]
-    db_query(f"UPDATE active_games SET {'p1_uno' if int(c.from_user.id) == int(db_query('SELECT p1_id FROM active_games WHERE game_id=%s',(g_id,))[0]['p1_id']) else 'p2_uno'}=TRUE WHERE game_id=%s", (g_id,), commit=True)
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "قلت أونو!")
-
-@router.callback_query(F.data.startswith("c_"))
-async def process_catch(c: types.CallbackQuery):
-    g_id = c.data.split("_")[1]
-    game = db_query("SELECT * FROM active_games WHERE game_id=%s", (g_id,))[0]
-    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
-    victim_id = game['p2_id'] if is_p1 else game['p1_id']
-    hand = (game['p2_hand'] if is_p1 else game['p1_hand']).split(","); deck = game['deck'].split(",")
-    if len(deck) >= 2: hand.extend([deck.pop(0), deck.pop(0)])
-    db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(hand), ",".join(deck), g_id), commit=True)
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "تم صيد الخصم!")
-    await send_player_hand(victim_id, g_id, None, "صادك الخصم!")
-
-# --- 7. اختيار اللون ---
-async def ask_color(u_id, g_id):
-    kb = [[InlineKeyboardButton(text="🔴", callback_data=f"sc_{g_id}_🔴"), InlineKeyboardButton(text="🔵", callback_data=f"sc_{g_id}_🔵")],[InlineKeyboardButton(text="🟡", callback_data=f"sc_{g_id}_🟡"), InlineKeyboardButton(text="🟢", callback_data=f"sc_{g_id}_🟢")]]
-    await bot.send_message(u_id, "🌈 اختر اللون:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-@router.callback_query(F.data.startswith("sc_"))
-async def set_color_logic(c: types.CallbackQuery):
-    _, g_id, col = c.data.split("_")
-    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    opp_id = game['p2_id'] if int(c.from_user.id) == int(game['p1_id']) else game['p1_id']
-    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", (f"{col} (🌈)", opp_id, g_id), commit=True)
-    await c.message.delete()
-    await send_player_hand(c.from_user.id, g_id, None, f"اخترت {col}")
-    await send_player_hand(opp_id, g_id, None, f"الخصم اختار {col}")
+        await send_player_hand(opp_id, g_id, "الخصم سحب.. دورك!")
