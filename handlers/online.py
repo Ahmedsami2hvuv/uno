@@ -82,22 +82,46 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
 @router.callback_query(F.data == "mode_random")
 async def start_random(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    # تنظيف أي طلبات سابقة معلقة لهذا المستخدم
     db_query("DELETE FROM active_games WHERE p1_id = %s AND status = 'waiting'", (user_id,), commit=True)
+    
+    # البحث عن خصم ينتظر
     waiting = db_query("SELECT * FROM active_games WHERE status = 'waiting' AND p1_id != %s LIMIT 1", (user_id,))
     
     if waiting:
         g = waiting[0]
         deck = generate_deck()
+        # توزيع الأوراق (7 لكل لاعب)
         p1_h, p2_h = [deck.pop() for _ in range(7)], [deck.pop() for _ in range(7)]
         top = deck.pop()
+        
+        # 🟢 جلب بيانات الخصم (اللاعب الأول اللي جان ينتظر)
+        p1_info = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (g['p1_id'],))[0]
+        # 🔵 جلب بياناتك أنت (اللاعب الثاني اللي دخلت هسة)
+        p2_info = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (user_id,))[0]
+        
+        # تحديث بيانات اللعبة في الداتا بيس
         db_query('''UPDATE active_games SET p2_id=%s, p1_hand=%s, p2_hand=%s, top_card=%s, deck=%s, status='playing', turn=%s WHERE game_id=%s''',
                  (user_id, ",".join(p1_h), ",".join(p2_h), top, ",".join(deck), g['p1_id'], g['game_id']), commit=True)
-        await callback.message.edit_text("✅ تم الربط! بدأت اللعبة.")
+        
+        # 📢 تبليغ اللاعب الأول ببياناتك
+        await bot.send_message(
+            g['p1_id'], 
+            f"✅ تم العثور على خصم!\n\n👤 الخصم: **{p2_info['player_name']}**\n🏅 نقاطه: `{p2_info['online_points']}`\n\nبدأت اللعبة.. ركز زين! 🔥"
+        )
+        
+        # 📢 تبليغك أنت ببيانات اللاعب الأول
+        await callback.message.edit_text(
+            f"✅ تم الربط بنجاح!\n\n👤 الخصم: **{p1_info['player_name']}**\n🏅 نقاطه: `{p1_info['online_points']}`\n\nبدأت اللعبة.. بالتوفيق! 🔥"
+        )
+        
+        # إرسال أوراق اللعب للطرفين
         await send_player_hand(g['p1_id'], g['game_id'])
         await send_player_hand(user_id, g['game_id'])
     else:
+        # إذا لم يوجد خصم، يوضع اللاعب في قائمة الانتظار
         db_query("INSERT INTO active_games (p1_id, status) VALUES (%s, 'waiting')", (user_id,), commit=True)
-        await callback.message.edit_text("🔎 جاري البحث عن خصم...")
+        await callback.message.edit_text("🔎 جاري البحث عن خصم قوي ينافسك... انتظر لحظة.")
 
 # --- 4. منطق اللعب ---
 @router.callback_query(F.data.startswith("p_"))
