@@ -210,6 +210,8 @@ async def process_play(c: types.CallbackQuery):
         # إرسال تحديث للخصم (يمسح رسالته القديمة إذا لقاها)
         await send_player_hand(opp_id, g_id, last_opp_msg, extra_opp)
 
+
+
 # --- 5. نظام السحب الذكي وتنظيف الشات ---
 @router.callback_query(F.data.startswith("d_"))
 async def process_draw(c: types.CallbackQuery):
