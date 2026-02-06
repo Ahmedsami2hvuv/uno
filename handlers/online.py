@@ -147,74 +147,102 @@ async def process_play(c: types.CallbackQuery):
     data = c.data.split("_")
     g_id, played_card = data[1], data[2]
     
+    # 1. جلب بيانات اللعبة
     game_res = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))
     if not game_res: return
     game = game_res[0]
-    if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك! ⏳")
+    
+    # التأكد من الدور
+    if int(c.from_user.id) != int(game['turn']): 
+        return await c.answer("مو دورك! ⏳", show_alert=True)
 
     is_p1 = (int(c.from_user.id) == int(game['p1_id']))
     opp_id = game['p2_id'] if is_p1 else game['p1_id']
+    
+    # 2. جلب أسماء اللاعبين (للرسائل الشخصية)
+    p1_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))[0]['player_name']
+    p2_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))[0]['player_name']
+    
+    my_name = p1_name if is_p1 else p2_name
+    opp_name = p2_name if is_p1 else p1_name
+
     my_hand = [h for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h]
     opp_hand = [h for h in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if h]
     deck = [d for d in game['deck'].split(",") if d]
     top_card = game['top_card']
 
+    # فحص صلاحية اللعب
     can_play = ("🌈" in played_card or "🌈" in top_card or played_card[0] == top_card[0] or 
                 (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
     
-    # 🚨 تبليغ الطرفين عند اللعب الخطأ
+    # 🚨 حالة اللعب الخطأ
     if not can_play:
-        await c.answer("❌ ورقة خطأ! عقوبة سحب ورقتين.", show_alert=True)
+        await c.answer(f"❌ ورقة خطأ يا {my_name}! سحبنا لك ورقتين.", show_alert=True)
         for _ in range(2): 
             if deck: my_hand.append(deck.pop(0))
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
         
-        await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت ورقة خطأ وتسحبت ورقتين!")
-        await send_player_hand(opp_id, g_id, None, "الخصم لعب ورقة خطأ وتسحب ورقتين والدور لسه عنده!")
+        await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"لعبت ورقة خطأ وتسحبت ورقتين!")
         return
 
+    # 3. تنفيذ الحركة
     my_hand.remove(played_card)
     next_turn = opp_id
     extra_me, extra_opp = f"لعبت {played_card}", f"الخصم لعب {played_card}"
 
     uno_reset = f", {'p1_uno' if is_p1 else 'p2_uno'}=FALSE" if len(my_hand) != 1 else ""
 
+    # أوراق الأكشن (سحب، منع، تغيير)
     if "➕" in played_card:
         val = 1 if "➕1" in played_card else (2 if "➕2" in played_card else 4)
         for _ in range(val): 
             if deck: opp_hand.append(deck.pop(0))
         next_turn = c.from_user.id
-        extra_me, extra_opp = f"🔥 سحبت خصمك {val} أوراق!", f"📥 سحبك الخصم {val} أوراق والدور عنده!"
+        extra_me, extra_opp = f"🔥 سحبت {opp_name} {val} أوراق!", f"📥 سحبك {my_name} {val} أوراق والدور لسه عنده!"
         uno_reset += f", {'p2_uno' if is_p1 else 'p1_uno'}=FALSE"
     elif any(x in played_card for x in ["🚫", "🔄"]):
         next_turn = c.from_user.id
-        extra_me, extra_opp = "🚫 منعت الخصم!", "🚫 الخصم منع دورك!"
+        extra_me, extra_opp = f"🚫 منعت دور {opp_name}!", f"🚫 {my_name} منع دورك!"
 
+    # تحديث الداتا بيس
     db_query(f'''UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, 
                 {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s {uno_reset} WHERE game_id=%s''', 
              (played_card, ",".join(my_hand), ",".join(opp_hand), ",".join(deck), next_turn, g_id), commit=True)
     
-    # 🚨 فحص الفوز مع عرض النقاط والأزرار
+    # 🚨 فحص الفوز (التعديل المطلوب)
     if not my_hand:
-        db_query("UPDATE users SET online_points = online_points + 10 WHERE user_id = %s", (c.from_user.id,), commit=True)
-        total_pts = db_query("SELECT online_points FROM users WHERE user_id = %s", (c.from_user.id,))[0]['online_points']
+        # جلب نقاط الفائز الحالية وتحديثها
+        winner_data = db_query("SELECT online_points FROM users WHERE user_id = %s", (c.from_user.id,))[0]
+        new_pts = winner_data['online_points'] + 10
+        db_query("UPDATE users SET online_points = %s WHERE user_id = %s", (new_pts, c.from_user.id), commit=True)
+        
         db_query("DELETE FROM active_games WHERE game_id = %s", (g_id,), commit=True)
         
-        # أزرار النهاية
         end_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎲 جولة جديدة", callback_data="mode_random")],
             [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
         ])
 
+        # مسح رسالة اللعب الأخيرة
         await c.message.delete()
-        await bot.send_message(c.from_user.id, f"🏆 مبروك الفوز!\n✅ حصلت على: +10 نقاط\n💰 مجموع نقاطك الكلي: {total_pts}", reply_markup=end_kb)
-        await bot.send_message(opp_id, "💀 هاردلك! لقد خسرتم هذه الجولة.", reply_markup=end_kb)
+        
+        # رسالة الفائز
+        await bot.send_message(c.from_user.id, f"🏆 مبروك الفوز يا **{my_name}**!\n✅ غلبت **{opp_name}** وحصلت على +10 نقاط.\n💰 رصيدك الكلي: `{new_pts}`", reply_markup=end_kb)
+        
+        # رسالة الخاسر
+        await bot.send_message(opp_id, f"💀 هاردلك.. فاز عليك **{my_name}**!\n📈 نقاطه زادت وصارت: `{new_pts}`\nتعوضها بالجولة الجاية!", reply_markup=end_kb)
         return
 
+    # 4. إرسال الأوراق الجديدة وتنظيف الشات
     if "🌈" in played_card and "➕" not in played_card:
         await ask_color(c.from_user.id, g_id)
     else:
+        # مسح رسالة الخصم القديمة (إذا كنت تخزن الـ msg_id، وإلا سنعتمد على المسح عند الحركة)
         await send_player_hand(c.from_user.id, g_id, c.message.message_id, extra_me)
+        
+        # لجعل الخصم يرى الرسالة الجديدة ويمسح القديمة
+        # ملاحظة: سنحتاج لجلب الـ ID مالت رسالة الخصم إذا أردنا مسحها بدقة، 
+        # لكن حالياً send_player_hand ستقوم بالواجب عند وصول دوره.
         await send_player_hand(opp_id, g_id, None, extra_opp)
 
 # --- 5. نظام السحب التنبيهي ---
