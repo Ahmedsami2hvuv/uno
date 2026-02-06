@@ -43,17 +43,31 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
     game = res[0]
+    
+    # جلب أسماء اللاعبين من الداتا بيس
+    p1_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))[0]['player_name']
+    p2_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))[0]['player_name']
+
     is_p1 = (int(user_id) == int(game['p1_id']))
+    my_name = p1_name if is_p1 else p2_name
+    opp_name = p2_name if is_p1 else p1_name
     
     raw_hand = [c for c in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if c]
     my_hand = sort_uno_hand(raw_hand)
-    opp_hand = [c for c in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if c]
+    opp_hand_count = len([c for c in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if c])
     
-    turn_text = "🟢 دورك الآن!" if int(game['turn']) == int(user_id) else "⏳ دور الخصم"
-    status_text = f"\n\n🔔 **تنبيه:** {extra_text}" if extra_text else ""
+    # تخصيص نص الدور
+    if int(game['turn']) == int(user_id):
+        turn_text = "🟢 دورك الآن!"
+    else:
+        turn_text = f"⏳ دور **{opp_name}**"
+
+    # استبدال كلمة "الخصم" بالاسم في التنبيهات
+    formatted_extra = extra_text.replace("الخصم", f"**{opp_name}**")
+    status_text = f"\n\n🔔 **تنبيه:** {formatted_extra}" if extra_text else ""
     
     text = (f"🃏 المكشوفة: `{game['top_card']}`\n"
-            f"👤 الخصم: {len(opp_hand)} أوراق\n"
+            f"👤 **{opp_name}**: عنده {opp_hand_count} أوراق\n"
             f"━━━━━━━━━━━━━━\n"
             f"{turn_text}{status_text}")
 
@@ -65,13 +79,12 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     if row: kb.append(row)
     
     kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"d_{game_id}")])
-    
     if len(my_hand) == 2:
         kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"u_{game_id}")])
     
     opp_uno_secured = game['p2_uno'] if is_p1 else game['p1_uno']
-    if len(opp_hand) == 1 and not opp_uno_secured:
-        kb.append([InlineKeyboardButton(text="🚨 صيده!", callback_data=f"c_{game_id}")])
+    if opp_hand_count == 1 and not opp_uno_secured:
+        kb.append([InlineKeyboardButton(text=f"🚨 صيد {opp_name}!", callback_data=f"c_{game_id}")])
 
     try:
         sent = await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
