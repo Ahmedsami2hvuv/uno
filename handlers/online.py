@@ -35,15 +35,22 @@ def sort_uno_hand(hand):
 
 # --- 2. دالة إرسال اليد وتنظيف الشات (الجوهرة) ---
 async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
+    # 1. مسح الرسالة القديمة فوراً (إذا كانت موجودة)
+    if old_msg_id:
+        try:
+            await bot.delete_message(user_id, old_msg_id)
+        except Exception:
+            pass
+
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
     game = res[0]
     
     # جلب الأسماء
-    p1_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))
-    p2_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))
-    p1_name = p1_data[0]['player_name'] if p1_data else "لاعب 1"
-    p2_name = p2_data[0]['player_name'] if p2_data else "لاعب 2"
+    p1_res = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))
+    p2_res = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))
+    p1_name = p1_res[0]['player_name'] if p1_res else "لاعب 1"
+    p2_name = p2_res[0]['player_name'] if p2_res else "لاعب 2"
 
     is_p1 = (int(user_id) == int(game['p1_id']))
     opp_name = p2_name if is_p1 else p1_name
@@ -57,7 +64,7 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     status_text = f"\n\n🔔 **تنبيه:** {formatted_extra}" if extra_text else ""
     
     text = (f"🃏 المكشوفة: `{game['top_card']}`\n"
-            f"👤 الخصم: **{opp_name}** ({opp_hand_count} أوراق)\n"
+            f"👤 **{opp_name}**: عنده ({opp_hand_count}) أوراق\n"
             f"━━━━━━━━━━━━━━\n"
             f"{turn_text}{status_text}")
 
@@ -69,31 +76,21 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     if row: kb.append(row)
     kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"d_{game_id}")])
     
-    # أزرار أونو والصيد
     if len(my_hand) == 2: kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"u_{game_id}")])
     opp_uno_secured = game['p2_uno'] if is_p1 else game['p1_uno']
     if opp_hand_count == 1 and not opp_uno_secured:
         kb.append([InlineKeyboardButton(text=f"🚨 صيد {opp_name}!", callback_data=f"c_{game_id}")])
 
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
-
-    # 🔄 هنا السحر: نحاول نسوي Edit، إذا فشل نرسل رسالة جديدة
     try:
-        if old_msg_id:
-            await bot.edit_message_text(text, user_id, old_msg_id, reply_markup=markup)
-            return old_msg_id
-        else:
-            sent = await bot.send_message(user_id, text, reply_markup=markup)
-            # نحفظ الـ ID الجديد بالداتا بيس
-            col = "p1_last_msg" if is_p1 else "p2_last_msg"
-            db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
-            return sent.message_id
-    except Exception as e:
-        # إذا ما كدر يسوي Edit (مثلاً الرسالة انمسحت)، يرسل وحدة جديدة
-        sent = await bot.send_message(user_id, text, reply_markup=markup)
+        # 2. إرسال رسالة جديدة دائماً
+        sent = await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        
+        # 3. حفظ الـ ID الجديد بالداتا بيس للمسح القادم
         col = "p1_last_msg" if is_p1 else "p2_last_msg"
         db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
         return sent.message_id
+    except Exception:
+        return None
 # --- 3. البداية والربط ---
 @router.callback_query(F.data == "mode_random")
 async def start_random(callback: types.CallbackQuery):
