@@ -253,33 +253,58 @@ async def save_loser_pts(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "c_finish_round_now")
 async def finish_round_final(callback: types.CallbackQuery, state: FSMContext):
-    d = (await state.get_data())['calc_data']
-    sum_pts = sum(d['temp_round'].items() if isinstance(d['temp_round'], dict) else d['temp_round']) # تصحيح بسيط
+    state_data = await state.get_data()
+    d = state_data.get('calc_data', {})
+    
+    # حساب مجموع نقاط الخاسرين
     sum_pts = sum(d['temp_round'].values())
     
-    for p, pts in d['temp_round'].items(): d['scores'][p] += pts
+    # إضافة النقاط لكل لاعب في الجدول العام للجلسة
+    for p, pts in d['temp_round'].items():
+        d['scores'][p] += pts
+    
+    # إضافة المجموع للفائز
     d['scores'][d['current_winner']] += sum_pts
     
     res = f"📝 **نتائج الجولة:**\n"
     for p, s in d['scores'].items():
-        ch = f"+{d['temp_round'][p]}" if p != d['current_winner'] else f"+{sum_pts}"
-        res += f"👤 {p}: {s} ({ch})\n"
+        if p == d['current_winner']:
+            res += f"👤 {p}: `{s}` (+{sum_pts} 🏆)\n"
+        else:
+            res += f"👤 {p}: `{s}` (+{d['temp_round'][p]})\n"
     
+    # فحص هل وصل أحد اللاعبين للسقف (نهاية اللعبة)
     if any(s >= d['ceiling'] for s in d['scores'].values()):
+        # الفائز الحقيقي هو صاحب أعلى نقاط (أو أقل، حسب قانونكم بس هنا اعتمدنا الأعلى)
         fw = max(d['scores'], key=d['scores'].get)
         total_win_points = d['scores'][fw]
-        # تسجيل الفوز في الداتا بيس
-        db_query("UPDATE calc_players SET wins = wins + 1, total_points = total_points + %s WHERE player_name = %s AND creator_id = %s", 
-                 (total_win_points, fw, callback.from_user.id), commit=True)
         
-        res += f"\n🏁 **انتهت اللعبة!**\nالفائز: **{fw}** 🏆\n(تم تحديث إحصائياتك)"
-        kb = [[InlineKeyboardButton(text="📊 إحصائياتي", callback_data="calc_stats")],
+        # تسجيل الفوز في الداتا بيس الدائمية
+        try:
+            db_query("UPDATE calc_players SET wins = wins + 1, total_points = total_points + %s WHERE player_name = %s AND creator_id = %s", 
+                     (total_win_points, fw, callback.from_user.id), commit=True)
+            res += f"\n🏁 **انتهت اللعبة!**\nالفائز النهائي: **{fw}** 🏆\n(تم تحديث إحصائياتك بنجاح)"
+        except Exception as e:
+            res += f"\n🏁 **انتهت اللعبة!**\nالفائز النهائي: **{fw}** 🏆\n(⚠️ خطأ في حفظ الإحصائيات)"
+            
+        kb = [[InlineKeyboardButton(text="📊 إحصائيات لواعبي", callback_data="calc_stats")],
               [InlineKeyboardButton(text="🏠 الرئيسية", callback_data="home")]]
     else:
+        # اللعبة مستمرة، جولة جديدة
         kb = [[InlineKeyboardButton(text="🔄 جولة جديدة", callback_data="c_next_round")]]
     
     await state.update_data(calc_data=d)
     await callback.message.edit_text(res, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "c_next_round")
+async def next_rnd(callback: types.CallbackQuery, state: FSMContext):
+    # مسح بيانات الجولة المؤقتة فقط مع الحفاظ على السكور العام
+    d = (await state.get_data())['calc_data']
+    d['temp_round'] = {}
+    d['calculated_losers'] = []
+    d['current_winner'] = ""
+    await state.update_data(calc_data=d)
+    await render_main_ui(callback.message, state, "بدأت جولة جديدة، بالتوفيق!")
 
 @router.callback_query(F.data == "c_next_round")
 async def next_rnd(callback: types.CallbackQuery, state: FSMContext):
