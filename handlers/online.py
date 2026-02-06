@@ -180,11 +180,14 @@ async def process_play(c: types.CallbackQuery):
         await bot.send_message(opp_id, f"💀 هاردلك.. فاز عليك **{my_name}**!\n📈 نقاطه صارت: `{new_pts}`", reply_markup=end_kb)
         return
 
-    # تنظيف رسائل الطرفين وإرسال التحديث
-    last_opp_msg = game['p2_last_msg' if is_p1 else 'p1_last_msg']
+    # 🚨 تعديل منطق الجوكر لضمان مسح الرسالة القديمة
     if "🌈" in played_card and "➕" not in played_card:
+        # مسح رسالة اللعب الحالية قبل طلب اللون
+        try: await c.message.delete()
+        except: pass
         await ask_color(c.from_user.id, g_id)
     else:
+        # اللعب العادي
         await send_player_hand(c.from_user.id, g_id, c.message.message_id, extra_me)
         await send_player_hand(opp_id, g_id, last_opp_msg, extra_opp)
 
@@ -256,9 +259,21 @@ async def ask_color(u_id, g_id):
 async def set_color_logic(c: types.CallbackQuery):
     _, g_id, col = c.data.split("_")
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
+    
     is_p1 = (int(c.from_user.id) == int(game['p1_id']))
     opp_id = game['p2_id'] if is_p1 else game['p1_id']
-    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", (f"{col} (🌈)", opp_id, g_id), commit=True)
-    await c.message.delete()
+    
+    # تحديث الكرت المكشوف وتحويل الدور
+    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", 
+             (f"{col} (🌈)", opp_id, g_id), commit=True)
+    
+    # 1. مسح رسالة "اختر اللون"
+    try: await c.message.delete()
+    except: pass
+    
+    # 2. إرسال اليد الجديدة لك (بدون مسح قديم لأننا مسحناه فوق)
     await send_player_hand(c.from_user.id, g_id, None, f"اخترت اللون {col}!")
-    await send_player_hand(opp_id, g_id, game['p2_last_msg' if is_p1 else 'p1_last_msg'], f"الخصم اختار اللون {col}!")
+    
+    # 3. مسح رسالة الخصم القديمة وتنبيهه باللون الجديد
+    last_opp_msg = game['p2_last_msg' if is_p1 else 'p1_last_msg']
+    await send_player_hand(opp_id, g_id, last_opp_msg, f"الخصم اختار اللون {col}!")
