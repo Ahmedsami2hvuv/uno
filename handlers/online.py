@@ -36,35 +36,39 @@ def sort_uno_hand(hand):
 
 # --- 2. دالة إرسال اليد (نظام المسح القسري) ---
 async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
+    # 1. جلب بيانات اللعبة وتأكيد وجود الخانات
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
     game = res[0]
     is_p1 = (int(user_id) == int(game['p1_id']))
 
-    # 🚨 تحديد الرسالة المطلوب مسحها
-    target_msg = old_msg_id if old_msg_id else game['p1_last_msg' if is_p1 else 'p2_last_msg']
-    
-    if target_msg and target_msg > 0:
-        try: await bot.delete_message(user_id, target_msg)
-        except: pass
+    # 2. جلب ID الرسالة من الداتا بيس إذا لم يتم تمريره يدويًا
+    db_msg_id = game['p1_last_msg'] if is_p1 else game['p2_last_msg']
+    target_to_delete = old_msg_id if old_msg_id else db_msg_id
 
-    # جلب الأسماء
-    p1_n = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))[0]['player_name']
-    p2_n = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))[0]['player_name']
-    opp_name = p2_n if is_p1 else p1_n
+    # 3. محاولة المسح (القسري)
+    if target_to_delete and int(target_to_delete) > 0:
+        try:
+            await bot.delete_message(user_id, target_to_delete)
+        except Exception as e:
+            print(f"⚠️ فشل المسح (ربما الرسالة ممسوحة أصلاً): {e}")
+
+    # --- تحضير المحتوى (نفس كودك) ---
+    p1_res = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))
+    p2_res = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))
+    p1_name = p1_res[0]['player_name'] if p1_res else "لاعب 1"
+    p2_name = p2_res[0]['player_name'] if p2_res else "لاعب 2"
+    opp_name = p2_name if is_p1 else p1_name
     
-    hand = [c for c in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if c]
-    my_hand = sort_uno_hand(hand)
+    raw_hand = [c for c in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if c]
+    my_hand = sort_uno_hand(raw_hand)
     opp_count = len([c for c in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if c])
     
     turn_text = "🟢 **دورك الآن!**" if int(game['turn']) == int(user_id) else f"⏳ دور: **{opp_name}**"
-    formatted_extra = extra_text.replace("الخصم", f"**{opp_name}**")
-    status_text = f"\n\n🔔 **تنبيه:** {formatted_extra}" if extra_text else ""
-    
     text = (f"🃏 المكشوفة: `{game['top_card']}`\n"
             f"👤 **{opp_name}**: ({opp_count}) أوراق\n"
             f"━━━━━━━━━━━━━━\n"
-            f"{turn_text}{status_text}")
+            f"{turn_text}\n\n🔔 {extra_text.replace('الخصم', opp_name) if extra_text else ''}")
 
     kb = []
     row = []
@@ -73,17 +77,16 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
         if len(row) == 3: kb.append(row); row = []
     if row: kb.append(row)
     kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"d_{game_id}")])
-    
-    if len(my_hand) == 2: kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"u_{game_id}")])
-    opp_uno_secured = game['p2_uno'] if is_p1 else game['p1_uno']
-    if opp_count == 1 and not opp_uno_secured:
-        kb.append([InlineKeyboardButton(text=f"🚨 صيد {opp_name}!", callback_data=f"c_{game_id}")])
 
+    # 4. الإرسال وتحديث الداتا بيس (أهم خطوة)
     try:
         sent = await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         col = "p1_last_msg" if is_p1 else "p2_last_msg"
+        # تحديث فوري بالداتا بيس للرسالة الجديدة
         db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
-    except: pass
+    except Exception as e:
+        print(f"❌ خطأ في الإرسال: {e}")
+
 
 # --- 3. البداية والربط ---
 @router.callback_query(F.data == "mode_random")
