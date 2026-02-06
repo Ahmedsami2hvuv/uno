@@ -58,7 +58,6 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     
     if is_my_turn:
         top = game['top_card']
-        # فحص هل يوجد أي ورقة صالحة للعب (بما فيها الجوكر في حال عدم وجود بديل)
         has_playable = any(("🌈" not in c and (c[0] == top[0] or (len(c.split()) > 1 and len(top.split()) > 1 and c.split()[-1] == top.split()[-1]))) for c in my_hand)
         if not has_playable and not any("🌈" in c for c in my_hand):
             return await auto_draw(user_id, game_id)
@@ -108,7 +107,7 @@ async def auto_draw(user_id, game_id):
     await send_player_hand(user_id, game_id, None, f"📥 سحبتلك ({new_c})")
     if nt == opp_id: await send_player_hand(opp_id, game_id, None, "الخصم سحب وما رهمت.. دورك!")
 
-# --- 4. منطق اللعب (الارتداد الشامل) ---
+# --- 4. منطق اللعب (الارتداد والتبليغ الشامل) ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
     _, g_id, played_card = c.data.split("_")
@@ -121,7 +120,7 @@ async def process_play(c: types.CallbackQuery):
     deck = game['deck'].split(","); top_card = game['top_card']
     my_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
 
-    # 1. فحص غش الجوكر (إذا عندك ورق عادي ونزلت جوكر)
+    # فحص غش الجوكر
     has_normal_playable = any(("🌈" not in h and (h[0] == top_card[0] or (len(h.split()) > 1 and len(top_card.split()) > 1 and h.split()[-1] == top_card.split()[-1]))) for h in my_hand)
     
     if "🌈" in played_card and has_normal_playable:
@@ -129,22 +128,24 @@ async def process_play(c: types.CallbackQuery):
         for _ in range(penalty): 
             if deck: my_hand.append(deck.pop(0))
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
-        await c.answer(f"⚠️ غش! الورقة ارتدت ليدك وتعاقبت بـ {penalty}.", show_alert=True)
-        await bot.send_message(opp_id, f"🚨 {my_name} حاول يغش بالجوكر! ارتدت ليده وتعاقب بـ {penalty} أوراق.")
-        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"غشيت بالجوكر.. ارتدت {played_card} ليدك وتعاقبت!")
+        await c.answer(f"⚠️ غش! ارتدت ليدك وتعاقبت بـ {penalty}.", show_alert=True)
+        # تبليغ الخصم بمسح رسالته وتحديثها
+        await send_player_hand(opp_id, g_id, None, f"🚨 يابة {my_name} غش بالجوكر وارتدت ليده وتعاقب!")
+        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"غشيت بالجوكر.. ارتدت ليدك وتعاقبت!")
 
-    # 2. فحص اللعب الخاطئ (ورقة عادية ما ترهم)
+    # فحص اللعب الخاطئ (ورقة عادية)
     can_play = ("🌈" in played_card or played_card[0] == top_card[0] or (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
     
     if not can_play:
-        # عقوبة الارتداد للورقة العادية: تنسحب 2 والورقة ترجع ليدك والدور يبقى عندك
         for _ in range(2): 
             if deck: my_hand.append(deck.pop(0))
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
         await c.answer("❌ ورقة خطأ! ارتدت ليدك وتعاقبت بـ 2.", show_alert=True)
-        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"لعبت {played_card} خطأ! ارتدت ليدك وتعاقبت ورقتين.")
+        # تبليغ الخصم بمسح رسالته وتحديثها (بدون كشف اسم الورقة)
+        await send_player_hand(opp_id, g_id, None, f"🚨 يابة {my_name} لعب ورقة خطأ وارتدت ليده وتعاقب!")
+        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت خطأ.. ارتدت ليدك وتعاقبت!")
 
-    # 3. إذا اللعب صحيح نظامياً (يتم حذف الورقة وتحويل الدور)
+    # اللعب النظامي
     my_hand.remove(played_card); next_turn = opp_id
     opp_hand = (game['p2_hand'] if is_p1 else game['p1_hand']).split(",")
 
