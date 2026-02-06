@@ -1,4 +1,3 @@
-import asyncio
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -11,7 +10,7 @@ router = Router()
 class CalcStates(StatesGroup):
     adding_new_player = State()
 
-# --- وظائف قاعدة البيانات (عزل حسب المستخدم) ---
+# --- وظائف قاعدة البيانات ---
 def get_saved_players(user_id):
     sql = "SELECT player_name FROM calc_players WHERE creator_id = %s"
     res = db_query(sql, (user_id,))
@@ -24,6 +23,17 @@ def save_player_to_db(name, user_id):
 def delete_player_from_db(name, user_id):
     sql = "DELETE FROM calc_players WHERE player_name = %s AND creator_id = %s"
     db_query(sql, (name, user_id), commit=True)
+
+def get_player_stats(user_id):
+    # جلب أفضل 5 لاعبين حسب الفوز
+    sql = """
+    SELECT player_name, wins, total_points 
+    FROM calc_players 
+    WHERE creator_id = %s 
+    ORDER BY wins DESC, total_points DESC 
+    LIMIT 5
+    """
+    return db_query(sql, (user_id,))
 
 # --- واجهة إدارة اللاعبين ---
 @router.callback_query(F.data == "mode_calc")
@@ -60,30 +70,41 @@ async def render_player_manager(message, state):
             InlineKeyboardButton(text="🗑️ مسح", callback_data=f"delp_{p}")
         ])
     
-    kb_list.append([InlineKeyboardButton(text="➕ إضافة اسم لاعب جديد", callback_data="add_p_new")])
+    kb_list.append([InlineKeyboardButton(text="➕ إضافة اسم لاعب", callback_data="add_p_new")])
+    kb_list.append([InlineKeyboardButton(text="📊 إحصائيات لواعبي", callback_data="calc_stats")])
     
     if len(d.get("selected", [])) >= 2:
         kb_list.append([InlineKeyboardButton(text="➡️ استمرار لضبط السقف", callback_data="go_ceiling")])
     
     kb_list.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
     
-    text = "👥 **قائمة لاعبي الحاسبة الخاصة بك**:\n\nاختر اللاعبين المشاركين (✅) أو أضف لاعباً جديداً:"
-    
-    try:
-        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
-    except:
-        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+    text = "👥 **قائمة لاعبي الحاسبة الخاصة بك**:\nالأسماء محفوظة في ذاكرتك الخاصة."
+    try: await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+    except: await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
+
+@router.callback_query(F.data == "calc_stats")
+async def show_my_calc_stats(callback: types.CallbackQuery):
+    uid = callback.from_user.id
+    stats = get_player_stats(uid)
+    txt = "📊 **أفضل 5 لاعبين عندك:**\n\n"
+    if not stats:
+        txt += "لا توجد إحصائيات بعد. العب جولات كاملة لتسجيل الفوز!"
+    else:
+        for i, p in enumerate(stats, 1):
+            txt += f"{i}. 👤 **{p['player_name']}**\n   🏆 فوز: `{p['wins']}` | 🏅 نقاط: `{p['total_points']}`\n"
+            txt += "━━━━━━━━━━━━━━\n"
+    kb = [[InlineKeyboardButton(text="🔙 عودة", callback_data="mode_calc")]]
+    await callback.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data == "add_p_new")
 async def ask_name(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(CalcStates.adding_new_player)
-    await callback.message.answer("🖋️ أرسل اسم اللاعب الجديد الآن:")
+    await callback.message.answer("🖋️ أرسل اسم اللاعب الجديد:")
     await callback.answer()
 
 @router.message(CalcStates.adding_new_player)
 async def process_name(message: types.Message, state: FSMContext):
-    name = message.text.strip()[:15]
-    uid = message.from_user.id
+    name, uid = message.text.strip()[:15], message.from_user.id
     if name:
         save_player_to_db(name, uid)
         state_data = await state.get_data()
@@ -93,7 +114,6 @@ async def process_name(message: types.Message, state: FSMContext):
             if "selected" not in d: d["selected"] = []
             d["selected"].append(name)
         await state.update_data(calc_data=d)
-    
     await state.set_state(None)
     await render_player_manager(message, state)
 
@@ -102,13 +122,10 @@ async def toggle_p(callback: types.CallbackQuery, state: FSMContext):
     name = callback.data.split("_")[1]
     state_data = await state.get_data()
     d = state_data.get('calc_data', {})
-    
-    if name in d.get("selected", []):
-        d["selected"].remove(name)
+    if name in d.get("selected", []): d["selected"].remove(name)
     else:
         if "selected" not in d: d["selected"] = []
         d["selected"].append(name)
-    
     await state.update_data(calc_data=d)
     await render_player_manager(callback.message, state)
 
@@ -123,7 +140,7 @@ async def del_p(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(calc_data=d)
     await render_player_manager(callback.message, state)
 
-# --- اختيار السقف ---
+# --- نظام اللعب ---
 @router.callback_query(F.data == "go_ceiling")
 async def choose_ceiling(callback: types.CallbackQuery, state: FSMContext):
     kb = [[InlineKeyboardButton(text=str(x), callback_data=f"set_{x}") for x in [100, 150, 200]],
@@ -134,7 +151,8 @@ async def choose_ceiling(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("set_"))
 async def start_session(callback: types.CallbackQuery, state: FSMContext):
     val = int(callback.data.split("_")[1])
-    d = (await state.get_data())['calc_data']
+    state_data = await state.get_data()
+    d = state_data['calc_data']
     d['ceiling'] = val
     d['scores'] = {p: 0 for p in d['selected']}
     await state.update_data(calc_data=d)
@@ -162,7 +180,6 @@ async def c_toggle_dir(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(calc_data=d)
     await render_main_ui(callback.message, state)
 
-# --- إنهاء الجولة واختيار الفائز ---
 @router.callback_query(F.data == "c_end_round")
 async def select_winner_init(callback: types.CallbackQuery, state: FSMContext):
     d = (await state.get_data())['calc_data']
@@ -189,7 +206,6 @@ async def render_loser_list(message, state):
         kb.append([InlineKeyboardButton(text="✅ تأكيد وحساب النقاط", callback_data="c_finish_round_now")])
     await message.edit_text("📉 **حساب أوراق الخاسرين:**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# --- الكيبورد المصلح ---
 @router.callback_query(F.data.startswith("calcpts_"))
 async def show_keypad(callback: types.CallbackQuery, state: FSMContext):
     target = callback.data.split("_")[1]
@@ -208,7 +224,7 @@ async def render_keypad(cid, state, target, cur):
         [InlineKeyboardButton(text="🃏 م+1 (10)", callback_data=f"k_{target}_{cur}_10"), InlineKeyboardButton(text="🃏 م+2 (20)", callback_data=f"k_{target}_{cur}_20"), InlineKeyboardButton(text="🃏 م+4 (50)", callback_data=f"k_{target}_{cur}_50")],
         [InlineKeyboardButton(text="🧹 إعادة", callback_data=f"calcpts_{target}"), InlineKeyboardButton(text="✅ تم", callback_data=f"kdone_{target}_{cur}")]
     ]
-    await bot.send_message(cid, f"🔢 حساب: **{target}**\nالمجموع: `{cur}`", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await bot.send_message(cid, f"🔢 حساب أوراق: **{target}**\nالمجموع: `{cur}`", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data.startswith("k_"))
 async def update_keypad(callback: types.CallbackQuery, state: FSMContext):
@@ -224,7 +240,7 @@ async def update_keypad(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🃏 م+1 (10)", callback_data=f"k_{t}_{new}_10"), InlineKeyboardButton(text="🃏 م+2 (20)", callback_data=f"k_{t}_{new}_20"), InlineKeyboardButton(text="🃏 م+4 (50)", callback_data=f"k_{t}_{new}_50")],
         [InlineKeyboardButton(text="🧹 إعادة", callback_data=f"calcpts_{t}"), InlineKeyboardButton(text="✅ تم", callback_data=f"kdone_{t}_{new}")]
     ]
-    await callback.message.edit_text(f"🔢 حساب: **{t}**\nالمجموع: `{new}`", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.message.edit_text(f"🔢 حساب أوراق: **{t}**\nالمجموع: `{new}`", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data.startswith("kdone_"))
 async def save_loser_pts(callback: types.CallbackQuery, state: FSMContext):
@@ -238,18 +254,30 @@ async def save_loser_pts(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "c_finish_round_now")
 async def finish_round_final(callback: types.CallbackQuery, state: FSMContext):
     d = (await state.get_data())['calc_data']
+    sum_pts = sum(d['temp_round'].items() if isinstance(d['temp_round'], dict) else d['temp_round']) # تصحيح بسيط
     sum_pts = sum(d['temp_round'].values())
+    
     for p, pts in d['temp_round'].items(): d['scores'][p] += pts
     d['scores'][d['current_winner']] += sum_pts
+    
     res = f"📝 **نتائج الجولة:**\n"
     for p, s in d['scores'].items():
         ch = f"+{d['temp_round'][p]}" if p != d['current_winner'] else f"+{sum_pts}"
         res += f"👤 {p}: {s} ({ch})\n"
+    
     if any(s >= d['ceiling'] for s in d['scores'].values()):
         fw = max(d['scores'], key=d['scores'].get)
-        res += f"\n🏁 **انتهت اللعبة!**\nالفائز: **{fw}** 🏆"
-        kb = [[InlineKeyboardButton(text="🏠 القائمة", callback_data="home")]]
-    else: kb = [[InlineKeyboardButton(text="🔄 جولة جديدة", callback_data="c_next_round")]]
+        total_win_points = d['scores'][fw]
+        # تسجيل الفوز في الداتا بيس
+        db_query("UPDATE calc_players SET wins = wins + 1, total_points = total_points + %s WHERE player_name = %s AND creator_id = %s", 
+                 (total_win_points, fw, callback.from_user.id), commit=True)
+        
+        res += f"\n🏁 **انتهت اللعبة!**\nالفائز: **{fw}** 🏆\n(تم تحديث إحصائياتك)"
+        kb = [[InlineKeyboardButton(text="📊 إحصائياتي", callback_data="calc_stats")],
+              [InlineKeyboardButton(text="🏠 الرئيسية", callback_data="home")]]
+    else:
+        kb = [[InlineKeyboardButton(text="🔄 جولة جديدة", callback_data="c_next_round")]]
+    
     await state.update_data(calc_data=d)
     await callback.message.edit_text(res, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
