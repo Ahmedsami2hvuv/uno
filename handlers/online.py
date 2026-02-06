@@ -99,6 +99,60 @@ async def auto_draw(user_id, game_id):
     await send_player_hand(user_id, game_id, None, f"📥 ما عندك، سحبتلك ({new_c})")
     if nt == opp_id: await send_player_hand(opp_id, game_id, None, "الخصم سحب وما رهمت.. دورك!")
 
+@router.callback_query(F.data == "mode_random")
+async def start_random(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # 1. تنظيف أي طلبات قديمة للاعب حتى لا يعلق النظام
+    db_query("DELETE FROM active_games WHERE p1_id = %s AND status = 'waiting'", (user_id,), commit=True)
+    
+    # 2. البحث عن خصم ينتظر
+    waiting = db_query("SELECT * FROM active_games WHERE status = 'waiting' AND p1_id != %s LIMIT 1", (user_id,))
+    
+    if waiting:
+        g = waiting[0]
+        game_id = g['game_id']
+        p1_id = g['p1_id']
+        p2_id = user_id # اللاعب الحالي هو الخصم الثاني
+        
+        # 3. تجهيز المخزن وتوزيع الأوراق (7 لكل لاعب)
+        deck = generate_deck()
+        p1_hand = [deck.pop() for _ in range(7)]
+        p2_hand = [deck.pop() for _ in range(7)]
+        
+        # 4. سحب أول ورقة من الكومة (بشرط ما تكون جوكر للبداية)
+        top_card = deck.pop()
+        while "🌈" in top_card:
+            deck.append(top_card)
+            random.shuffle(deck)
+            top_card = deck.pop()
+            
+        # 5. تحديث قاعدة البيانات وبدء الجولة (تصفير عداد الرسائل مهم جداً للمسح)
+        db_query('''UPDATE active_games SET 
+                    p2_id = %s, 
+                    p1_hand = %s, 
+                    p2_hand = %s, 
+                    top_card = %s, 
+                    deck = %s, 
+                    status = 'playing', 
+                    turn = %s, 
+                    p1_last_msg = 0, 
+                    p2_last_msg = 0 
+                    WHERE game_id = %s''',
+                 (p2_id, ",".join(p1_hand), ",".join(p2_hand), top_card, ",".join(deck), p1_id, game_id), commit=True)
+        
+        # 6. إبلاغ اللاعبين وبدء عرض الأوراق
+        await callback.message.edit_text("✅ تم إيجاد خصم! بدأت اللعبة...")
+        
+        # إرسال يد اللاعب الأول ويد اللاعب الثاني
+        await send_player_hand(p1_id, game_id)
+        await send_player_hand(p2_id, game_id)
+        
+    else:
+        # إذا لم يوجد خصم، يفتح غرفة انتظار جديدة
+        db_query("INSERT INTO active_games (p1_id, status, p1_last_msg, p2_last_msg) VALUES (%s, 'waiting', 0, 0)", (user_id,), commit=True)
+        await callback.message.edit_text("🔎 جاري البحث عن خصم عشوائي...")
+
 # --- 4. منطق اللعب والتحدي ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
