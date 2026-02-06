@@ -25,36 +25,46 @@ def db_query(sql, params=(), commit=False):
         conn.close()
 
 def init_db():
-    # 1. جدول المستخدمين
-    db_query('''CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY, 
-                username TEXT,
-                player_name TEXT, 
-                online_points INTEGER DEFAULT 0)''', commit=True)
+    conn = get_conn()
+    cur = conn.cursor()
     
-    # 2. جدول الألعاب (تمت إضافة خانات p1_last_msg و p2_last_msg)
-    db_query('''CREATE TABLE IF NOT EXISTS active_games (
-                game_id SERIAL PRIMARY KEY, 
-                p1_id BIGINT, 
-                p2_id BIGINT,
-                p1_hand TEXT, 
-                p2_hand TEXT, 
-                top_card TEXT, 
-                deck TEXT, 
-                turn BIGINT, 
-                status TEXT DEFAULT 'waiting',
-                p1_uno BOOLEAN DEFAULT FALSE,
-                p2_uno BOOLEAN DEFAULT FALSE,
-                p1_last_msg BIGINT DEFAULT 0,
-                p2_last_msg BIGINT DEFAULT 0)''', commit=True)
+    # 1. جدول مستخدمي البوت
+    cur.execute('''CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY, 
+                    username TEXT,
+                    player_name TEXT, 
+                    online_points INTEGER DEFAULT 0)''')
+    
+    # 2. جدول ألعاب الأونلاين (مع إضافة أعمدة مسح الرسائل)
+    cur.execute('''CREATE TABLE IF NOT EXISTS active_games (
+                    game_id SERIAL PRIMARY KEY, 
+                    p1_id BIGINT, p2_id BIGINT,
+                    p1_hand TEXT, p2_hand TEXT, 
+                    top_card TEXT, turn BIGINT, 
+                    status TEXT DEFAULT 'waiting',
+                    p1_uno BOOLEAN DEFAULT FALSE,
+                    p2_uno BOOLEAN DEFAULT FALSE)''')
 
-    # 3. تحديثات أمان (تنفذ في حال كان الجدول موجود مسبقاً لضمان وجود الخانات)
-    db_query("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p1_last_msg BIGINT DEFAULT 0;", commit=True)
-    db_query("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p2_last_msg BIGINT DEFAULT 0;", commit=True)
-    db_query("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p1_uno BOOLEAN DEFAULT FALSE;", commit=True)
-    db_query("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p2_uno BOOLEAN DEFAULT FALSE;", commit=True)
+    # --- تحديث الجدول لإضافة خانات مسح الرسائل إذا لم تكن موجودة ---
+    try:
+        cur.execute("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p1_last_msg BIGINT;")
+        cur.execute("ALTER TABLE active_games ADD COLUMN IF NOT EXISTS p2_last_msg BIGINT;")
+    except Exception as e:
+        print(f"تنبيه: الأعمدة موجودة مسبقاً أو حدث خطأ بسيط: {e}")
+
+    # 3. جدول لاعبي الحاسبة (الذاكرة الخاصة بكل مستخدم)
+    cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
+                    id SERIAL PRIMARY KEY,
+                    player_name VARCHAR(100),
+                    creator_id BIGINT,
+                    wins INTEGER DEFAULT 0,
+                    total_points INTEGER DEFAULT 0,
+                    UNIQUE(player_name, creator_id))''')
     
-    print("✅ قاعدة البيانات جاهزة ومحدثة بنظام ذاكرة الرسائل!")
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("✅ جداول ريلوي جاهزة ومحدثة بنظام مسح الرسائل!")
 
 # تشغيل التهيئة عند استيراد الملف
 if __name__ == "__main__":
