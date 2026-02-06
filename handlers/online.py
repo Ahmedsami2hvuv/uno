@@ -36,6 +36,7 @@ def sort_uno_hand(hand):
 
 # --- 2. واجهة اللعب وتنظيف الرسائل ---
 async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
+    # 1. مسح الرسالة القديمة للمستخدم الحالي إذا تم تمرير ID
     if old_msg_id:
         try: await bot.delete_message(user_id, old_msg_id)
         except: pass
@@ -44,25 +45,24 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     if not res: return
     game = res[0]
     
-    # جلب أسماء اللاعبين من الداتا بيس
-    p1_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))[0]['player_name']
-    p2_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))[0]['player_name']
-
-    is_p1 = (int(user_id) == int(game['p1_id']))
-    my_name = p1_name if is_p1 else p2_name
-    opp_name = p2_name if is_p1 else p1_name
+    # جلب الأسماء
+    p1_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p1_id'],))[0]
+    p2_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (game['p2_id'],))[0]
     
+    is_p1 = (int(user_id) == int(game['p1_id']))
+    opp_name = p2_info['player_name'] if is_p1 else p1_info['player_name']
+    
+    # 2. مسح "رسائل التنبيه" القديمة حتى لا تتراكم
+    # (اختياري: إذا ردت تنظيف أعمق تكدر تضيف مسح لرسائل سابقة هنا)
+
     raw_hand = [c for c in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if c]
     my_hand = sort_uno_hand(raw_hand)
     opp_hand_count = len([c for c in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if c])
     
-    # تخصيص نص الدور
-    if int(game['turn']) == int(user_id):
-        turn_text = "🟢 دورك الآن!"
-    else:
-        turn_text = f"⏳ دور **{opp_name}**"
-
-    # استبدال كلمة "الخصم" بالاسم في التنبيهات
+    # تخصيص نص الدور والأسماء
+    turn_text = "🟢 دورك الآن!" if int(game['turn']) == int(user_id) else f"⏳ دور **{opp_name}**"
+    
+    # استبدال كلمة "الخصم" بالاسم الحقيقي في التنبيهات
     formatted_extra = extra_text.replace("الخصم", f"**{opp_name}**")
     status_text = f"\n\n🔔 **تنبيه:** {formatted_extra}" if extra_text else ""
     
@@ -87,7 +87,12 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
         kb.append([InlineKeyboardButton(text=f"🚨 صيد {opp_name}!", callback_data=f"c_{game_id}")])
 
     try:
-        sent = await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+        sent = await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        
+        # 3. تحديث الداتا بيس بـ ID آخر رسالة تم إرسالها (للمسح المستقبلي)
+        col_name = "p1_last_msg" if is_p1 else "p2_last_msg"
+        db_query(f"UPDATE active_games SET {col_name} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
+        
         return sent.message_id
     except: return None
 
