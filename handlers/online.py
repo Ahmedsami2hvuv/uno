@@ -28,52 +28,43 @@ def get_card_points(card):
         if "➕2" in card: return 30
         return 10
     if any(x in card for x in ["🚫", "🔄", "➕2"]): return 20
-    return int(card.split()[-1])
+    try:
+        return int(card.split()[-1])
+    except:
+        return 5
 
 def sort_uno_hand(hand):
     color_order = {"🔴": 1, "🔵": 2, "🟡": 3, "🟢": 4, "🌈": 5}
     return sorted(hand, key=lambda x: (color_order.get(x[0], 99), x))
 
-# --- 2. دالة إرسال اليد والسيطرة (المُحدثة) ---
+# --- 2. دالة إرسال اليد والسيطرة ---
 async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text="", is_locked=False):
-    # 1. جلب بيانات اللعبة المحدثة
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
     game = res[0]
-    
     is_p1 = (int(user_id) == int(game['p1_id']))
     is_my_turn = (int(game['turn']) == int(user_id))
     
-    # 2. جلب بيانات اللاعبين (الأسماء والنقاط الكلية) من جدول المستخدمين
     p1_info = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (game['p1_id'],))[0]
     p2_info = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (game['p2_id'],))[0]
-    
     my_info = p1_info if is_p1 else p2_info
     opp_info = p2_info if is_p1 else p1_info
     
-    # 3. جلب وترتيب الأوراق
-    my_hand_raw = (game['p1_hand'] if is_p1 else game['p2_hand']).split(",")
-    my_hand = sort_uno_hand([c for c in my_hand_raw if c.strip()])
-    
-    opp_hand_raw = (game['p2_hand'] if is_p1 else game['p1_hand']).split(",")
-    opp_count = len([c for c in opp_hand_raw if c.strip()])
+    my_hand = sort_uno_hand([c for c in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if c.strip()])
+    opp_count = len([c for c in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if c.strip()])
 
-    # 4. نظام السحب التلقائي الذكي
-    # يعمل فقط إذا كان دورك، اللعبة غير مقفلة (تحدي)، والمكشوفة ليست جوكر (لست في حالة سيطرة)
     if is_my_turn and not is_locked and "🌈" not in game['top_card']:
         top = game['top_card']
         has_move = any(("🌈" in c or c[0] == top[0] or (len(c.split()) > 1 and len(top.split()) > 1 and c.split()[-1] == top.split()[-1])) for c in my_hand)
         if not has_move:
             return await auto_draw(user_id, game_id)
 
-    # 5. نظام مسح الرسائل القديمة (للحفاظ على نظافة الشات)
     db_msg_id = game['p1_last_msg'] if is_p1 else game['p2_last_msg']
     target_to_delete = old_msg_id if old_msg_id else db_msg_id
     if target_to_delete and int(target_to_delete) > 0:
         try: await bot.delete_message(user_id, target_to_delete)
         except: pass
 
-    # 6. تجهيز نص الرسالة (الخصم فوق وأنت تحت مع النقاط)
     turn_marker = "🟢 **دورك الآن!**" if is_my_turn else f"⏳ دور: **{opp_info['player_name']}**"
     if is_locked: turn_marker = "⏳ **انتظر رد الخصم على التحدي...**"
     if is_my_turn and "🌈" in game['top_card']: turn_marker = "🔥 **دورك (سيطرة)! نزل أي ورقة**"
@@ -86,7 +77,6 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text="", is_
             f"━━━━━━━━━━━━━━\n"
             f"🔔 {extra_text.replace('الخصم', opp_info['player_name']) if extra_text else ''}")
 
-    # 7. تجهيز الأزرار (تظهر دائماً للاعب ليشاهد أوراقه)
     kb = []
     row = []
     for card in my_hand:
@@ -94,77 +84,50 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text="", is_
         if len(row) == 3: kb.append(row); row = []
     if row: kb.append(row)
     
-    # أزرار إضافية تظهر فقط في دورك
-    if is_my_turn and not is_locked:
-        if len(my_hand) == 2:
-            kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"u_{game_id}")])
+    if is_my_turn and not is_locked and len(my_hand) == 2:
+        kb.append([InlineKeyboardButton(text="📢 أونو!", callback_data=f"u_{game_id}")])
 
     try:
         sent = await bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        col = "p1_last_msg" if is_p1 else "p2_last_msg"
+        db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
+    except Exception:
+        pass
 
+# --- 3. دالة نهاية اللعبة وحساب النقاط ---
 async def end_game_logic(winner_id, loser_id, game_id):
-    # جلب بيانات اللعبة قبل حذفها
-    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))[0]
+    res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
+    if not res: return
+    game = res[0]
     
-    # تحديد يد الخاسر لجرد النقاط
     is_p1_loser = (int(loser_id) == int(game['p1_id']))
     loser_hand_raw = game['p1_hand'] if is_p1_loser else game['p2_hand']
     loser_hand = [h.strip() for h in loser_hand_raw.split(",") if h.strip()]
     
-    # حساب مجموع نقاط أوراق الخاسر
-    # الجوكر = 50، الأكشن = 20، الأرقام = قيمتها
-    total_round_points = 0
-    for card in loser_hand:
-        if "🌈" in card:
-            total_round_points += 50
-        elif any(x in card for x in ["🚫", "🔄", "➕2"]):
-            total_round_points += 20
-        else:
-            # استخراج الرقم من نص الورقة (مثلاً "🔴 5" يأخذ 5)
-            try:
-                num = int(card.split()[-1])
-                total_round_points += num
-            except:
-                total_round_points += 5 # احتياط إذا الورقة غير معروفة
-                
-    # إذا فاز والخصم ما عنده ولا ورقة (حالة نادرة)، نعطيه 10 نقاط تشجيعية
+    total_round_points = sum(get_card_points(c) for c in loser_hand)
     if total_round_points == 0: total_round_points = 10
     
-    # تحديث النقاط الكلية للفائز في الداتا بيس
     db_query("UPDATE users SET online_points = online_points + %s WHERE user_id = %s", (total_round_points, winner_id), commit=True)
     
-    # جلب الأسماء والنقاط الكلية الجديدة للطرفين
     winner_data = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (winner_id,))[0]
     loser_data = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (loser_id,))[0]
     
-    # حذف اللعبة من النشطة
     db_query("DELETE FROM active_games WHERE game_id = %s", (game_id,), commit=True)
     
-    # تجهيز أزرار النهاية
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 جولة جديدة", callback_data="mode_random")],
         [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="start")]
     ])
     
-    # رسالة الفائز
-    win_text = (f"🏆 **مبروك الفوز يا بطل!**\n\n"
-                f"💰 نقاط الجولة: `+{total_round_points}`\n"
-                f"🏅 رصيدك الكلي أصبح: `{winner_data['online_points']}`\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"👤 الخصم: {loser_data['player_name']}")
-                
-    # رسالة الخاسر
-    lose_text = (f"💀 **هاردلك! خسر اللعبة أمام {winner_data['player_name']}**\n\n"
-                 f"📉 النقاط التي سحبت منك: `{total_round_points}`\n"
-                 f"🏅 رصيدك الكلي حالياً: `{loser_data['online_points']}`")
+    win_text = (f"🏆 **مبروك الفوز يا بطل!**\n\n💰 نقاط الجولة: `+{total_round_points}`\n🏅 رصيدك الكلي: `{winner_data['online_points']}`\n━━━━━━━━━━━━━━\n👤 الخصم: {loser_data['player_name']}")
+    lose_text = (f"💀 **هاردلك! خسر اللعبة أمام {winner_data['player_name']}**\n\n📉 النقاط المسحوبة: `{total_round_points}`\n🏅 رصيدك الكلي: `{loser_data['online_points']}`")
 
     try:
         await bot.send_message(winner_id, win_text, reply_markup=kb)
         await bot.send_message(loser_id, lose_text, reply_markup=kb)
     except: pass
-        
-        # تحديث
-# --- 3. نظام السحب التلقائي ---
+
+# --- 4. نظام السحب التلقائي ---
 async def auto_draw(user_id, game_id):
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))[0]
     is_p1 = (int(user_id) == int(game['p1_id']))
@@ -180,61 +143,28 @@ async def auto_draw(user_id, game_id):
     await send_player_hand(user_id, game_id, None, f"📥 ما عندك، سحبتلك ({new_c})")
     if nt == opp_id: await send_player_hand(opp_id, game_id, None, "الخصم سحب وما رهمت.. دورك!")
 
+# --- 5. البداية والربط ---
 @router.callback_query(F.data == "mode_random")
 async def start_random(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    
-    # 1. تنظيف أي طلبات قديمة للاعب حتى لا يعلق النظام
     db_query("DELETE FROM active_games WHERE p1_id = %s AND status = 'waiting'", (user_id,), commit=True)
-    
-    # 2. البحث عن خصم ينتظر
     waiting = db_query("SELECT * FROM active_games WHERE status = 'waiting' AND p1_id != %s LIMIT 1", (user_id,))
-    
     if waiting:
         g = waiting[0]
-        game_id = g['game_id']
-        p1_id = g['p1_id']
-        p2_id = user_id # اللاعب الحالي هو الخصم الثاني
-        
-        # 3. تجهيز المخزن وتوزيع الأوراق (7 لكل لاعب)
         deck = generate_deck()
-        p1_hand = [deck.pop() for _ in range(7)]
-        p2_hand = [deck.pop() for _ in range(7)]
-        
-        # 4. سحب أول ورقة من الكومة (بشرط ما تكون جوكر للبداية)
-        top_card = deck.pop()
-        while "🌈" in top_card:
-            deck.append(top_card)
-            random.shuffle(deck)
-            top_card = deck.pop()
-            
-        # 5. تحديث قاعدة البيانات وبدء الجولة (تصفير عداد الرسائل مهم جداً للمسح)
-        db_query('''UPDATE active_games SET 
-                    p2_id = %s, 
-                    p1_hand = %s, 
-                    p2_hand = %s, 
-                    top_card = %s, 
-                    deck = %s, 
-                    status = 'playing', 
-                    turn = %s, 
-                    p1_last_msg = 0, 
-                    p2_last_msg = 0 
-                    WHERE game_id = %s''',
-                 (p2_id, ",".join(p1_hand), ",".join(p2_hand), top_card, ",".join(deck), p1_id, game_id), commit=True)
-        
-        # 6. إبلاغ اللاعبين وبدء عرض الأوراق
-        await callback.message.edit_text("✅ تم إيجاد خصم! بدأت اللعبة...")
-        
-        # إرسال يد اللاعب الأول ويد اللاعب الثاني
-        await send_player_hand(p1_id, game_id)
-        await send_player_hand(p2_id, game_id)
-        
+        p1_h, p2_h, top = [deck.pop() for _ in range(7)], [deck.pop() for _ in range(7)], deck.pop()
+        while "🌈" in top:
+            deck.append(top); random.shuffle(deck); top = deck.pop()
+        db_query('''UPDATE active_games SET p2_id=%s, p1_hand=%s, p2_hand=%s, top_card=%s, deck=%s, status='playing', turn=%s, p1_last_msg=0, p2_last_msg=0 WHERE game_id=%s''',
+                 (user_id, ",".join(p1_h), ",".join(p2_h), top, ",".join(deck), g['p1_id'], g['game_id']), commit=True)
+        await callback.message.edit_text("✅ تم إيجاد خصم!")
+        await send_player_hand(g['p1_id'], g['game_id'])
+        await send_player_hand(user_id, g['game_id'])
     else:
-        # إذا لم يوجد خصم، يفتح غرفة انتظار جديدة
         db_query("INSERT INTO active_games (p1_id, status, p1_last_msg, p2_last_msg) VALUES (%s, 'waiting', 0, 0)", (user_id,), commit=True)
-        await callback.message.edit_text("🔎 جاري البحث عن خصم عشوائي...")
+        await callback.message.edit_text("🔎 جاري البحث عن خصم...")
 
-# --- 4. منطق اللعب (مُعدل لدعم السيطرة المطلقة) ---
+# --- 6. منطق اللعب ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
     _, g_id, played_card = c.data.split("_")
@@ -246,14 +176,12 @@ async def process_play(c: types.CallbackQuery):
     deck = [d.strip() for d in game['deck'].split(",") if d.strip()]; top_card = game['top_card']
     
     is_dominating = "🌈" in top_card
-
     if not is_dominating:
-        can_play = ("🌈" in played_card or played_card[0] == top_card[0] or (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
-        if not can_play:
+        can_p = ("🌈" in played_card or played_card[0] == top_card[0] or (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
+        if not can_p:
             [my_hand.append(deck.pop(0)) for _ in range(2) if deck]
             db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
-            await c.answer("❌ ورقة خطأ! ارتدت وتعاقبت بـ 2.", show_alert=True)
-            return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت غلط.. ارتدت ليدك وتعاقبت!")
+            return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت غلط.. ارتدت وتعاقبت!")
 
     if "🌈" in played_card and not is_dominating:
         kb = [[InlineKeyboardButton(text="⚔️ تحدي", callback_data=f"chal_{g_id}_{played_card}"),
@@ -262,84 +190,58 @@ async def process_play(c: types.CallbackQuery):
         return await bot.send_message(opp_id, f"🚨 الخصم نزل `{played_card}`! تتحداه؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
     my_hand.remove(played_card)
-    
-    # فحص الفوز فوراً
     if not my_hand:
-        await end_game_logic(c.from_user.id, opp_id, g_id)
-        return
+        return await end_game_logic(c.from_user.id, opp_id, g_id)
 
     next_turn = opp_id
     if "➕" in played_card:
-        val = int(played_card[-1])
-        opp_h_raw = (game['p2_hand'] if is_p1 else game['p1_hand']).split(",")
-        opp_hand = [h.strip() for h in opp_h_raw if h.strip()]
-        [opp_hand.append(deck.pop(0)) for _ in range(val) if deck]
-        db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s WHERE game_id=%s", (",".join(opp_hand), g_id), commit=True)
+        val = int(played_card[-1]); opp_h = [h.strip() for h in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if h.strip()]
+        [opp_h.append(deck.pop(0)) for _ in range(val) if deck]
+        db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s WHERE game_id=%s", (",".join(opp_h), g_id), commit=True)
         next_turn = c.from_user.id
-    elif any(x in played_card for x in ["🚫", "🔄"]):
-        next_turn = c.from_user.id
+    elif any(x in played_card for x in ["🚫", "🔄"]): next_turn = c.from_user.id
 
-    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
-             (played_card, ",".join(my_hand), ",".join(deck), next_turn, g_id), commit=True)
-    
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id)
-    await send_player_hand(opp_id, g_id, None)
+    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (played_card, ",".join(my_hand), ",".join(deck), next_turn, g_id), commit=True)
+    await send_player_hand(c.from_user.id, g_id, c.message.message_id); await send_player_hand(opp_id, g_id, None)
+
+# --- 7. التحدي ---
 @router.callback_query(F.data.startswith("chal_") | F.data.startswith("nochal_"))
 async def handle_challenge(c: types.CallbackQuery):
-    data = c.data.split("_"); is_challenge = (data[0] == "chal"); g_id = data[1]; played_card = data[2]
+    data = c.data.split("_"); is_chal = (data[0] == "chal"); g_id = data[1]; played_card = data[2]
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    
     challenger_id = c.from_user.id
-    is_p2_challenger = (int(challenger_id) == int(game['p2_id']))
-    player_id = game['p1_id'] if is_p2_challenger else game['p2_id']
+    is_p2_chal = (int(challenger_id) == int(game['p2_id']))
+    player_id = game['p1_id'] if is_p2_chal else game['p2_id']
     is_p1_player = (int(player_id) == int(game['p1_id']))
 
     p_hand = [h.strip() for h in (game['p1_hand'] if is_p1_player else game['p2_hand']).split(",") if h.strip()]
     o_hand = [h.strip() for h in (game['p2_hand'] if is_p1_player else game['p1_hand']).split(",") if h.strip()]
     deck = [d.strip() for d in game['deck'].split(",") if d.strip()]; top_before = game['top_card']
     
-    # فحص الغش
     is_cheat = any(("🌈" not in h and (h[0] == top_before[0] or (len(h.split()) > 1 and h.split()[-1] == top_before.split()[-1]))) for h in p_hand if h != played_card)
     penalty = 6 if "➕4" in played_card else (4 if "➕2" in played_card else 3)
 
-    if is_challenge:
-        if is_cheat: # الغشاش يتعاقب (player_id)
+    if is_chal:
+        if is_cheat:
             [p_hand.append(deck.pop(0)) for _ in range(penalty) if deck]
-            db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
-                     (",".join(p_hand), ",".join(deck), player_id, g_id), commit=True)
-            await send_player_hand(player_id, g_id, None, "❌ انكشفت! ارتدت وتعاقبت.")
-            await send_player_hand(challenger_id, g_id, c.message.message_id, "🎯 كشفته! الخصم تعاقب.")
-        else: # المتحدي يخسر (challenger_id)
+            db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (",".join(p_hand), ",".join(deck), player_id, g_id), commit=True)
+            await send_player_hand(player_id, g_id, None, "❌ انكشفت وتعاقبت!"); await send_player_hand(challenger_id, g_id, c.message.message_id, "🎯 كفشته!")
+        else:
             [o_hand.append(deck.pop(0)) for _ in range(penalty + 2) if deck]
             if played_card in p_hand: p_hand.remove(played_card)
-            
-            # تحديث يد الفائز ويد الخاسر في الداتا بيس
-            db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, {'p2_hand' if is_p1_player else 'p1_hand'}=%s, deck=%s, top_card=%s, turn=%s WHERE game_id=%s", 
-                     (",".join(p_hand), ",".join(o_hand), ",".join(deck), played_card, player_id, g_id), commit=True)
-            
-            await send_player_hand(player_id, g_id, None, "✅ صدقت! الخصم تعاقب كمل لعبك.")
-            await send_player_hand(challenger_id, g_id, c.message.message_id, "❌ فشلت بالتحدي وتعاقبت!")
-    else: 
-        # عبور طبيعي (لا يوجد تحدي)
+            db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, {'p2_hand' if is_p1_player else 'p1_hand'}=%s, deck=%s, top_card=%s, turn=%s WHERE game_id=%s", (",".join(p_hand), ",".join(o_hand), ",".join(deck), played_card, player_id, g_id), commit=True)
+            await send_player_hand(player_id, g_id, None, "✅ صدقت والخصم تعاقب!"); await send_player_hand(challenger_id, g_id, c.message.message_id, "❌ فشلت وتعاقبت!")
+    else:
         if played_card in p_hand: p_hand.remove(played_card)
         s_val = int(played_card[-1]) if "➕" in played_card else 0
         [o_hand.append(deck.pop(0)) for _ in range(s_val) if deck]
-        
-        db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, {'p2_hand' if is_p1_player else 'p1_hand'}=%s, deck=%s, top_card=%s, turn=%s WHERE game_id=%s", 
-                 (",".join(p_hand), ",".join(o_hand), ",".join(deck), played_card, player_id, g_id), commit=True)
-        
-        await send_player_hand(player_id, g_id, None, "✅ الخصم ما تحدى، كمل لعبك!")
-        await send_player_hand(challenger_id, g_id, c.message.message_id, "الخصم لعب جوكر وما تحديت.")
+        db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, {'p2_hand' if is_p1_player else 'p1_hand'}=%s, deck=%s, top_card=%s, turn=%s WHERE game_id=%s", (",".join(p_hand), ",".join(o_hand), ",".join(deck), played_card, player_id, g_id), commit=True)
+        await send_player_hand(player_id, g_id, None, "✅ الخصم ما تحدى!"); await send_player_hand(challenger_id, g_id, c.message.message_id, "لعب جوكر وما تحديت.")
 
-    # فحص فوز اللاعب بعد حذف الجوكر من إيده
-    if not p_hand:
-        await end_game_logic(player_id, challenger_id, g_id)
-        return
+    if not p_hand: await end_game_logic(player_id, challenger_id, g_id)
+    elif played_card == "🌈" and not (is_chal and is_cheat): await ask_color(player_id, g_id)
 
-    if played_card == "🌈" and not (is_challenge and is_cheat):
-        await ask_color(player_id, g_id)
-
-# --- 6. أونو وصيد ---
+# --- 8. أونو وصيد وألوان ---
 @router.callback_query(F.data.startswith("u_"))
 async def process_uno(c: types.CallbackQuery):
     g_id = c.data.split("_")[1]; game = db_query("SELECT * FROM active_games WHERE game_id=%s", (g_id,))[0]
@@ -356,10 +258,8 @@ async def process_catch(c: types.CallbackQuery):
     [hand.append(deck.pop(0)) for _ in range(2) if deck]
     db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(hand), ",".join(deck), g_id), commit=True)
     await bot.send_photo(c.from_user.id, photo=IMG_CATCH_SUCCESS); await bot.send_photo(victim_id, photo=IMG_CATCH_PENALTY)
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "صيد ناجح!")
-    await send_player_hand(victim_id, g_id, None, "صادك الخصم!")
+    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "صيد ناجح!"); await send_player_hand(victim_id, g_id, None, "صادك الخصم!")
 
-# --- الألوان والبداية ---
 async def ask_color(u_id, g_id):
     kb = [[InlineKeyboardButton(text="🔴", callback_data=f"sc_{g_id}_🔴"), InlineKeyboardButton(text="🔵", callback_data=f"sc_{g_id}_🔵")],
           [InlineKeyboardButton(text="🟡", callback_data=f"sc_{g_id}_🟡"), InlineKeyboardButton(text="🟢", callback_data=f"sc_{g_id}_🟢")]]
