@@ -169,26 +169,32 @@ async def process_play(c: types.CallbackQuery):
                 {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s {uno_reset} WHERE game_id=%s''', 
              (played_card, ",".join(my_hand), ",".join(opp_hand), ",".join(deck), next_turn, g_id), commit=True)
     
+    # 🚨 فحص الفوز
     if not my_hand:
-        db_query("UPDATE users SET online_points = online_points + 10 WHERE user_id = %s", (c.from_user.id,), commit=True)
-        new_pts = db_query("SELECT online_points FROM users WHERE user_id = %s", (c.from_user.id,))[0]['online_points']
+        winner_data = db_query("SELECT online_points FROM users WHERE user_id = %s", (c.from_user.id,))[0]
+        new_pts = winner_data['online_points'] + 10
+        db_query("UPDATE users SET online_points = %s WHERE user_id = %s", (new_pts, c.from_user.id), commit=True)
         db_query("DELETE FROM active_games WHERE game_id = %s", (g_id,), commit=True)
         
         end_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎲 جولة جديدة", callback_data="mode_random")],[InlineKeyboardButton(text="🏠 الرئيسية", callback_data="home")]])
-        await c.message.delete()
-        await bot.send_message(c.from_user.id, f"🏆 مبروك الفوز على **{opp_name}**!\n✅ نقاطك أصبحت: `{new_pts}`", reply_markup=end_kb)
+        try: await c.message.delete()
+        except: pass
+        
+        await bot.send_message(c.from_user.id, f"🏆 مبروك الفوز يا **{my_name}**!\n✅ نقاطك أصبحت: `{new_pts}`", reply_markup=end_kb)
         await bot.send_message(opp_id, f"💀 هاردلك.. فاز عليك **{my_name}**!\n📈 نقاطه صارت: `{new_pts}`", reply_markup=end_kb)
         return
 
-    # 🚨 تعديل منطق الجوكر لضمان مسح الرسالة القديمة
+    # 🔄 إرسال الأوراق الجديدة مع نظام أمان للمسح
+    last_opp_msg = game.get('p2_last_msg' if is_p1 else 'p1_last_msg')
+    
     if "🌈" in played_card and "➕" not in played_card:
-        # مسح رسالة اللعب الحالية قبل طلب اللون
-        try: await c.message.delete()
+        try: await c.message.delete() # مسح رسالة الجوكر فوراً
         except: pass
         await ask_color(c.from_user.id, g_id)
     else:
-        # اللعب العادي
+        # إرسال تحديث لك (يمسح رسالتك الحالية)
         await send_player_hand(c.from_user.id, g_id, c.message.message_id, extra_me)
+        # إرسال تحديث للخصم (يمسح رسالته القديمة إذا لقاها)
         await send_player_hand(opp_id, g_id, last_opp_msg, extra_opp)
 
 # --- 5. نظام السحب الذكي وتنظيف الشات ---
@@ -257,23 +263,27 @@ async def ask_color(u_id, g_id):
 
 @router.callback_query(F.data.startswith("sc_"))
 async def set_color_logic(c: types.CallbackQuery):
-    _, g_id, col = c.data.split("_")
-    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    
-    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
-    opp_id = game['p2_id'] if is_p1 else game['p1_id']
-    
-    # تحديث الكرت المكشوف وتحويل الدور
-    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", 
-             (f"{col} (🌈)", opp_id, g_id), commit=True)
-    
-    # 1. مسح رسالة "اختر اللون"
-    try: await c.message.delete()
-    except: pass
-    
-    # 2. إرسال اليد الجديدة لك (بدون مسح قديم لأننا مسحناه فوق)
-    await send_player_hand(c.from_user.id, g_id, None, f"اخترت اللون {col}!")
-    
-    # 3. مسح رسالة الخصم القديمة وتنبيهه باللون الجديد
-    last_opp_msg = game['p2_last_msg' if is_p1 else 'p1_last_msg']
-    await send_player_hand(opp_id, g_id, last_opp_msg, f"الخصم اختار اللون {col}!")
+    try:
+        _, g_id, col = c.data.split("_")
+        game_res = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))
+        if not game_res: return
+        game = game_res[0]
+        
+        is_p1 = (int(c.from_user.id) == int(game['p1_id']))
+        opp_id = game['p2_id'] if is_p1 else game['p1_id']
+        
+        # تحديث الكرت والدور
+        db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", 
+                 (f"{col} (🌈)", opp_id, g_id), commit=True)
+        
+        # مسح رسالة اختيار اللون
+        try: await c.message.delete()
+        except: pass
+        
+        # إرسال اليد الجديدة للطرفين
+        await send_player_hand(c.from_user.id, g_id, None, f"اخترت اللون {col}!")
+        
+        last_opp_msg = game.get('p2_last_msg' if is_p1 else 'p1_last_msg')
+        await send_player_hand(opp_id, g_id, last_opp_msg, f"الخصم اختار اللون {col}!")
+    except Exception as e:
+        print(f"Error in set_color: {e}")
