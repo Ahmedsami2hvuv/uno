@@ -33,7 +33,7 @@ def sort_uno_hand(hand):
         return (rank, card)
     return sorted(hand, key=sort_key)
 
-# --- 2. دالة إرسال اليد (نظام المسح القسري) ---
+# --- 2. دالة إرسال اليد (المسح القسري) ---
 async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
@@ -55,6 +55,7 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     opp_count = len([c for c in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if c])
     
     is_my_turn = (int(game['turn']) == int(user_id))
+    
     # السحب التلقائي
     if is_my_turn:
         top = game['top_card']
@@ -65,13 +66,13 @@ async def send_player_hand(user_id, game_id, old_msg_id=None, extra_text=""):
     turn_text = "🟢 **دورك الآن!**" if is_my_turn else f"⏳ دور: **{opp_info['player_name']}**"
     status_text = f"\n\n🔔 **تنبيه:** {extra_text.replace('الخصم', opp_info['player_name'])}" if extra_text else ""
     
-    text = (f"👤 **أنت: {my_info['player_name']}** | 🏅 نقاطك: `{my_info['online_points']}`\n"
-            f"🃏 أوراقك: ({len(my_hand)}) | 🃏 الخصم: ({opp_count})\n"
+    text = (f"👤 **{opp_info['player_name']}**: ({opp_count}) أوراق\n"
+            f"👤 **{my_info['player_name']} (أنت)**: ({len(my_hand)}) أوراق\n"
             f"━━━━━━━━━━━━━━\n"
+            f"{turn_text}\n"
             f"🃏 المكشوفة: `{game['top_card']}`\n"
-            f"👤 **الخصم: {opp_info['player_name']}**\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"{turn_text}{status_text}")
+            f"━━━━━━━━━━━━━━"
+            f"{status_text}")
 
     kb = []
     row = []
@@ -103,87 +104,75 @@ async def auto_draw(user_id, game_id):
     new_c = deck.pop(0); hand.append(new_c)
     can_p = ("🌈" in new_c or new_c[0] == top[0] or (len(new_c.split()) > 1 and len(top.split()) > 1 and new_c.split()[-1] == top.split()[-1]))
     nt = user_id if can_p else opp_id
-    msg_me = f"📥 سحبتلك ({new_c}) وتقدر تلعبها!" if can_p else f"📥 سحبتلك ({new_c}) وما ترهم.. ضاع دورك!"
-    msg_opp = f"📥 الخصم سحب ورقة ولعبها!" if can_p else "📥 الخصم سحب وما رهمت.. دورك!"
     db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (",".join(hand), ",".join(deck), nt, game_id), commit=True)
-    await send_player_hand(user_id, game_id, None, msg_me)
-    if nt == opp_id: await send_player_hand(opp_id, game_id, None, msg_opp)
+    await send_player_hand(user_id, game_id, None, f"📥 سحبتلك ({new_c})")
+    if nt == opp_id: await send_player_hand(opp_id, game_id, None, "الخصم سحب وما رهمت.. دورك!")
 
-# --- 4. منطق اللعب (بما فيه الجوكر والغش) ---
+# --- 4. منطق اللعب (الجوكر المرتد) ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
     _, g_id, played_card = c.data.split("_")
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك! ⏳")
+    if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك!")
 
     is_p1 = (int(c.from_user.id) == int(game['p1_id']))
     opp_id = game['p2_id'] if is_p1 else game['p1_id']
     my_hand = [h for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h]
-    opp_hand = [h for h in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if h]
     deck = game['deck'].split(","); top_card = game['top_card']
+    my_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
 
     # فحص غش الجوكر
     has_normal_playable = any(("🌈" not in h and (h[0] == top_card[0] or (len(h.split()) > 1 and len(top_card.split()) > 1 and h.split()[-1] == top_card.split()[-1]))) for h in my_hand)
-    penalty = 0
+    
     if "🌈" in played_card and has_normal_playable:
-        if "➕4" in played_card: penalty = 6
-        elif "➕2" in played_card: penalty = 4
-        elif "➕1" in played_card: penalty = 3
-        else: penalty = 2
+        # عقوبة الارتداد: الورقة تبقى بيدك وتنسحب فوكاها عقوبة
+        penalty = 6 if "➕4" in played_card else (4 if "➕2" in played_card else (3 if "➕1" in played_card else 3))
         for _ in range(penalty): 
             if deck: my_hand.append(deck.pop(0))
-        await c.answer(f"⚠️ غشيت! عاقبتك بـ {penalty} أوراق والدور بعده عندك.", show_alert=True)
-        # تحديث يد الغشاش بالداتا بيس فوراً قبل اكمال اللعب
+        
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
-        # إبلاغ الخصم
-        my_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
-        await bot.send_message(opp_id, f"🚨 يابة {my_name} غش ونزل جوكر وهو عنده ورق يرهم! عاقبته بـ {penalty} أوراق.")
+        await c.answer(f"⚠️ غش! الورقة ارتدت ليدك وتعاقبت بـ {penalty} أوراق.", show_alert=True)
+        await bot.send_message(opp_id, f"🚨 {my_name} حاول يغش بالجوكر! الورقة ارتدت ليده وعاقبته بـ {penalty} أوراق.")
+        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"حاولت تغش.. ارتدت {played_card} ليدك وتعاقبت!")
 
     # فحص إمكانية اللعب
     can_play = ("🌈" in played_card or played_card[0] == top_card[0] or (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
     if not can_play:
         for _ in range(2): 
             if deck: my_hand.append(deck.pop(0))
-        db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
-        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت خطأ وتسحبت ورقتين!")
+        db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), opp_id, g_id), commit=True)
+        return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت خطأ.. ارتدت الورقة ليدك وتعاقبت بـ 2 وضاع دورك!")
 
+    # إذا اللعب نظامي، نزيل الورقة ونكمل
     my_hand.remove(played_card); next_turn = opp_id
-    extra_me, extra_opp = f"لعبت {played_card}", f"الخصم لعب {played_card}"
+    opp_hand = (game['p2_hand'] if is_p1 else game['p1_hand']).split(",")
 
-    # أوراق الأكشن (غير الجوكر)
-    if "➕" in played_card and "🌈" not in played_card:
+    if "➕" in played_card:
         val = int(played_card[-1]); 
         for _ in range(val): 
             if deck: opp_hand.append(deck.pop(0))
-        next_turn = c.from_user.id; extra_me = f"🔥 سحبت الخصم {val} أوراق!"
+        next_turn = opp_id # السحب الملون يحول الدور تلقائياً
     elif any(x in played_card for x in ["🚫", "🔄"]):
-        next_turn = c.from_user.id; extra_me = "🚫 منعت دور الخصم!"
+        next_turn = c.from_user.id
 
-    uno_reset = ", p1_uno=FALSE" if is_p1 else ", p2_uno=FALSE"
-    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s {uno_reset} WHERE game_id=%s", 
+    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
              (played_card, ",".join(my_hand), ",".join(opp_hand), ",".join(deck), next_turn, g_id), commit=True)
-    
+
     if not my_hand:
-        db_query("UPDATE users SET online_points = online_points + 10 WHERE user_id = %s", (c.from_user.id,), commit=True)
         db_query("DELETE FROM active_games WHERE game_id = %s", (g_id,), commit=True)
         try: await c.message.delete()
         except: pass
-        await bot.send_message(c.from_user.id, "🏆 مبروك الفوز!"); await bot.send_message(opp_id, "💀 هاردلك خسرتم.")
-        return
+        await bot.send_message(c.from_user.id, "🏆 مبروك الفوز!"); return
 
-    if "🌈" in played_card:
-        if "➕" in played_card:
-            val = int(played_card[-1])
-            for _ in range(val): 
-                if deck: opp_hand.append(deck.pop(0))
-            # هنا سحب الأوراق للخصم مع بقاء الدور عند اللاعب لاختيار اللون
-            db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (",".join(opp_hand), ",".join(deck), c.from_user.id, g_id), commit=True)
+    if played_card == "🌈":
+        await send_player_hand(opp_id, g_id, None, f"الخصم لعب {played_card}")
+        await asyncio.sleep(0.5)
         try: await c.message.delete()
         except: pass
         await ask_color(c.from_user.id, g_id)
     else:
-        await send_player_hand(c.from_user.id, g_id, c.message.message_id, extra_me)
-        await send_player_hand(opp_id, g_id, None, extra_opp)
+        await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"لعبت {played_card}")
+        await send_player_hand(opp_id, g_id, None, f"الخصم لعب {played_card}")
 
 # --- 5. أونو وصيد ---
 @router.callback_query(F.data.startswith("u_"))
@@ -191,23 +180,20 @@ async def process_uno(c: types.CallbackQuery):
     g_id = c.data.split("_")[1]; game = db_query("SELECT * FROM active_games WHERE game_id=%s", (g_id,))[0]
     is_p1 = (int(c.from_user.id) == int(game['p1_id'])); opp_id = game['p2_id'] if is_p1 else game['p1_id']
     db_query(f"UPDATE active_games SET {'p1_uno' if is_p1 else 'p2_uno'}=TRUE WHERE game_id=%s", (g_id,), commit=True)
-    await bot.send_photo(c.from_user.id, photo=IMG_UNO_SAFE_ME, caption="✅ أحسنت! أمنت نفسك."); await bot.send_photo(opp_id, photo=IMG_UNO_SAFE_OPP, caption="🚨 سحقاً! الخصم أمن نفسه.")
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "قلت أونو وأمنت نفسك!")
+    await bot.send_photo(c.from_user.id, photo=IMG_UNO_SAFE_ME); await bot.send_photo(opp_id, photo=IMG_UNO_SAFE_OPP)
+    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "قلت أونو!")
 
 @router.callback_query(F.data.startswith("c_"))
 async def process_catch(c: types.CallbackQuery):
     g_id = c.data.split("_")[1]; game = db_query("SELECT * FROM active_games WHERE game_id=%s", (g_id,))[0]
     is_p1 = (int(c.from_user.id) == int(game['p1_id'])); victim_id = game['p2_id'] if is_p1 else game['p1_id']
-    # منع الصيد إذا كان الخصم مأمن نفسه (أونو)
-    is_victim_uno = game['p2_uno'] if is_p1 else game['p1_uno']
-    if is_victim_uno: return await c.answer("❌ الخصم مأمن نفسه (أونو)! ما تكدر تصيده.", show_alert=True)
-    
+    if (game['p2_uno'] if is_p1 else game['p1_uno']): return await c.answer("❌ مأمن نفسه!")
     hand = (game['p2_hand'] if is_p1 else game['p1_hand']).split(","); deck = game['deck'].split(",")
     for _ in range(2): 
         if deck: hand.append(deck.pop(0))
     db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(hand), ",".join(deck), g_id), commit=True)
-    await bot.send_photo(c.from_user.id, photo=IMG_CATCH_SUCCESS, caption="🎯 تم صيد الخصم!"); await bot.send_photo(victim_id, photo=IMG_CATCH_PENALTY, caption="💀 صادك الخصم وتسحبت ورقتين!")
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "تم الصيد بنجاح!"); await send_player_hand(victim_id, g_id, None, "تعرضت للصيد وتسحبت ورقتين!")
+    await bot.send_photo(c.from_user.id, photo=IMG_CATCH_SUCCESS); await bot.send_photo(victim_id, photo=IMG_CATCH_PENALTY)
+    await send_player_hand(c.from_user.id, g_id, c.message.message_id, "صيد ناجح!"); await send_player_hand(victim_id, g_id, None, "صادك الخصم!")
 
 # --- البداية والألوان ---
 @router.callback_query(F.data == "mode_random")
@@ -228,11 +214,11 @@ async def start_random(callback: types.CallbackQuery):
 async def ask_color(u_id, g_id):
     kb = [[InlineKeyboardButton(text="🔴", callback_data=f"sc_{g_id}_🔴"), InlineKeyboardButton(text="🔵", callback_data=f"sc_{g_id}_🔵")],
           [InlineKeyboardButton(text="🟡", callback_data=f"sc_{g_id}_🟡"), InlineKeyboardButton(text="🟢", callback_data=f"sc_{g_id}_🟢")]]
-    await bot.send_message(u_id, "🌈 اختر اللون:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await bot.send_message(u_id, "🌈 اختر اللون المطلوب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data.startswith("sc_"))
 async def set_color_logic(c: types.CallbackQuery):
     _, g_id, col = c.data.split("_"); game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
     opp_id = game['p2_id'] if int(c.from_user.id) == int(game['p1_id']) else game['p1_id']
     db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", (f"{col} (🌈)", opp_id, g_id), commit=True)
-    await c.message.delete(); await send_player_hand(c.from_user.id, g_id, None, f"اخترت {col}"); await send_player_hand(opp_id, g_id, None, f"الخصم اختار {col}")
+    await c.message.delete(); await send_player_hand(c.from_user.id, g_id, None, f"اخترت اللون {col}"); await send_player_hand(opp_id, g_id, None, f"الخصم اختار اللون {col}")
