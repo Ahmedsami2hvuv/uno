@@ -3,13 +3,7 @@ import asyncio
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db_query
-from config import (
-    bot, 
-    IMG_UNO_SAFE_ME, 
-    IMG_UNO_SAFE_OPP, 
-    IMG_CATCH_SUCCESS, 
-    IMG_CATCH_PENALTY
-)
+from config import bot
 
 router = Router()
 
@@ -28,17 +22,16 @@ def generate_deck():
 def sort_uno_hand(hand):
     color_order = {"🔴": 1, "🔵": 2, "🟡": 3, "🟢": 4, "🌈": 5}
     def sort_key(card):
-        color_emoji = card[0]
-        rank = color_order.get(color_emoji, 99)
+        color_emoji = card[0]; rank = color_order.get(color_emoji, 99)
         return (rank, card)
     return sorted(hand, key=sort_key)
 
-# --- 2. دالة التعديل اللحظي (نفس نظام الحاسبة بالضبط) ---
-async def send_player_hand(user_id, game_id, extra_text=""):
+# --- 2. دالة التعديل (مثل نظام الحاسبة بالضبط) ---
+async def update_ui(user_id, game_id, extra_text=""):
+    """ هذه الدالة تحدث الرسالة الموجودة أصلاً (Edit) """
     res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
     if not res: return
     game = res[0]
-    
     is_p1 = (int(user_id) == int(game['p1_id']))
     
     # جلب الأسماء
@@ -73,15 +66,13 @@ async def send_player_hand(user_id, game_id, extra_text=""):
         kb.append([InlineKeyboardButton(text=f"🚨 صيد {opp_name}!", callback_data=f"c_{game_id}")])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    
-    # الحصول على ID الرسالة من الداتا بيس
     msg_id = game['p1_last_msg' if is_p1 else 'p2_last_msg']
 
     try:
-        # التعديل فقط
+        # تعديل الرسالة فوراً مثل نظام الحاسبة
         await bot.edit_message_text(text, user_id, msg_id, reply_markup=markup)
-    except:
-        # إذا فشل التعديل نرسل جديدة ونخزن رقمها
+    except Exception:
+        # إذا أول مرة، يرسل ويخزن الرقم
         sent = await bot.send_message(user_id, text, reply_markup=markup)
         col = "p1_last_msg" if is_p1 else "p2_last_msg"
         db_query(f"UPDATE active_games SET {col} = %s WHERE game_id = %s", (sent.message_id, game_id), commit=True)
@@ -102,9 +93,8 @@ async def start_random(callback: types.CallbackQuery):
                  (user_id, ",".join(p1_h), ",".join(p2_h), top, ",".join(deck), g['p1_id'], g['game_id']), commit=True)
         
         await callback.message.edit_text("✅ تم الربط! بدأت اللعبة.")
-        # إرسال أول رسائل لضبط الـ IDs
-        await send_player_hand(g['p1_id'], g['game_id'])
-        await send_player_hand(user_id, g['game_id'])
+        await update_ui(g['p1_id'], g['game_id'])
+        await update_ui(user_id, g['game_id'])
     else:
         db_query("INSERT INTO active_games (p1_id, status) VALUES (%s, 'waiting')", (user_id,), commit=True)
         await callback.message.edit_text("🔎 جاري البحث عن خصم...")
@@ -112,36 +102,30 @@ async def start_random(callback: types.CallbackQuery):
 # --- 4. منطق اللعب (Edit فقط) ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
-    data = c.data.split("_")
-    g_id, played_card = data[1], data[2]
+    data = c.data.split("_"); g_id, played_card = data[1], data[2]
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
     if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك! ⏳")
 
-    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
-    opp_id = game['p2_id'] if is_p1 else game['p1_id']
+    is_p1 = (int(c.from_user.id) == int(game['p1_id'])); opp_id = game['p2_id'] if is_p1 else game['p1_id']
     my_hand = [h for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h]
     opp_hand = [h for h in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if h]
-    deck = [d for d in game['deck'].split(",") if d]
-    top_card = game['top_card']
+    deck = [d for d in game['deck'].split(",") if d]; top_card = game['top_card']
 
     can_play = ("🌈" in played_card or "🌈" in top_card or played_card[0] == top_card[0] or 
                 (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
     
     if not can_play: return await c.answer("❌ ورقة خطأ!", show_alert=True)
 
-    my_hand.remove(played_card)
-    next_turn = opp_id
+    my_hand.remove(played_card); next_turn = opp_id
     extra_me, extra_opp = f"لعبت {played_card}", f"الخصم لعب {played_card}"
 
     if "➕" in played_card:
         val = 1 if "➕1" in played_card else (2 if "➕2" in played_card else 4)
         for _ in range(val): 
             if deck: opp_hand.append(deck.pop(0))
-        next_turn = c.from_user.id
-        extra_me, extra_opp = f"🔥 سحبت الخصم {val}!", f"📥 سحبك الخصم {val}!"
+        next_turn = c.from_user.id; extra_me, extra_opp = f"🔥 سحبت الخصم {val}!", f"📥 سحبك الخصم {val}!"
     elif any(x in played_card for x in ["🚫", "🔄"]):
-        next_turn = c.from_user.id
-        extra_me, extra_opp = "🚫 منعت دور الخصم!", "🚫 الخصم منع دورك!"
+        next_turn = c.from_user.id; extra_me, extra_opp = "🚫 منعت دور الخصم!", "🚫 الخصم منع دورك!"
 
     db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, {'p2_hand' if is_p1 else 'p1_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
              (played_card, ",".join(my_hand), ",".join(opp_hand), ",".join(deck), next_turn, g_id), commit=True)
@@ -155,21 +139,18 @@ async def process_play(c: types.CallbackQuery):
     if "🌈" in played_card and "➕" not in played_card:
         await ask_color(c.from_user.id, g_id)
     else:
-        # تعديل لحظي للطرفين
-        await send_player_hand(c.from_user.id, g_id, extra_me)
-        await send_player_hand(opp_id, g_id, extra_opp)
+        await update_ui(c.from_user.id, g_id, extra_me)
+        await update_ui(opp_id, g_id, extra_opp)
 
-# --- 5. السحب ---
+# --- 5. السحب (Edit فقط) ---
 @router.callback_query(F.data.startswith("d_"))
 async def process_draw(c: types.CallbackQuery):
     g_id = c.data.split("_")[1]
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
     if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك!")
     
-    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
-    opp_id = game['p2_id'] if is_p1 else game['p1_id']
-    deck = [x for x in game['deck'].split(",") if x]
-    hand = [h for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h]
+    is_p1 = (int(c.from_user.id) == int(game['p1_id'])); opp_id = game['p2_id'] if is_p1 else game['p1_id']
+    deck = [x for x in game['deck'].split(",") if x]; hand = [h for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h]
     top = game['top_card']
     
     new_c = deck.pop(0); hand.append(new_c)
@@ -179,6 +160,24 @@ async def process_draw(c: types.CallbackQuery):
     db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
              (",".join(hand), ",".join(deck), nt, g_id), commit=True)
     
-    await send_player_hand(c.from_user.id, g_id, f"سحبت {new_c}")
-    if nt == opp_id:
-        await send_player_hand(opp_id, g_id, "الخصم سحب.. دورك!")
+    await update_ui(c.from_user.id, g_id, f"سحبت {new_c}")
+    if nt == opp_id: await update_ui(opp_id, g_id, "الخصم سحب.. دورك!")
+
+# --- 6. اختيار اللون ---
+async def ask_color(u_id, g_id):
+    kb = [[InlineKeyboardButton(text="🔴", callback_data=f"sc_{g_id}_🔴"), InlineKeyboardButton(text="🔵", callback_data=f"sc_{g_id}_🔵")],
+          [InlineKeyboardButton(text="🟡", callback_data=f"sc_{g_id}_🟡"), InlineKeyboardButton(text="🟢", callback_data=f"sc_{g_id}_🟢")]]
+    # هنا نعدل الرسالة الحالية لطلب اللون بدل ما نرسل جديدة
+    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
+    is_p1 = (int(u_id) == int(game['p1_id']))
+    msg_id = game['p1_last_msg' if is_p1 else 'p2_last_msg']
+    await bot.edit_message_text("🌈 اختر اللون المطللوب:", u_id, msg_id, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("sc_"))
+async def set_color_logic(c: types.CallbackQuery):
+    _, g_id, col = c.data.split("_")
+    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
+    opp_id = game['p2_id'] if int(c.from_user.id) == int(game['p1_id']) else game['p1_id']
+    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", (f"{col} (🌈)", opp_id, g_id), commit=True)
+    await update_ui(c.from_user.id, g_id, f"اخترت {col}")
+    await update_ui(opp_id, g_id, f"الخصم اختار {col}")
