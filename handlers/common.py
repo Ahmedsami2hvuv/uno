@@ -179,36 +179,64 @@ async def start_private_game(room_id, bot):
     await refresh_game_ui(room_id, bot)
 
 async def refresh_game_ui(room_id, bot):
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    turn_idx, top_card, curr_col = room['turn_index'], room['top_card'], room['current_color']
-    
-    status_text = f"🃏 **الورقة:** [ {top_card} ] | 🎨 **اللون:** {curr_col}\n"
-    for i, p in enumerate(players):
-        star = "🌟" if i == turn_idx else "⏳"
-        status_text += f"{star} | {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}\n"
-
-    for p in players:
-        if p.get('last_msg_id'):
-            try: await bot.delete_message(p['user_id'], p['last_msg_id'])
-            except: pass
+    try:
+        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+        # سحب اللاعبين مرتبين حسب join_order لضمان ثبات الترتيب
+        players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
         
-        hand = json.loads(p['hand'])
-        kb = []
-        # إظهار أوراق الصديق في الفريق
-        friend_text = ""
-        if room['game_mode'] == 'team':
-            friend = next(f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id'])
-            friend_text = f"\n🤝 **أوراق شريكك ({friend['player_name']}):**\n`{', '.join(json.loads(friend['hand']))}`"
+        turn_idx = room['turn_index']
+        top_card = room['top_card']
+        curr_color = room['current_color']
 
-        row = []
-        for idx, card in enumerate(hand):
-            row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
-            if len(row) == 2: kb.append(row); row = []
-        if row: kb.append(row)
+        # بناء نص الحالة
+        status_text = f"🃏 **الورقة الحالية:** [ {top_card} ]\n"
+        status_text += f"🎨 **اللون المطلوب:** {curr_color}\n\n"
+        status_text += "👥 **حالة اللاعبين:**\n"
         
-        msg = await bot.send_message(p['user_id'], status_text + friend_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
+        for i, p in enumerate(players):
+            star = "🌟" if i == turn_idx else "⏳"
+            # علامة الفريق إذا وجد
+            team_tag = f" (فريق {p['team']})" if p.get('team') and p['team'] > 0 else ""
+            status_text += f"{star} | {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}\n"
+
+        for p in players:
+            # مسح الرسالة السابقة ليبقى الشات نظيف
+            if p.get('last_msg_id'):
+                try: await bot.delete_message(p['user_id'], p['last_msg_id'])
+                except: pass
+
+            hand = json.loads(p['hand'])
+            kb = []
+            
+            # عرض أوراق الفريق إذا كان نظام فريق (فقط لشريكه)
+            friend_info = ""
+            if room['game_mode'] == 'team' and p.get('team') and p['team'] > 0:
+                friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
+                if friend:
+                    friend_info = f"\n🤝 **أوراق شريكك ({friend['player_name']}):**\n`{', '.join(json.loads(friend['hand']))}`"
+
+            # إنشاء أزرار الأوراق (تطلع للكل بس تشتغل في دورك)
+            row = []
+            for idx, card in enumerate(hand):
+                row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
+                if len(row) == 2:
+                    kb.append(row)
+                    row = []
+            if row: kb.append(row)
+
+            # إرسال الرسالة الجديدة
+            msg = await bot.send_message(
+                p['user_id'], 
+                status_text + friend_info, 
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+            )
+            
+            # تحديث معرف الرسالة لمسحها لاحقاً
+            db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
+                    (msg.message_id, room_id, p['user_id']), commit=True)
+    except Exception as e:
+        print(f"❌ خطأ في تحديث الواجهة: {e}")
+
 
 # --- 4. معالجة لعب الورق والتحدي ---
 @router.callback_query(F.data.startswith("play_"))
@@ -295,19 +323,39 @@ async def handle_dare(c: types.CallbackQuery, state: FSMContext):
     await c.message.answer(msg); await state.clear(); await refresh_game_ui(room_id, c.bot)
 
 async def finalize_move(room_id, user_id, hand, idx, played_card, bot):
+    # حذف الورقة من اليد
     hand.pop(idx)
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, user_id), commit=True)
-    if len(hand) == 0: await handle_win_logic(room_id, user_id, bot); return
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", 
+             (json.dumps(hand), room_id, user_id), commit=True)
     
+    # فحص الفوز بالجولة
+    if len(hand) == 0:
+        await handle_win_logic(room_id, user_id, bot)
+        return
+
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     next_idx = (room['turn_index'] + 1) % room['max_players']
     
-    # الاكشنات العادية
-    if "🚫" in played_card: next_idx = (next_idx + 1) % room['max_players']
-    elif "➕2" in played_card: await apply_draw_penalty(room_id, next_idx, 2, bot); next_idx = (next_idx + 1) % room['max_players']
+    # تطبيق الأكشنات (المنع، السحب، الـ Reverse)
+    if "🚫" in played_card:
+        next_idx = (next_idx + 1) % room['max_players']
+    elif "➕2" in played_card:
+        await apply_draw_penalty(room_id, next_idx, 2, bot)
+        next_idx = (next_idx + 1) % room['max_players']
+    elif "🔄" in played_card:
+        if room['max_players'] == 2:
+            next_idx = (next_idx + 1) % room['max_players'] # بالـ 2 لاعبين تصير Skip
+        else:
+            # هنا ممكن تبرمج نظام عكس الاتجاه (Direction) إذا ردت مستقبلاً
+            pass
+
+    # تحديث الساحة ونقل الدور واللون
+    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", 
+             (played_card, played_card.split()[0], next_idx, room_id), commit=True)
     
-    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", (played_card, played_card.split()[0], next_idx, room_id), commit=True)
+    # فحص إذا اللاعب الجاي يحتاج سحب آلي
     await auto_check_next_player(room_id, next_idx, played_card, bot)
+
 
 async def apply_draw_penalty(room_id, player_idx, count, bot):
     room = db_query("SELECT deck FROM rooms WHERE room_id = %s", (room_id,))[0]
