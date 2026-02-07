@@ -181,23 +181,29 @@ async def start_private_game(room_id, bot):
 async def refresh_game_ui(room_id, bot):
     try:
         room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-        # سحب اللاعبين مرتبين حسب join_order لضمان ثبات الترتيب
         players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
         
         turn_idx = room['turn_index']
         top_card = room['top_card']
         curr_color = room['current_color']
+        deck_count = len(json.loads(room['deck'])) # حساب عدد الورق في كومة السحب
 
-        # بناء نص الحالة
-        status_text = f"🃏 **الورقة الحالية:** [ {top_card} ]\n"
-        status_text += f"🎨 **اللون المطلوب:** {curr_color}\n\n"
-        status_text += "👥 **حالة اللاعبين:**\n"
+        # --- بناء رسالة الحالة الاحترافية ---
+        status_text = f"📦 **كومة السحب:** {deck_count} ورقة\n"
+        status_text += f"🎯 **السقف:** {room['score_limit']} نقطة\n"
+        status_text += "━━━━━━━━━━━━━━\n"
+        status_text += f"🃏 **الورقة المطلوبة:** [ {top_card} ]\n"
+        status_text += f"🎨 **اللون الحالي:** {curr_color}\n"
+        status_text += "━━━━━━━━━━━━━━\n"
+        status_text += "👥 **وضعية اللاعبين:**\n"
         
         for i, p in enumerate(players):
+            # النجمة الصفراء للدور، والساعة للبقية
             star = "🌟" if i == turn_idx else "⏳"
             # علامة الفريق إذا وجد
-            team_tag = f" (فريق {p['team']})" if p.get('team') and p['team'] > 0 else ""
-            status_text += f"{star} | {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}\n"
+            team_tag = f" (فريق {p['team']})" if room['game_mode'] == 'team' else ""
+            
+            status_text += f"{star} {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))} {team_tag}\n"
 
         for p in players:
             # مسح الرسالة السابقة ليبقى الشات نظيف
@@ -208,14 +214,15 @@ async def refresh_game_ui(room_id, bot):
             hand = json.loads(p['hand'])
             kb = []
             
-            # عرض أوراق الفريق إذا كان نظام فريق (فقط لشريكه)
+            # معلومات إضافية للاعب عن صديقه (في نظام الفرق)
             friend_info = ""
-            if room['game_mode'] == 'team' and p.get('team') and p['team'] > 0:
+            if room['game_mode'] == 'team':
                 friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
                 if friend:
-                    friend_info = f"\n🤝 **أوراق شريكك ({friend['player_name']}):**\n`{', '.join(json.loads(friend['hand']))}`"
+                    friend_hand = json.loads(friend['hand'])
+                    friend_info = f"\n\n🤝 **صديقك ({friend['player_name']}) عنده:**\n`{', '.join(friend_hand)}`"
 
-            # إنشاء أزرار الأوراق (تطلع للكل بس تشتغل في دورك)
+            # إنشاء أزرار الأوراق
             row = []
             for idx, card in enumerate(hand):
                 row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
@@ -225,18 +232,19 @@ async def refresh_game_ui(room_id, bot):
             if row: kb.append(row)
 
             # إرسال الرسالة الجديدة
+            final_message = status_text + friend_info
             msg = await bot.send_message(
                 p['user_id'], 
-                status_text + friend_info, 
+                final_message, 
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
             )
             
-            # تحديث معرف الرسالة لمسحها لاحقاً
+            # تحديث معرف الرسالة في الداتابيز لمسحها في الدور القادم
             db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
                     (msg.message_id, room_id, p['user_id']), commit=True)
+                    
     except Exception as e:
-        print(f"❌ خطأ في تحديث الواجهة: {e}")
-
+        print(f"❌ خطأ في تحديث واجهة اللعبة: {e}")
 
 # --- 4. معالجة لعب الورق والتحدي ---
 @router.callback_query(F.data.startswith("play_"))
