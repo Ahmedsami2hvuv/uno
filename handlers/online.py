@@ -137,7 +137,19 @@ async def auto_draw(user_id, game_id):
         await send_player_hand(opp_id, game_id, None, "🔔 الخصم سحب وما رهمت.. الدور رجعلك!")
         asyncio.create_task(start_turn_timer(game_id, opp_id))
 
-
+# --- 5. البداية والمؤقت ---
+async def start_turn_timer(game_id, user_id):
+    await asyncio.sleep(30)
+    res = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))
+    if not res: return
+    game = res[0]
+    if int(game['turn']) == int(user_id) and game['status'] == 'playing':
+        opp_id = game['p2_id'] if int(user_id) == int(game['p1_id']) else game['p1_id']
+        db_query("UPDATE active_games SET turn = %s WHERE game_id = %s", (opp_id, game_id), commit=True)
+        await bot.send_message(user_id, "⏰ خلص الوقت (30 ث)! انتقل الدور.")
+        await send_player_hand(user_id, game_id)
+        await send_player_hand(opp_id, game_id)
+        asyncio.create_task(start_turn_timer(game_id, opp_id))
 
 @router.callback_query(F.data == "mode_random")
 async def start_random(callback: types.CallbackQuery):
