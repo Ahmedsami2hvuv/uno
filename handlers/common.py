@@ -190,3 +190,38 @@ async def finalize_room_creation(c: types.CallbackQuery):
 async def go_home(c: types.CallbackQuery, state: FSMContext):
     await state.clear(); user = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
     await show_main_menu(c.message, user[0]['player_name'])
+
+# --- معالجة زر "عرض الأوراق" ---
+@router.callback_query(F.data.startswith("show_hand_"))
+async def show_player_hand(c: types.CallbackQuery):
+    room_id = c.data.replace("show_hand_", "")
+    user_id = c.from_user.id
+    
+    # جلب بيانات اللاعب وغرفته
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    player = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]
+    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    
+    # التأكد أن الدور فعلاً عليه
+    current_turn_id = players[room['turn_index']]['user_id']
+    if user_id != current_turn_id:
+        return await c.answer("⏳ مو دورك! انتظر ربعك يكملون.", show_alert=True)
+
+    hand = json.loads(player['hand'])
+    kb = []
+    row = []
+    
+    for idx, card in enumerate(hand):
+        # كل ورقة عبارة عن زر يرسل رقمها (Index)
+        row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
+        if len(row) == 2: # كل سطر ورقتين حتى الترتيب يكون حلو
+            kb.append(row)
+            row = []
+    if row: kb.append(row)
+    
+    # زر إضافي للسحب إذا ما عنده ورقة ترهم
+    kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"draw_{room_id}")])
+    
+    await c.message.answer(f"🃏 **أوراقك الحالية:**\nالورقة في الساحة: [ {room['top_card']} ]", 
+                           reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await c.answer()
