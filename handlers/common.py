@@ -225,3 +225,79 @@ async def show_player_hand(c: types.CallbackQuery):
     await c.message.answer(f"🃏 **أوراقك الحالية:**\nالورقة في الساحة: [ {room['top_card']} ]", 
                            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await c.answer()
+
+# --- 1. دالة تنزيل الورقة (Logic) ---
+@router.callback_query(F.data.startswith("play_"))
+async def play_card(c: types.CallbackQuery):
+    _, room_id, idx = c.data.split("_")
+    idx = int(idx)
+    user_id = c.from_user.id
+    
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    player = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]
+    hand = json.loads(player['hand'])
+    played_card = hand[idx]
+    top_card = room['top_card']
+
+    # منطق المطابقة (اللون أو الرقم أو الجوكر)
+    # ملاحظة: الورقة تجي بتنسيق "🔴 7" أو "🌈 جوكر"
+    match = False
+    if "🌈" in played_card or "🔥" in played_card:
+        match = True
+    else:
+        # فصل اللون عن القيمة
+        p_color, p_val = played_card.split(" ", 1)
+        t_color, t_val = top_card.split(" ", 1)
+        if p_color == t_color or p_val == t_val:
+            match = True
+
+    if not match:
+        return await c.answer("❌ هاي الورقة ما ترهم! ذب نفس اللون أو الرقم.", show_alert=True)
+
+    # تنفيذ التنزيل
+    hand.pop(idx)
+    
+    # تحديث اللاعب
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", 
+             (json.dumps(hand), room_id, user_id), commit=True)
+    
+    # حساب الدور التالي (ترتيب دائري)
+    max_p = room['max_players']
+    next_turn = (room['turn_index'] + 1) % max_p
+    
+    # تحديث الغرفة
+    db_query("UPDATE rooms SET top_card = %s, turn_index = %s WHERE room_id = %s", 
+             (played_card, next_turn, room_id), commit=True)
+
+    await c.message.delete() # حذف قائمة الأوراق بعد اللعب
+    await c.answer(f"✅ لعبت {played_card}")
+    await refresh_game_ui(room_id, c.bot)
+
+# --- 2. دالة سحب ورقة (Draw) ---
+@router.callback_query(F.data.startswith("draw_"))
+async def draw_card(c: types.CallbackQuery):
+    room_id = c.data.replace("draw_", "")
+    user_id = c.from_user.id
+    
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    deck = json.loads(room['deck'])
+    
+    if not deck:
+        return await c.answer("📭 الكومة خلصت!")
+
+    # سحب ورقة واحدة
+    new_card = deck.pop(0)
+    player = db_query("SELECT hand FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]
+    hand = json.loads(player['hand'])
+    hand.append(new_card)
+
+    # تحديث الداتا بيس
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, user_id), commit=True)
+    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+
+    await c.answer(f"📥 سحبت ورقة: {new_card}")
+    # بعد السحب، لا ينقل الدور تلقائياً (حسب قوانيننا المعتادة) بل تظهر أوراقه مرة ثانية ليختار
+    # أو إذا تريد ينقل الدور فوراً، نقدر نغير الـ turn_index هنا.
+    await refresh_game_ui(room_id, c.bot)
+
+
