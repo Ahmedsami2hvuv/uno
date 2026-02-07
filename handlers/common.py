@@ -190,7 +190,7 @@ async def start_private_game(room_id, bot):
     deck = await create_uno_deck()
     
     # الحصول على معلومات اللاعبين
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     
     # توزيع 7 أوراق لكل لاعب
@@ -262,38 +262,38 @@ async def announce_game_start(room_id, bot, game_mode):
             pass
 
 async def refresh_game_ui(room_id, bot):
-    """تحديث واجهة اللعبة - نسخة مصلحة"""
+    """تحديث واجهة اللعبة - نسخة الحسم"""
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    # سحب اللاعبين مرتبين حسب وقت دخولهم (0، 1، 2...)
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
     
     turn_idx = room['turn_index']
     top_card = room['top_card']
     current_color = room.get('current_color', top_card.split()[0])
     
+    # من هو اللاعب الذي عليه الدور الآن؟
+    current_player_id = players[turn_idx]['user_id']
+
     status_text = f"🃏 **الورقة الحالية:** [ {top_card} ]\n"
     status_text += f"🎨 **اللون المطلوب:** {current_color}\n\n"
     status_text += f"👥 **اللاعبين:**\n"
     
     for i, p in enumerate(players):
-        # النجمة تظهر للشخص اللي عليه الدور فعلياً
-        is_his_turn = (i == turn_idx)
-        star = "🌟" if is_his_turn else "⏳"
-        team_info = f"| فريق {p['team']}" if room['game_mode'] == 'team' and p.get('team') else ""
-        status_text += f"{star} {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))} {team_info}\n"
+        star = "🌟" if i == turn_idx else "⏳"
+        status_text += f"{star} {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))}\n"
     
-    status_text += f"\n🎯 السقف: {room['score_limit']} | الاتجاه: {'⏩' if room['direction'] == 1 else '⏪'}"
-    
-    for i, p in enumerate(players):
-        # مسح الرسالة السابقة
+    status_text += f"\n🎯 السقف: {room['score_limit']}"
+
+    for p in players:
+        # مسح الرسالة القديمة
         if p.get('last_msg_id'):
             try: await bot.delete_message(p['user_id'], p['last_msg_id'])
             except: pass
         
-        hand = json.loads(p['hand'])
         kb = []
-        
-        # التأكد من ظهور الأزرار فقط لصاحب الدور
-        if i == turn_idx:
+        # الفحص بالـ ID لضمان الدقة
+        if p['user_id'] == current_player_id:
+            hand = json.loads(p['hand'])
             kb.append([InlineKeyboardButton(text="🃏 سحب ورقة", callback_data=f"draw_{room_id}")])
             row = []
             for idx, card in enumerate(hand):
@@ -304,8 +304,7 @@ async def refresh_game_ui(room_id, bot):
                         row = []
             if row: kb.append(row)
         else:
-            # رسالة توضيحية للي مو دورهم
-            kb.append([InlineKeyboardButton(text="⏳ دور ربعك هسة...", callback_data="wait")])
+            kb.append([InlineKeyboardButton(text="⏳ دور صاحبك هسة...", callback_data="wait")])
         
         msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
