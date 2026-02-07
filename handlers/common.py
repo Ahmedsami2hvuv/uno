@@ -176,13 +176,34 @@ async def play_card(c: types.CallbackQuery):
     db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", 
              (json.dumps(player_hand), room_id, user_id), commit=True)
 
-    # 4. فحص الفوز فوراً
+    # فحص الفوز فوراً
     if len(player_hand) == 0:
         db_query("UPDATE rooms SET status = 'finished' WHERE room_id = %s", (room_id,), commit=True)
-        all_p = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (room_id,))
-        for p in all_p:
-            await c.bot.send_message(p['user_id'], f"🎊 اللعبة انتهت! الفائز هو: **{c.from_user.full_name}** 🏆")
-        return await c.answer("🏆 مبروك الفوز!")
+        
+        # جلب كل اللاعبين لحساب نقاطهم
+        all_players = db_query("SELECT * FROM room_players WHERE room_id = %s", (room_id,))
+        result_text = "🏁 **انتهت اللعبة! النتائج النهائية:**\n\n"
+        winner_name = c.from_user.full_name
+        
+        for p in all_players:
+            points = calculate_hand_points(p['hand'])
+            # تحديث نقاط اللاعب الكلية في جدول الـ users
+            db_query("UPDATE users SET online_points = online_points + %s WHERE user_id = %s", 
+                     (points if p['user_id'] != user_id else 0, p['user_id']), commit=True)
+            
+            status = "🏆 فائز" if p['user_id'] == user_id else f"❌ خاسر (+{points})"
+            result_text += f"{status} | **{p['player_name']}**\n"
+
+        # إرسال النتيجة للكل
+        for p in all_players:
+            try:
+                # مسح آخر رسالة جدول
+                if p['last_msg_id']:
+                    await c.bot.delete_message(p['user_id'], p['last_msg_id'])
+                await c.bot.send_message(p['user_id'], result_text)
+            except: pass
+        
+        return await c.answer("🏆 مبروك الفوز وحصد النقاط!")
 
     # 5. منطق الأكشنات (المنع والسحب)
     skip_next = False
@@ -285,3 +306,22 @@ async def finalize_room_creation(c: types.CallbackQuery):
 async def go_home(c: types.CallbackQuery, state: FSMContext):
     await state.clear(); user = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
     await show_main_menu(c.message, user[0]['player_name'])
+
+def calculate_hand_points(hand_json):
+    hand = json.loads(hand_json)
+    total = 0
+    for card in hand:
+        if any(x in card for x in ['🚫', '🔄', '➕2']):
+            total += 20
+        elif any(x in card for x in ['🌈', '➕4', '🔥']):
+            total += 50
+        else:
+            # استخراج الرقم من مثل "🔴 7"
+            try:
+                num = int(card.split()[1])
+                total += num
+            except:
+                total += 10 # احتياط
+    return total
+
+
