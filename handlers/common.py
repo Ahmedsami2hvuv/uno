@@ -4,10 +4,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db_query
+import random
+import string
 
 router = Router()
 
-# --- قسم مستخرج الأكواد (يشتغل حتى لو أنت ما مسجل) ---
+# دالة لتوليد كود غرفة فريد
+def generate_room_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+
+# --- قسم مستخرج الأكواد ---
 @router.message(F.photo)
 async def get_photo_id(message: types.Message):
     file_id = message.photo[-1].file_id
@@ -57,6 +63,7 @@ async def get_pass(message: types.Message, state: FSMContext):
     await message.answer("✅ تم تفعيل حسابك!")
     await show_main_menu(message, data['p_name'])
 
+# --- القائمة الرئيسية ---
 async def show_main_menu(message, name):
     kb = [
         [InlineKeyboardButton(text="🎲 لعب عشوائي", callback_data="mode_random"),
@@ -70,6 +77,57 @@ async def show_main_menu(message, name):
         await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     else:
         await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# --- 🚨 معالج زر "غرفة لعب" (المفقود عندك) ---
+@router.callback_query(F.data == "private_room_menu")
+async def private_room_main(c: types.CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ إنشاء غرفة جديدة", callback_data="room_create")],
+        [InlineKeyboardButton(text="🚪 انضمام لغرفة", callback_data="room_join_input")],
+        [InlineKeyboardButton(text="🏠 الرجوع للقائمة", callback_data="home")]
+    ])
+    await c.message.edit_text("🎮 **غرف اللعب الخاصة**\n\nيمكنك إنشاء غرفة ودعوة أصدقائك أو الانضمام عن طريق الكود.", reply_markup=kb)
+
+# --- مراحل إنشاء الغرفة ---
+@router.callback_query(F.data == "room_create")
+async def room_create_start(c: types.CallbackQuery):
+    kb = []
+    row = []
+    for i in range(2, 11):
+        row.append(InlineKeyboardButton(text=str(i), callback_data=f"setp_{i}"))
+        if len(row) == 3: kb.append(row); row = []
+    if row: kb.append(row)
+    await c.message.edit_text("👥 **حدد عدد اللاعبين (2 - 10):**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("setp_"))
+async def set_room_players(c: types.CallbackQuery):
+    num = c.data.split("_")[1]
+    scores = [100, 150, 200, 250, 300, 350, 400, 450, 500]
+    kb = []
+    row = []
+    for s in scores:
+        row.append(InlineKeyboardButton(text=str(s), callback_data=f"sets_{num}_{s}"))
+        if len(row) == 3: kb.append(row); row = []
+    if row: kb.append(row)
+    await c.message.edit_text(f"🎯 **تم اختيار {num} لاعبين.**\nحدد سقف النقاط لإنهاء اللعبة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("sets_"))
+async def finalize_room_creation(c: types.CallbackQuery):
+    _, p_count, s_limit = c.data.split("_")
+    room_code = generate_room_code()
+    user_id = c.from_user.id
+    
+    # جلب اسم اللاعب المسجل
+    user_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
+    p_name = user_data[0]['player_name'] if user_data else c.from_user.full_name
+
+    # حفظ الغرفة واللاعب
+    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit) VALUES (%s, %s, %s, %s)", 
+             (room_code, user_id, int(p_count), int(s_limit)), commit=True)
+    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", 
+             (room_code, user_id, p_name), commit=True)
+    
+    await c.message.edit_text(f"✅ **تم إنشاء الغرفة!**\n\n🆔 كود الغرفة: `{room_code}`\n👥 العدد المطلوب: {p_count}\n🎯 السقف: {s_limit}\n\nارسل الكود لأصدقائك. بانتظارهم... (1/{p_count})")
 
 @router.callback_query(F.data == "home")
 async def go_home(callback: types.CallbackQuery, state: FSMContext):
