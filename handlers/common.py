@@ -154,22 +154,84 @@ async def refresh_game_ui(room_id, bot):
 async def play_card(c: types.CallbackQuery):
     _, room_id, idx = c.data.split("_")
     idx, user_id = int(idx), c.from_user.id
+    
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     players_list = db_query("SELECT user_id, hand FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    
+    # 1. التأكد أن الدور عليه
     if players_list[room['turn_index']]['user_id'] != user_id:
         return await c.answer("⏳ مو دورك! انتظر النجمة 🌟", show_alert=True)
     
     player_hand = json.loads(players_list[room['turn_index']]['hand'])
     played_card = player_hand[idx]
-    if not (any(x in played_card for x in ['🌈', '🔥']) or played_card.split()[0] == room['top_card'].split()[0] or played_card.split()[1] == room['top_card'].split()[1]):
+    
+    # 2. فحص المطابقة (اللون أو الرقم أو الجوكر)
+    if not (any(x in played_card for x in ['🌈', '🔥']) or 
+            played_card.split()[0] == room['top_card'].split()[0] or 
+            played_card.split()[1] == room['top_card'].split()[1]):
         return await c.answer(f"❌ ما ترهم على {room['top_card']}", show_alert=True)
 
+    # 3. تنزيل الورقة وتحديث اليد
     player_hand.pop(idx)
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(player_hand), room_id, user_id), commit=True)
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", 
+             (json.dumps(player_hand), room_id, user_id), commit=True)
+
+    # 4. فحص الفوز فوراً
+    if len(player_hand) == 0:
+        db_query("UPDATE rooms SET status = 'finished' WHERE room_id = %s", (room_id,), commit=True)
+        all_p = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (room_id,))
+        for p in all_p:
+            await c.bot.send_message(p['user_id'], f"🎊 اللعبة انتهت! الفائز هو: **{c.from_user.full_name}** 🏆")
+        return await c.answer("🏆 مبروك الفوز!")
+
+    # 5. منطق الأكشنات (المنع والسحب)
+    skip_next = False
+    draw_penalty = 0
+    
+    if "🚫" in played_card:
+        skip_next = True
+    elif "➕2" in played_card:
+        draw_penalty = 2
+    elif "➕4" in played_card or "🔥" in played_card:
+        draw_penalty = 4
+    elif "🔄" in played_card and room['max_players'] == 2:
+        skip_next = True # في لاعبين الـ Reverse تشتغل Skip
+
+    # 6. حساب اللاعب القادم وتطبيق العقوبة
     next_idx = (room['turn_index'] + 1) % room['max_players']
-    db_query("UPDATE rooms SET top_card = %s, turn_index = %s WHERE room_id = %s", (played_card, next_idx, room_id), commit=True)
+    
+    if draw_penalty > 0:
+        await apply_draw_penalty(room_id, next_idx, draw_penalty, c.bot)
+        next_idx = (next_idx + 1) % room['max_players'] # طفرنا اللي انسحبله
+    elif skip_next:
+        next_idx = (next_idx + 1) % room['max_players'] # طفرنا الممنوع
+
+    # 7. تحديث الغرفة ونقل الدور
+    db_query("UPDATE rooms SET top_card = %s, turn_index = %s WHERE room_id = %s", 
+             (played_card, next_idx, room_id), commit=True)
+
+    await c.answer(f"✅ لعبت {played_card}")
+    
+    # 8. الفحص الآلي للاعب القادم (إذا يحتاج يسحب)
     await auto_check_next_player(room_id, next_idx, played_card, c.bot)
 
+# --- 🚨 دالة عقوبة السحب (لازم تضيفها بنهاية الملف) ---
+async def apply_draw_penalty(room_id, player_idx, count, bot):
+    room = db_query("SELECT deck FROM rooms WHERE room_id = %s", (room_id,))[0]
+    players = db_query("SELECT user_id, hand FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    target = players[player_idx]
+    
+    deck = json.loads(room['deck'])
+    hand = json.loads(target['hand'])
+    
+    for _ in range(count):
+        if deck: hand.append(deck.pop(0))
+    
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, target['user_id']), commit=True)
+    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+    
+    try: await bot.send_message(target['user_id'], f"⚠️ أكلت عقوبة سحب {count} أوراق وطار دورك! 🔥")
+    except: pass
 async def auto_check_next_player(room_id, next_idx, top_card, bot):
     room = db_query("SELECT deck, max_players FROM rooms WHERE room_id = %s", (room_id,))[0]
     players = db_query("SELECT user_id, hand, player_name FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
