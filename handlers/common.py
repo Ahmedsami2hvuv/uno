@@ -389,6 +389,45 @@ async def handle_win_logic(room_id, user_id, bot):
             except: pass
         await asyncio.sleep(3); await start_private_game(room_id, bot)
 
+# دالة فحص الغش (هل يملك اللاعب اللون المطلوب؟)
+def check_if_cheating(player_hand, current_color):
+    hand = json.loads(player_hand)
+    # إذا اللاعب عنده ورقة من نفس اللون المطلوب فهو "غشاش" إذا لعب الجوكر
+    return any(current_color in card for card in hand if '🌈' not in card)
+
+# معالج التحدي
+@router.callback_query(F.data.startswith("dare_"))
+async def handle_challenge(c: types.CallbackQuery, state: FSMContext):
+    _, room_id, choice = c.data.split("_")
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    
+    challenger_idx = room['turn_index'] # اللاعب اللي لعب الجوكر
+    victim_idx = (challenger_idx + 1) % room['max_players']
+    
+    if choice == 'yes': # اللاعب قرر يتحدى
+        is_guilty = check_if_cheating(players[challenger_idx]['hand'], room['current_color'])
+        
+        if is_guilty:
+            # نجح التحدي: الغشاش يسحب 6 أوراق والدور يرجعله يلعب صح
+            await apply_draw_penalty(room_id, challenger_idx, 6, c.bot)
+            msg = f"⚔️ نجح التحدي! {players[challenger_idx]['player_name']} طلع غشاش وسحب 6 أوراق! الدور إلك مرة ثانية تلعب صح."
+            next_turn = challenger_idx
+        else:
+            # فشل التحدي: المتحدي يسحب 6 أوراق ويطفر دوره
+            await apply_draw_penalty(room_id, victim_idx, 6, c.bot)
+            msg = f"❌ فشل التحدي! {players[challenger_idx]['player_name']} نظيف. {players[victim_idx]['player_name']} سحب 6 أوراق عقوبة!"
+            next_turn = (victim_idx + 1) % room['max_players']
+    else:
+        # استسلام: سحب 4 أوراق طبيعي
+        await apply_draw_penalty(room_id, victim_idx, 4, c.bot)
+        msg = f"🏳️ {players[victim_idx]['player_name']} استسلم وسحب 4 أوراق."
+        next_turn = (victim_idx + 1) % room['max_players']
+
+    db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+    await c.message.answer(msg)
+    await refresh_game_ui(room_id, c.bot)
+
 async def auto_check_next_player(room_id, next_idx, top_card, bot):
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     player = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))[next_idx]
