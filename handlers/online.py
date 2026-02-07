@@ -376,9 +376,18 @@ async def process_catch(c: types.CallbackQuery):
     await send_player_hand(victim_id, g_id, None, "صادك الخصم لأنك ما صحت أونو!")
 
 async def ask_color(u_id, g_id):
+    # مسح الرسالة القديمة قبل إرسال اختيار الألوان
+    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
+    is_p1 = (int(u_id) == int(game['p1_id']))
+    last_msg = game['p1_last_msg'] if is_p1 else game['p2_last_msg']
+    try: await bot.delete_message(u_id, last_msg)
+    except: pass
+
     kb = [[InlineKeyboardButton(text="🔴", callback_data=f"sc_{g_id}_🔴"), InlineKeyboardButton(text="🔵", callback_data=f"sc_{g_id}_🔵")],
           [InlineKeyboardButton(text="🟡", callback_data=f"sc_{g_id}_🟡"), InlineKeyboardButton(text="🟢", callback_data=f"sc_{g_id}_🟢")]]
-    await bot.send_message(u_id, "🌈 اختر اللون المطلوب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    
+    sent = await bot.send_message(u_id, "🌈 اختر اللون المطلوب للسيطرة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    db_query(f"UPDATE active_games SET {'p1_last_msg' if is_p1 else 'p2_last_msg'} = %s WHERE game_id = %s", (sent.message_id, g_id), commit=True)
 
 @router.callback_query(F.data.startswith("sc_"))
 async def set_color_logic(c: types.CallbackQuery):
