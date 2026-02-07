@@ -48,7 +48,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     else:
         await show_main_menu(message, user[0]['player_name'])
 
-# (دوال التسجيل تبقى كما هي لتجنب المشاكل)
 @router.message(RegisterStates.wait_name)
 async def get_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
@@ -80,14 +79,11 @@ async def private_room_main(c: types.CallbackQuery, state: FSMContext):
           [InlineKeyboardButton(text="🏠 الرجوع للقائمة", callback_data="home")]]
     await c.message.edit_text("🎮 **غرف اللعب الخاصة**\n\nأنشئ غرفة ودز الكود لربعك أو ادخل كود غرفة واصلك.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# --- 🚀 نظام الانضمام (الذي كان مفقوداً) ---
+# --- نظام الانضمام والتصويت ---
 @router.callback_query(F.data == "room_join_input")
 async def join_room_start(c: types.CallbackQuery, state: FSMContext):
     await c.message.edit_text("📥 **أرسل كود الغرفة المكون من 5 رموز:**\n(مثال: `ABC12`)")
     await state.set_state(RoomStates.wait_for_code)
-
-
-    # (بقية الاستيرادات والدوال الفوق تبقى نفسها)
 
 @router.message(RoomStates.wait_for_code)
 async def process_room_join(message: types.Message, state: FSMContext):
@@ -97,72 +93,59 @@ async def process_room_join(message: types.Message, state: FSMContext):
     if not room:
         return await message.answer("❌ الكود غير صحيح أو الغرفة لم تعد موجودة.")
     
-    # 1. جلب قائمة اللاعبين الحاليين قبل الإضافة
-    current_players = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s", (code,))
+    current_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
     players_count = len(current_players)
     max_p = room[0]['max_players']
     creator_id = room[0]['creator_id']
 
-    # التأكد أن اللاعب ليس موجوداً بالفعل في الغرفة
     if any(p['user_id'] == message.from_user.id for p in current_players):
         await state.clear()
         return await message.answer("⚠️ أنت موجود في هذه الغرفة بالفعل!")
 
-    # 2. التحقق من السعة
     if players_count >= max_p:
         await state.clear()
         return await message.answer("🚫 الغرفة ممتلئة بالفعل!")
 
-    # 3. إضافة اللاعب الجديد
     user_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     p_name = user_data[0]['player_name']
-    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", 
-             (code, message.from_user.id, p_name), commit=True)
+    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, message.from_user.id, p_name), commit=True)
     
     new_count = players_count + 1
     await state.clear()
-    
-    # 4. إبلاغ اللاعب الذي انضم
-    await message.answer(f"✅ دخلت الغرفة `{code}` بنجاح!\nالعدد الحالي: ({new_count}/{max_p})")
+    await message.answer(f"✅ دخلت الغرفة `{code}` بنجاح! ({new_count}/{max_p})")
 
-    # 5. إبلاغ صاحب الغرفة (المنشئ) بدخول لاعب جديد
     if message.from_user.id != creator_id:
-        try:
-            await message.bot.send_message(
-                creator_id, 
-                f"👤 دخل اللاعب **{p_name}** لغرفتك!\nالعدد الحالي: ({new_count}/{max_p})"
-            )
+        try: await message.bot.send_message(creator_id, f"👤 دخل اللاعب **{p_name}**! ({new_count}/{max_p})")
         except: pass
 
-    # 6. 🚨 إذا اكتمل العدد، نرسل إشعار البدء للكل
     if new_count == max_p:
         db_query("UPDATE rooms SET status = 'voting' WHERE room_id = %s", (code,), commit=True)
+        kb_list = []
+        if max_p % 2 == 0:
+            kb_list.append([InlineKeyboardButton(text="👥 نظام فريق", callback_data=f"vote_team_{code}")])
+            kb_list.append([InlineKeyboardButton(text="👤 نظام فردي", callback_data=f"vote_solo_{code}")])
+        else:
+            kb_list.append([InlineKeyboardButton(text="🎮 بدء اللعب الفردي", callback_data=f"vote_solo_{code}")])
         
-        # جلب كل اللاعبين لإرسال رسالة البدء لهم
         all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
         for p in all_players:
-            try:
-                await message.bot.send_message(
-                    p['user_id'], 
-                    "🎉 **اكتمل العدد!**\nجاري تجهيز الغرفة لبدء التصويت على نمط اللعب..."
-                )
+            try: await message.bot.send_message(p['user_id'], "🎉 **اكتمل العدد!**\nصوتوا على نمط اللعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
             except: pass
 
-    
-    # التحقق إذا كانت الغرفة ممتلئة (مثال مبدئي)
-    players = db_query("SELECT COUNT(*) as count FROM room_players WHERE room_id = %s", (code,))
-    if players[0]['count'] >= room[0]['max_players']:
-        await state.clear()
-        return await message.answer("🚫 الغرفة ممتلئة بالفعل!")
+@router.callback_query(F.data.startswith("vote_"))
+async def handle_voting(c: types.CallbackQuery):
+    _, mode, code = c.data.split("_")
+    room = db_query("SELECT status FROM rooms WHERE room_id = %s", (code,))
+    if not room or room[0]['status'] != 'voting':
+        return await c.answer("🚫 انتهى التصويت!")
 
-    # إضافة اللاعب للغرفة
-    user_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
-    p_name = user_data[0]['player_name']
+    db_query("UPDATE rooms SET game_mode = %s, status = 'playing' WHERE room_id = %s", (mode, code), commit=True)
+    mode_name = "الفرق" if mode == "team" else "الفردي"
     
-    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (code, message.from_user.id, p_name), commit=True)
-    
-    await state.clear()
-    await message.answer(f"✅ تم الانضمام للغرفة `{code}` بنجاح!\nننتظر اكتمال العدد لبدء اللعب...")
+    all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+    for p in all_players:
+        try: await c.bot.send_message(p['user_id'], f"✅ تم اختيار: **{mode_name}**\n🃏 جاري توزيع الأوراق... بدأت اللعبة!")
+        except: pass
 
 # --- مراحل إنشاء الغرفة ---
 @router.callback_query(F.data == "room_create")
@@ -192,16 +175,11 @@ async def finalize_room_creation(c: types.CallbackQuery):
     user_id = c.from_user.id
     user_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
     p_name = user_data[0]['player_name'] if user_data else c.from_user.full_name
-
     db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit) VALUES (%s, %s, %s, %s)", (room_code, user_id, int(p_count), int(s_limit)), commit=True)
     db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (room_code, user_id, p_name), commit=True)
-    
-    # إرسال رسالة الإعداد
     await c.message.edit_text(f"✅ **تم إنشاء الغرفة!**\n\n👥 العدد: {p_count} | 🎯 السقف: {s_limit}\n\nننتظر دخول ربعك (1/{p_count})")
-    
-    # 🚨 إرسال الكود برسالة منفصلة للنسخ السهل
     await c.message.answer(f"`{room_code}`")
-    await c.message.answer("☝️ **اضغط على الكود أعلاه لنسخه** وارسله لأصدقائك.")
+    await c.message.answer("☝️ **اضغط على الكود أعلاه لنسخه**")
 
 @router.callback_query(F.data == "home")
 async def go_home(callback: types.CallbackQuery, state: FSMContext):
