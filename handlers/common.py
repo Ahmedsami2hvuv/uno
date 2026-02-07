@@ -141,21 +141,43 @@ async def start_private_game(room_id, bot):
     db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0 WHERE room_id = %s", (top_card, json.dumps(deck), room_id), commit=True)
     await refresh_game_ui(room_id, bot)
 
-# --- 📊 واجهة الجدول ---
+# --- 📊 واجهة الجدول المحدثة مع المسح التلقائي ---
 async def refresh_game_ui(room_id, bot):
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    
     deck_count = len(json.loads(room['deck']))
-    
-    status_text = f"🃏 **الورقة:** [ {room['top_card']} ]\n📦 **الكومة:** {deck_count}\n\n👥 **اللاعبين:**\n"
+    turn_idx = room['turn_index']
+    top_card = room['top_card']
+
+    status_text = f"🃏 **الورقة الحالية:** [ {top_card} ]\n"
+    status_text += f"📦 **الكومة:** {deck_count}\n\n"
+    status_text += "👥 **اللاعبين:**\n"
     for i, p in enumerate(players):
-        star = "🌟" if i == room['turn_index'] else "⏳"
+        star = "🌟" if i == turn_idx else "⏳"
         status_text += f"{star} | {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))}\n"
-    
+
     for i, p in enumerate(players):
-        kb = [[InlineKeyboardButton(text="🃏 أوراقي", callback_data=f"show_hand_{room_id}")]] if i == room['turn_index'] else []
-        try: await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        except: pass
+        # 1. مسح الرسالة القديمة إذا موجودة (حتى يبقى الشات نظيف)
+        last_msg = db_query("SELECT last_msg_id FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, p['user_id']))
+        if last_msg and last_msg[0]['last_msg_id']:
+            try: await bot.delete_message(p['user_id'], last_msg[0]['last_msg_id'])
+            except: pass
+
+        # 2. تحضير أزرار الأوراق (تظهر فقط للي عليه الدور فوراً)
+        kb = []
+        if i == turn_idx:
+            hand = json.loads(p['hand'])
+            row = []
+            for idx, card in enumerate(hand):
+                row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
+                if len(row) == 2: kb.append(row); row = []
+            if row: kb.append(row)
+            kb.append([InlineKeyboardButton(text="📥 سحب ورقة", callback_data=f"draw_{room_id}")])
+
+        # 3. إرسال الرسالة الجديدة وحفظ الـ ID مالتها للمسح القادم
+        msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
 
 # --- مراحل إنشاء الغرفة ---
 @router.callback_query(F.data == "room_create")
@@ -226,7 +248,7 @@ async def show_player_hand(c: types.CallbackQuery):
                            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await c.answer()
 
-# --- 1. دالة تنزيل الورقة (Logic) ---
+# --- دالة التنزيل (Play) بعد التعديل ---
 @router.callback_query(F.data.startswith("play_"))
 async def play_card(c: types.CallbackQuery):
     _, room_id, idx = c.data.split("_")
@@ -235,41 +257,28 @@ async def play_card(c: types.CallbackQuery):
     
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     player = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]
+    
+    # التأكد أن الدور عليه (حماية من النقرات السريعة)
+    players_list = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    if players_list[room['turn_index']]['user_id'] != user_id:
+        return await c.answer("⏳ مو دورك!")
+
     hand = json.loads(player['hand'])
     played_card = hand[idx]
-    top_card = room['top_card']
+    
+    # منطق المطابقة (بسيط هسة)
+    if not (any(x in played_card for x in ['🌈', '🔥']) or 
+            played_card.split()[0] == room['top_card'].split()[0] or 
+            played_card.split()[1] == room['top_card'].split()[1]):
+        return await c.answer("❌ ما ترهم!")
 
-    # منطق المطابقة (اللون أو الرقم أو الجوكر)
-    # ملاحظة: الورقة تجي بتنسيق "🔴 7" أو "🌈 جوكر"
-    match = False
-    if "🌈" in played_card or "🔥" in played_card:
-        match = True
-    else:
-        # فصل اللون عن القيمة
-        p_color, p_val = played_card.split(" ", 1)
-        t_color, t_val = top_card.split(" ", 1)
-        if p_color == t_color or p_val == t_val:
-            match = True
-
-    if not match:
-        return await c.answer("❌ هاي الورقة ما ترهم! ذب نفس اللون أو الرقم.", show_alert=True)
-
-    # تنفيذ التنزيل
+    # تحديث البيانات
     hand.pop(idx)
+    next_turn = (room['turn_index'] + 1) % room['max_players']
     
-    # تحديث اللاعب
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", 
-             (json.dumps(hand), room_id, user_id), commit=True)
-    
-    # حساب الدور التالي (ترتيب دائري)
-    max_p = room['max_players']
-    next_turn = (room['turn_index'] + 1) % max_p
-    
-    # تحديث الغرفة
-    db_query("UPDATE rooms SET top_card = %s, turn_index = %s WHERE room_id = %s", 
-             (played_card, next_turn, room_id), commit=True)
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, user_id), commit=True)
+    db_query("UPDATE rooms SET top_card = %s, turn_index = %s WHERE room_id = %s", (played_card, next_turn, room_id), commit=True)
 
-    await c.message.delete() # حذف قائمة الأوراق بعد اللعب
     await c.answer(f"✅ لعبت {played_card}")
     await refresh_game_ui(room_id, c.bot)
 
