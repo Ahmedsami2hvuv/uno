@@ -66,6 +66,30 @@ def init_db():
     conn.close()
     print("✅ جداول ريلوي جاهزة ومحدثة بنظام مسح الرسائل!")
 
+
+@router.callback_query(F.data.startswith("sets_"))
+async def finalize_room_creation(c: types.CallbackQuery):
+    _, p_count, s_limit = c.data.split("_")
+    room_code = generate_room_code()
+    user_id = c.from_user.id
+    
+    # حفظ الغرفة
+    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit) VALUES (%s, %s, %s, %s)", 
+             (room_code, user_id, p_count, s_limit), commit=True)
+    
+    # إضافة المنشئ كأول لاعب
+    p_name = c.from_user.full_name
+    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", 
+             (room_code, user_id, p_name), commit=True)
+    
+    text = (f"✅ **تم إنشاء الغرفة بنجاح!**\n\n"
+            f"🆔 كود الغرفة: `{room_code}`\n"
+            f"👥 عدد اللاعبين المطلوب: {p_count}\n"
+            f"🎯 سقف النقاط: {s_limit}\n\n"
+            f"ارسل الكود لأصدقائك للانضمام. (1/{p_count}) دخلوا الآن.")
+    
+    await c.message.edit_text(text)
+
 # تشغيل التهيئة عند استيراد الملف
 if __name__ == "__main__":
     init_db()
