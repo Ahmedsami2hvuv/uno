@@ -131,15 +131,21 @@ async def start_private_game(room_id, bot):
     deck = [f"{c} {n}" for c in colors for n in numbers] + [f"{c} {n}" for c in colors for n in numbers if n != '0']
     for _ in range(4): deck.extend(["🌈 جوكر", "➕4 🔥"])
     random.shuffle(deck)
-    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+
+    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
+    
     for p in players:
         hand = [deck.pop() for _ in range(7)]
-        db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
+        db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", 
+                 (json.dumps(hand), room_id, p['user_id']), commit=True)
+
     top_card = deck.pop()
-    while any(x in top_card for x in ['➕', '🌈', '🚫', '🔄']):
-        deck.append(top_card); random.shuffle(deck); top_card = deck.pop()
-    db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0, current_color = %s WHERE room_id = %s", 
-             (top_card, json.dumps(deck), room_id, top_card.split()[0]), commit=True)
+    # أهم سطر: نحدد اللون الابتدائي بناءً على أول ورقة
+    start_color = top_card.split()[0] 
+    
+    db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0, current_color = %s, status = 'playing' WHERE room_id = %s", 
+             (top_card, json.dumps(deck), start_color, room_id), commit=True)
+    
     await refresh_game_ui(room_id, bot)
 
 async def refresh_game_ui(room_id, bot):
