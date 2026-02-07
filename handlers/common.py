@@ -60,7 +60,7 @@ async def get_pass(message: types.Message, state: FSMContext):
 async def show_main_menu(message, name):
     kb = [
         [InlineKeyboardButton(text="🎲 لعب عشوائي", callback_data="mode_random"),
-         InlineKeyboardButton(text="🏠 غرفة لعب", callback_data="create_room")],
+         InlineKeyboardButton(text="🏠 غرفة لعب", callback_data="private_room_menu")],
         [InlineKeyboardButton(text="🧮 حاسبة اونو", callback_data="mode_calc")],
         [InlineKeyboardButton(text="🏆 المتصدرين", callback_data="leaderboard"),
          InlineKeyboardButton(text="👤 حسابي", callback_data="my_profile")]
