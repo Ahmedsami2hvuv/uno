@@ -262,7 +262,7 @@ async def announce_game_start(room_id, bot, game_mode):
             pass
 
 async def refresh_game_ui(room_id, bot):
-    """تحديث واجهة اللعبة"""
+    """تحديث واجهة اللعبة - نسخة مصلحة"""
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
     
@@ -270,54 +270,44 @@ async def refresh_game_ui(room_id, bot):
     top_card = room['top_card']
     current_color = room.get('current_color', top_card.split()[0])
     
-    # إنشاء نص حالة اللعبة
     status_text = f"🃏 **الورقة الحالية:** [ {top_card} ]\n"
     status_text += f"🎨 **اللون المطلوب:** {current_color}\n\n"
     status_text += f"👥 **اللاعبين:**\n"
     
     for i, p in enumerate(players):
-        star = "🌟" if i == turn_idx else "⏳"
+        # النجمة تظهر للشخص اللي عليه الدور فعلياً
+        is_his_turn = (i == turn_idx)
+        star = "🌟" if is_his_turn else "⏳"
         team_info = f"| فريق {p['team']}" if room['game_mode'] == 'team' and p.get('team') else ""
         status_text += f"{star} {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))} {team_info}\n"
     
     status_text += f"\n🎯 السقف: {room['score_limit']} | الاتجاه: {'⏩' if room['direction'] == 1 else '⏪'}"
     
-    # تحديث واجهة كل لاعب
-    for p in players:
-        # مسح الرسالة السابقة إن وجدت
+    for i, p in enumerate(players):
+        # مسح الرسالة السابقة
         if p.get('last_msg_id'):
-            try:
-                await bot.delete_message(p['user_id'], p['last_msg_id'])
-            except:
-                pass
+            try: await bot.delete_message(p['user_id'], p['last_msg_id'])
+            except: pass
         
         hand = json.loads(p['hand'])
         kb = []
-        row = []
         
-        # إذا كان الدور له، نعرض أزرار اللعب
+        # التأكد من ظهور الأزرار فقط لصاحب الدور
         if i == turn_idx:
-            # إضافة زر "سحب"
             kb.append([InlineKeyboardButton(text="🃏 سحب ورقة", callback_data=f"draw_{room_id}")])
-            
-            # عرض الورق
+            row = []
             for idx, card in enumerate(hand):
-                # التحقق إذا كانت الورقة قابلة للعب
                 if await is_card_playable(card, top_card, current_color):
                     row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
                     if len(row) == 2:
                         kb.append(row)
                         row = []
-            
-            if row:
-                kb.append(row)
+            if row: kb.append(row)
         else:
-            kb.append([InlineKeyboardButton(text="⏳ انتظر دورك...", callback_data="wait")])
+            # رسالة توضيحية للي مو دورهم
+            kb.append([InlineKeyboardButton(text="⏳ دور ربعك هسة...", callback_data="wait")])
         
-        # إرسال الرسالة الجديدة
         msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        
-        # حفظ معرف الرسالة
         db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
                 (msg.message_id, room_id, p['user_id']), commit=True)
 
