@@ -126,17 +126,26 @@ async def process_room_join(message: types.Message, state: FSMContext):
     await message.answer(f"✅ دخلت الغرفة `{code}`. ({new_count}/{max_p})")
 
     if new_count == max_p:
-        if max_p % 2 != 0: # عدد فردي يلعبون فردي غصباً عليهم
+        # 🚨 التعديل هنا: إذا كان العدد 2، نبدأ فوراً "فردي" بدون تصويت
+        if max_p == 2:
+            db_query("UPDATE rooms SET game_mode = 'solo', status = 'playing' WHERE room_id = %s", (code,), commit=True)
+            await message.answer("🚀 اكتمل العدد! جاري بدء اللعب (1 ضد 1)...")
+            await start_private_game(code, message.bot)
+        
+        # إذا كان العدد فردي (3، 5، 7...) يلعبون فردي تلقائياً
+        elif max_p % 2 != 0: 
             db_query("UPDATE rooms SET game_mode = 'solo', status = 'playing' WHERE room_id = %s", (code,), commit=True)
             await start_private_game(code, message.bot)
-        else: # عدد زوجي: تصويت
+            
+        # إذا كان العدد زوجي وأكثر من 2 (4، 6، 8...) نسوي تصويت
+        else:
             db_query("UPDATE rooms SET status = 'voting' WHERE room_id = %s", (code,), commit=True)
             kb = [[InlineKeyboardButton(text="👥 نظام فريق", callback_data=f"vote_team_{code}"),
                    InlineKeyboardButton(text="👤 نظام فردي", callback_data=f"vote_solo_{code}")]]
-            for p in db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,)):
+            all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+            for p in all_players:
                 try: await message.bot.send_message(p['user_id'], "🎉 اكتمل العدد! صوتوا لنظام اللعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                 except: pass
-
 @router.callback_query(F.data.startswith("vote_"))
 async def handle_voting(c: types.CallbackQuery):
     _, mode, code = c.data.split("_")
