@@ -179,46 +179,72 @@ async def start_random(callback: types.CallbackQuery):
         db_query("INSERT INTO active_games (p1_id, status, p1_last_msg, p2_last_msg) VALUES (%s, 'waiting', 0, 0)", (user_id,), commit=True)
         await callback.message.edit_text("🔎 جاري البحث عن خصم...")
 
-# --- 6. منطق اللعب ---
+# --- 6. منطق اللعب (النسخة النهائية والمعدلة) ---
 @router.callback_query(F.data.startswith("p_"))
 async def process_play(c: types.CallbackQuery):
     _, g_id, played_card = c.data.split("_")
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    if int(c.from_user.id) != int(game['turn']): return await c.answer("مو دورك!")
-
-    is_p1 = (int(c.from_user.id) == int(game['p1_id'])); opp_id = game['p2_id'] if is_p1 else game['p1_id']
-    my_hand = [h.strip() for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h.strip()]
-    deck = [d.strip() for d in game['deck'].split(",") if d.strip()]; top_card = game['top_card']
     
+    # 1. فحص الدور
+    if int(c.from_user.id) != int(game['turn']): 
+        return await c.answer("مو دورك! ⏳")
+
+    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
+    opp_id = game['p2_id'] if is_p1 else game['p1_id']
+    my_hand = [h.strip() for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h.strip()]
+    deck = [d.strip() for d in game['deck'].split(",") if d.strip()]
+    top_card = game['top_card']
+    
+    # 2. فحص السيطرة (إذا كانت المكشوفة جوكر، العب أي شي)
     is_dominating = "🌈" in top_card
+
     if not is_dominating:
+        # فحص قانونية الورقة (لون أو رقم أو جوكر)
         can_p = ("🌈" in played_card or played_card[0] == top_card[0] or (len(played_card.split()) > 1 and len(top_card.split()) > 1 and played_card.split()[-1] == top_card.split()[-1]))
         if not can_p:
-            [my_hand.append(deck.pop(0)) for _ in range(2) if deck]
+            [my_hand.append(deck.pop(0)) for _ in range(2) if deck] # عقوبة الارتداد
             db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s WHERE game_id=%s", (",".join(my_hand), ",".join(deck), g_id), commit=True)
-            return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "لعبت غلط.. ارتدت وتعاقبت!")
+            return await send_player_hand(c.from_user.id, g_id, c.message.message_id, "❌ لعبت غلط! ارتدت وتعاقبت بورقتين.")
 
-    if "🌈" in played_card and not is_dominating:
+    # 3. فحص التحدي (فقط إذا جوكر سحب وماكو سيطرة سابقة)
+    if "🌈" in played_card and "➕" in played_card and not is_dominating:
         kb = [[InlineKeyboardButton(text="⚔️ تحدي", callback_data=f"chal_{g_id}_{played_card}"),
                InlineKeyboardButton(text="✅ لا أتحدى", callback_data=f"nochal_{g_id}_{played_card}")]]
         await send_player_hand(c.from_user.id, g_id, c.message.message_id, f"نزلت {played_card}.. انتظر الخصم.", is_locked=True)
         return await bot.send_message(opp_id, f"🚨 الخصم نزل `{played_card}`! تتحداه؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
+    # 4. تنفيذ اللعب
     my_hand.remove(played_card)
+    
+    # فحص الفوز
     if not my_hand:
         return await end_game_logic(c.from_user.id, opp_id, g_id)
 
-    next_turn = opp_id
+    # تحديد من اللاعب التالي
+    next_turn = opp_id # الحالة الافتراضية
+    
+    # أوراق السحب (➕) والأكشن (🚫, 🔄) تخلي الدور عندك (سيطرة)
     if "➕" in played_card:
-        val = int(played_card[-1]); opp_h = [h.strip() for h in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if h.strip()]
-        [opp_h.append(deck.pop(0)) for _ in range(val) if deck]
+        val = int(played_card[-1])
+        opp_h_raw = (game['p2_hand'] if is_p1 else game['p1_hand']).split(",")
+        opp_h = [h.strip() for h in opp_h_raw if h.strip()]
+        [opp_h.append(deck.pop(0)) for _ in range(val) if deck] # الخصم يسحب
         db_query(f"UPDATE active_games SET {'p2_hand' if is_p1 else 'p1_hand'}=%s WHERE game_id=%s", (",".join(opp_h), g_id), commit=True)
-        next_turn = c.from_user.id
-    elif any(x in played_card for x in ["🚫", "🔄"]): next_turn = c.from_user.id
+        next_turn = c.from_user.id # الدور يرجعلك
+    elif any(x in played_card for x in ["🚫", "🔄"]):
+        next_turn = c.from_user.id # الدور يرجعلك
 
-    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (played_card, ",".join(my_hand), ",".join(deck), next_turn, g_id), commit=True)
-    await send_player_hand(c.from_user.id, g_id, c.message.message_id); await send_player_hand(opp_id, g_id, None)
-
+    # تحديث الداتا بيس
+    db_query(f"UPDATE active_games SET top_card=%s, {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", 
+             (played_card, ",".join(my_hand), ",".join(deck), next_turn, g_id), commit=True)
+    
+    # 5. التعامل مع الجوكر السادة (🌈) لطلب اللون
+    if played_card == "🌈":
+        await ask_color(c.from_user.id, g_id)
+    else:
+        # إرسال تحديث اليد للطرفين
+        await send_player_hand(c.from_user.id, g_id, c.message.message_id)
+        await send_player_hand(opp_id, g_id, None)
 # --- 7. التحدي ---
 @router.callback_query(F.data.startswith("chal_") | F.data.startswith("nochal_"))
 async def handle_challenge(c: types.CallbackQuery):
@@ -253,8 +279,17 @@ async def handle_challenge(c: types.CallbackQuery):
         db_query(f"UPDATE active_games SET {'p1_hand' if is_p1_player else 'p2_hand'}=%s, {'p2_hand' if is_p1_player else 'p1_hand'}=%s, deck=%s, top_card=%s, turn=%s WHERE game_id=%s", (",".join(p_hand), ",".join(o_hand), ",".join(deck), played_card, player_id, g_id), commit=True)
         await send_player_hand(player_id, g_id, None, "✅ الخصم ما تحدى!"); await send_player_hand(challenger_id, g_id, c.message.message_id, "لعب جوكر وما تحديت.")
 
-    if not p_hand: await end_game_logic(player_id, challenger_id, g_id)
-    elif played_card == "🌈" and not (is_chal and is_cheat): await ask_color(player_id, g_id)
+    # بنهاية دالة handle_challenge استبدل الجزء الأخير بهذا:
+    if not p_hand: 
+        await end_game_logic(player_id, challenger_id, g_id)
+        return
+
+    # إذا لعب جوكر ملون سادة وما انكشف غشاش، يطلب اللون ويظل الدور عنده
+    if played_card == "🌈" and not (is_chal and is_cheat):
+        await ask_color(player_id, g_id)
+    else:
+        await send_player_hand(player_id, g_id, None)
+        await send_player_hand(challenger_id, g_id, c.message.message_id)
 
 # --- 8. أونو وصيد وألوان ---
 @router.callback_query(F.data.startswith("u_"))
