@@ -180,33 +180,33 @@ async def start_private_game(room_id, bot):
 
 async def refresh_game_ui(room_id, bot):
     try:
-        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data: return
+        room = room_data[0]
+        
         players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
         
         turn_idx = room['turn_index']
         top_card = room['top_card']
         curr_color = room['current_color']
-        deck_count = len(json.loads(room['deck'])) # حساب عدد الورق في كومة السحب
+        deck_count = len(json.loads(room['deck']))
 
-        # --- بناء رسالة الحالة الاحترافية ---
-        status_text = f"📦 **كومة السحب:** {deck_count} ورقة\n"
-        status_text += f"🎯 **السقف:** {room['score_limit']} نقطة\n"
+        # --- بناء رسالة الحالة ---
+        status_text = f"📦 **الكومة:** {deck_count} | 🎯 **السقف:** {room['score_limit']}\n"
         status_text += "━━━━━━━━━━━━━━\n"
-        status_text += f"🃏 **الورقة المطلوبة:** [ {top_card} ]\n"
-        status_text += f"🎨 **اللون الحالي:** {curr_color}\n"
+        status_text += f"🃏 **الورقة:** [ {top_card} ]\n"
+        status_text += f"🎨 **اللون:** {curr_color}\n"
         status_text += "━━━━━━━━━━━━━━\n"
-        status_text += "👥 **وضعية اللاعبين:**\n"
+        status_text += "👥 **اللاعبين:**\n"
         
         for i, p in enumerate(players):
-            # النجمة الصفراء للدور، والساعة للبقية
             star = "🌟" if i == turn_idx else "⏳"
-            # علامة الفريق إذا وجد
             team_tag = f" (فريق {p['team']})" if room['game_mode'] == 'team' else ""
-            
-            status_text += f"{star} {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))} {team_tag}\n"
+            uno_tag = " ✅" if p.get('said_uno') else "" # علامة إذا گال أونو
+            status_text += f"{star} {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}{uno_tag}\n"
 
         for p in players:
-            # مسح الرسالة السابقة ليبقى الشات نظيف
+            # مسح الرسالة القديمة
             if p.get('last_msg_id'):
                 try: await bot.delete_message(p['user_id'], p['last_msg_id'])
                 except: pass
@@ -214,7 +214,7 @@ async def refresh_game_ui(room_id, bot):
             hand = json.loads(p['hand'])
             kb = []
             
-            # معلومات إضافية للاعب عن صديقه (في نظام الفرق)
+            # معلومات الصديق
             friend_info = ""
             if room['game_mode'] == 'team':
                 friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
@@ -222,16 +222,32 @@ async def refresh_game_ui(room_id, bot):
                     friend_hand = json.loads(friend['hand'])
                     friend_info = f"\n\n🤝 **صديقك ({friend['player_name']}) عنده:**\n`{', '.join(friend_hand)}`"
 
-            # إنشاء أزرار الأوراق
+            # أزرار الأوراق
             row = []
             for idx, card in enumerate(hand):
                 row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
                 if len(row) == 2:
-                    kb.append(row)
-                    row = []
+                    kb.append(row); row = []
             if row: kb.append(row)
 
-            # إرسال الرسالة الجديدة
+            # --- إضافة أزرار الأونو والتبليغ ---
+            uno_row = []
+            if len(hand) == 1:
+                # إذا اللاعب عنده ورقة وحدة وما صرخ أونو يطلعله الزر
+                if not p.get('said_uno'):
+                    uno_row.append(InlineKeyboardButton(text="📣 أونووووو!", callback_data=f"uno_claim_{room_id}"))
+            
+            # فحص إذا اكو خصم ناسي يگول أونو حتى نطلع زر التبليغ
+            for other_p in players:
+                other_hand_len = len(json.loads(other_p['hand']))
+                if other_hand_len == 1 and not other_p.get('said_uno') and other_p['user_id'] != p['user_id']:
+                    uno_row.append(InlineKeyboardButton(text=f"🚨 بلغ عن {other_p['player_name']}", callback_data=f"uno_report_{room_id}_{other_p['user_id']}"))
+                    break # نكتفي بتبليغ واحد
+            
+            if uno_row:
+                kb.append(uno_row)
+
+            # إرسال الرسالة
             final_message = status_text + friend_info
             msg = await bot.send_message(
                 p['user_id'], 
@@ -239,12 +255,36 @@ async def refresh_game_ui(room_id, bot):
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
             )
             
-            # تحديث معرف الرسالة في الداتابيز لمسحها في الدور القادم
             db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
                     (msg.message_id, room_id, p['user_id']), commit=True)
                     
     except Exception as e:
-        print(f"❌ خطأ في تحديث واجهة اللعبة: {e}")
+        print(f"❌ خطأ في الواجهة: {e}")
+@router.callback_query(F.data.startswith("uno_claim_"))
+async def uno_claim(c: types.CallbackQuery):
+    room_id = c.data.split("_")[2]
+    db_query("UPDATE room_players SET said_uno = TRUE WHERE room_id = %s AND user_id = %s", (room_id, c.from_user.id), commit=True)
+    await c.answer("📢 صرخت أونو! بطل 🃏", show_alert=False)
+    # نبلغ الكل بالكروب
+    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (room_id,))
+    for p in players:
+        try: await c.bot.send_message(p['user_id'], f"📣 {c.from_user.full_name} يصيح: أونووووو! 🃏🔥")
+        except: pass
+
+@router.callback_query(F.data.startswith("uno_report_"))
+async def uno_report(c: types.CallbackQuery):
+    _, _, room_id, target_id = c.data.split("_")
+    target = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_id))[0]
+    
+    if not target.get('said_uno'):
+        # عقوبة: سحب ورقتين
+        await apply_draw_penalty(room_id, None, 2, c.bot, target_user_id=target_id)
+        await c.answer("✅ تم صيده! سحب ورقتين عقوبة.", show_alert=True)
+        await refresh_game_ui(room_id, c.bot)
+    else:
+        await c.answer("❌ هو گال أونو قبلك! ركز وياه المرة الجاية.", show_alert=True)
+
+
 
 # --- 4. معالجة لعب الورق والتحدي ---
 @router.callback_query(F.data.startswith("play_"))
