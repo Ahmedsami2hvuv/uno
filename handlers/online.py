@@ -147,17 +147,32 @@ async def auto_draw(user_id, game_id):
     game = db_query("SELECT * FROM active_games WHERE game_id = %s", (game_id,))[0]
     is_p1 = (int(user_id) == int(game['p1_id']))
     opp_id = game['p2_id'] if is_p1 else game['p1_id']
-    deck = game['deck'].split(","); hand = (game['p1_hand'] if is_p1 else game['p2_hand']).split(",")
+    
+    deck = [d.strip() for d in game['deck'].split(",") if d.strip()]
+    hand = [h.strip() for h in (game['p1_hand'] if is_p1 else game['p2_hand']).split(",") if h.strip()]
     top = game['top_card']
     
-    new_c = deck.pop(0); hand.append(new_c)
+    if not deck: return await c.answer("انتهت الأوراق!")
+
+    # سحب ورقة
+    new_c = deck.pop(0)
+    hand.append(new_c)
+    
+    # فحص: هل الورقة المسحوبة ترهم على اللون المختار؟
+    # (اللون المختار يكون مخزون بالـ top_card كأول حرف مثل 🔴)
     can_p = ("🌈" in new_c or new_c[0] == top[0] or (len(new_c.split()) > 1 and len(top.split()) > 1 and new_c.split()[-1] == top.split()[-1]))
     
+    # 🔄 إذا ما رهمت، الدور يرجع لصاحب السيادة (opp_id)
     nt = user_id if can_p else opp_id
-    db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s WHERE game_id=%s", (",".join(hand), ",".join(deck), nt, game_id), commit=True)
+    
+    u_col = "p1_uno" if is_p1 else "p2_uno"
+    db_query(f"UPDATE active_games SET {'p1_hand' if is_p1 else 'p2_hand'}=%s, deck=%s, turn=%s, {u_col}=FALSE WHERE game_id=%s", 
+             (",".join(hand), ",".join(deck), nt, game_id), commit=True)
+    
     await send_player_hand(user_id, game_id, None, f"📥 ما عندك، سحبتلك ({new_c})")
-    if nt == opp_id: await send_player_hand(opp_id, game_id, None, "الخصم سحب وما رهمت.. دورك!")
-
+    
+    if nt == opp_id:
+        await send_player_hand(opp_id, game_id, None, "🔔 الخصم سحب وما طلعله اللون المطلوب.. الدور رجعلك! نزل أي ورقة.")
 # --- 5. البداية والربط ---
 @router.callback_query(F.data == "mode_random")
 async def start_random(callback: types.CallbackQuery):
@@ -367,7 +382,21 @@ async def ask_color(u_id, g_id):
 
 @router.callback_query(F.data.startswith("sc_"))
 async def set_color_logic(c: types.CallbackQuery):
-    _, g_id, col = c.data.split("_"); game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
-    opp_id = game['p2_id'] if int(c.from_user.id) == int(game['p1_id']) else game['p1_id']
-    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", (f"{col} (🌈)", opp_id, g_id), commit=True)
-    await c.message.delete(); await send_player_hand(c.from_user.id, g_id, None, f"اخترت {col}"); await send_player_hand(opp_id, g_id, None, f"الخصم اختار {col}")
+    _, g_id, col = c.data.split("_")
+    game = db_query("SELECT * FROM active_games WHERE game_id = %s", (g_id,))[0]
+    
+    is_p1 = (int(c.from_user.id) == int(game['p1_id']))
+    opp_id = game['p2_id'] if is_p1 else game['p1_id']
+    
+    # 🎨 نغير الورقة المكشوفة للون المختار (مثلاً: 🔴 (🌈))
+    new_top = f"{col} (🌈)"
+    
+    # تحويل الدور للخصم مع إجباره على اللون
+    db_query("UPDATE active_games SET top_card=%s, turn=%s WHERE game_id=%s", 
+             (new_top, opp_id, g_id), commit=True)
+    
+    await c.message.delete()
+    
+    # تبليغ الطرفين
+    await send_player_hand(c.from_user.id, g_id, None, f"🎨 اخترت اللون {col}.. الدور صار عند الخصم.")
+    await send_player_hand(opp_id, g_id, None, f"⚠️ الخصم اختار اللون {col}! لازم تلعب بهذا اللون أو جوكر.")
