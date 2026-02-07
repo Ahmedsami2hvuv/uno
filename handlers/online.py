@@ -123,7 +123,7 @@ async def end_game_logic(winner_id, loser_id, game_id):
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎲 جولة جديدة", callback_data="mode_random")],
-        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="start")]
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
     ])
     
     win_text = (f"🏆 **مبروك الفوز يا بطل!**\n\n💰 نقاط الجولة: `+{total_round_points}`\n🏅 رصيدك الكلي: `{winner_data['online_points']}`\n━━━━━━━━━━━━━━\n👤 الخصم: {loser_data['player_name']}")
@@ -132,6 +132,14 @@ async def end_game_logic(winner_id, loser_id, game_id):
     try:
         await bot.send_message(winner_id, win_text, reply_markup=kb)
         await bot.send_message(loser_id, lose_text, reply_markup=kb)
+    except: pass
+
+@router.callback_query(F.data == "home")
+async def go_home(c: types.CallbackQuery):
+    # هنا نستدعي الدالة اللي تفتح القائمة الرئيسية (تأكد من اسم الملف والدالة عندك)
+    from handlers.common import start_command 
+    await start_command(c.message) 
+    try: await c.message.delete()
     except: pass
 
 # --- 4. نظام السحب التلقائي ---
