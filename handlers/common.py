@@ -184,43 +184,7 @@ async def create_uno_deck():
     random.shuffle(deck)
     return deck
 
-async def start_private_game(room_id, bot):
-    """بدء اللعبة"""
-    # إنشاء المجموعة
-    deck = await create_uno_deck()
-    
-    # الحصول على معلومات اللاعبين
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    
-    # توزيع 7 أوراق لكل لاعب
-    for p in players:
-        hand = [deck.pop() for _ in range(7)]
-        db_query("UPDATE room_players SET hand = %s, points = 0 WHERE room_id = %s AND user_id = %s", 
-                (json.dumps(hand), room_id, p['user_id']), commit=True)
-    
-    # وضع الورقة الأولى
-    top_card = deck.pop()
-    
-    # التأكد أن الورقة الأولى ليست جوكر أو أكشن
-    while '🌈' in top_card or '🚫' in top_card or '🔄' in top_card or '➕' in top_card:
-        deck.append(top_card)
-        random.shuffle(deck)
-        top_card = deck.pop()
-    
-    # تحديد الفرق إذا كان وضع فريق
-    if room['game_mode'] == 'team':
-        await assign_teams(room_id)
-    
-    # حفظ حالة اللعبة
-    db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0, direction = 1, current_color = %s WHERE room_id = %s", 
-             (top_card, json.dumps(deck), top_card.split()[0], room_id), commit=True)
-    
-    # إرسال بداية اللعبة للجميع
-    await announce_game_start(room_id, bot, room['game_mode'])
-    
-    # تحديث واجهة اللعبة
-    await refresh_game_ui(room_id, bot)
+start_private_game
 
 async def assign_teams(room_id):
     """توزيع اللاعبين على فرق"""
@@ -261,55 +225,7 @@ async def announce_game_start(room_id, bot, game_mode):
         except:
             pass
 
-async def refresh_game_ui(room_id, bot):
-    """تحديث واجهة اللعبة - نسخة الحسم"""
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    # سحب اللاعبين مرتبين حسب وقت دخولهم (0، 1، 2...)
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    
-    turn_idx = room['turn_index']
-    top_card = room['top_card']
-    current_color = room.get('current_color', top_card.split()[0])
-    
-    # من هو اللاعب الذي عليه الدور الآن؟
-    current_player_id = players[turn_idx]['user_id']
-
-    status_text = f"🃏 **الورقة الحالية:** [ {top_card} ]\n"
-    status_text += f"🎨 **اللون المطلوب:** {current_color}\n\n"
-    status_text += f"👥 **اللاعبين:**\n"
-    
-    for i, p in enumerate(players):
-        star = "🌟" if i == turn_idx else "⏳"
-        status_text += f"{star} {p['player_name'][:10]:<10} | 🃏 {len(json.loads(p['hand']))}\n"
-    
-    status_text += f"\n🎯 السقف: {room['score_limit']}"
-
-    for p in players:
-        # مسح الرسالة القديمة
-        if p.get('last_msg_id'):
-            try: await bot.delete_message(p['user_id'], p['last_msg_id'])
-            except: pass
-        
-        kb = []
-        # الفحص بالـ ID لضمان الدقة
-        if p['user_id'] == current_player_id:
-            hand = json.loads(p['hand'])
-            kb.append([InlineKeyboardButton(text="🃏 سحب ورقة", callback_data=f"draw_{room_id}")])
-            row = []
-            for idx, card in enumerate(hand):
-                if await is_card_playable(card, top_card, current_color):
-                    row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
-                    if len(row) == 2:
-                        kb.append(row)
-                        row = []
-            if row: kb.append(row)
-        else:
-            kb.append([InlineKeyboardButton(text="⏳ دور صاحبك هسة...", callback_data="wait")])
-        
-        msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
-                (msg.message_id, room_id, p['user_id']), commit=True)
-
+refresh_game_ui
 async def is_card_playable(card, top_card, current_color):
     """التحقق إذا كانت الورقة قابلة للعب"""
     # الجوكر يمكن لعبه دائماً
@@ -333,48 +249,17 @@ async def is_card_playable(card, top_card, current_color):
 
 @router.callback_query(F.data.startswith("play_"))
 async def play_card(c: types.CallbackQuery, state: FSMContext):
-    """لعب ورقة"""
     _, room_id, idx = c.data.split("_")
     idx, user_id = int(idx), c.from_user.id
     
-    # الحصول على معلومات الغرفة واللاعبين
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players_list = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order", (room_id,))
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
     
-    # التأكد أن الدور عليه
-    if players_list[room['turn_index']]['user_id'] != user_id:
+    # التأكد إن اللي ضغط الورقة هو اللي عليه الدور فعلياً
+    if players[room['turn_index']]['user_id'] != user_id:
         return await c.answer("⏳ مو دورك! انتظر النجمة 🌟", show_alert=True)
     
-    player_hand = json.loads(players_list[room['turn_index']]['hand'])
-    played_card = player_hand[idx]
-    
-    # التحقق من صحة الورقة
-    if not await is_card_playable(played_card, room['top_card'], room['current_color']):
-        return await c.answer(f"❌ ما ترهم على {room['top_card']} (اللون: {room['current_color']})", show_alert=True)
-    
-    # إذا كانت ورقة جوكر، نحتاج لاختيار لون
-    if '🌈' in played_card:
-        await state.update_data(room_id=room_id, card_idx=idx, player_index=room['turn_index'])
-        await state.set_state(GameStates.waiting_for_color_choice)
-        
-        colors_kb = [
-            [InlineKeyboardButton(text="🔴 أحمر", callback_data=f"color_🔴_{room_id}"),
-             InlineKeyboardButton(text="🔵 أزرق", callback_data=f"color_🔵_{room_id}")],
-            [InlineKeyboardButton(text="🟡 أصفر", callback_data=f"color_🟡_{room_id}"),
-             InlineKeyboardButton(text="🟢 أخضر", callback_data=f"color_🟢_{room_id}")]
-        ]
-        
-        # إرسال رسالة خاصة للاعب لاختيار اللون
-        await c.message.delete()
-        await c.bot.send_message(
-            user_id,
-            "🎨 اختر لون للجوكر:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=colors_kb)
-        )
-        return
-    
-    # لعب الورقة العادية
-    await process_normal_card(room_id, idx, played_card, room['turn_index'], c.bot, state)
+    # (بقية كود اللعب اللي عندك...)
 
 async def process_normal_card(room_id, card_idx, played_card, player_index, bot, state):
     """معالجة لعب ورقة عادية"""
