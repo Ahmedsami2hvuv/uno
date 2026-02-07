@@ -33,7 +33,9 @@ def init_db():
                     user_id BIGINT PRIMARY KEY, 
                     username TEXT,
                     player_name TEXT, 
-                    online_points INTEGER DEFAULT 0)''')
+                    online_points INTEGER DEFAULT 0,
+                    is_registered BOOLEAN DEFAULT FALSE,
+                    password TEXT)''')
     
     # 2. جدول ألعاب الأونلاين العشوائية
     cur.execute('''CREATE TABLE IF NOT EXISTS active_games (
@@ -61,7 +63,7 @@ def init_db():
                     turn_index INT DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-    # 4. جدول اللاعبين داخل الغرف
+    # 4. جدول اللاعبين داخل الغرف (مع إضافة last_msg_id)
     cur.execute('''CREATE TABLE IF NOT EXISTS room_players (
                     room_id VARCHAR(10),
                     user_id BIGINT,
@@ -70,7 +72,14 @@ def init_db():
                     points INT DEFAULT 0,
                     is_ready BOOLEAN DEFAULT FALSE,
                     join_order SERIAL,
+                    last_msg_id BIGINT,
                     PRIMARY KEY (room_id, user_id))''')
+
+    # 🚨 أمر احتياطي لتحديث الجدول الموجود حالياً بالسيرفر وإضافة العمود
+    try:
+        cur.execute("ALTER TABLE room_players ADD COLUMN IF NOT EXISTS last_msg_id BIGINT;")
+    except Exception as e:
+        print(f"تنبيه: تحديث العمود بسيط: {e}")
 
     # 5. جدول لاعبي الحاسبة
     cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
@@ -84,7 +93,7 @@ def init_db():
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ جداول الغرف واللعب الجماعي جاهزة على ريلوي!")
+    print("✅ جداول الغرف محدثة وجاهزة بنظام المسح التلقائي!")
 
 # تشغيل التهيئة عند استدعاء الملف
 init_db()
