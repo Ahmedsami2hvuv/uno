@@ -112,7 +112,7 @@ async def process_room_join(message: types.Message, state: FSMContext):
     room = room_data[0]
     current_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
     if any(p['user_id'] == message.from_user.id for p in current_players): return await message.answer("⚠️ أنت بالداخل!")
-    if len(current_players) >= room['max_players']: return await message.answer("🚫 الغرفة ممتلئة!")
+    if len(current_players) >= room['max_players']: return await message.answer("🚫 ممتلئة!")
     
     u_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, message.from_user.id, u_data[0]['player_name']), commit=True)
@@ -120,13 +120,13 @@ async def process_room_join(message: types.Message, state: FSMContext):
     new_count = len(current_players) + 1
     max_p = room['max_players']
     await state.clear()
-    await message.answer(f"✅ تم الانضمام ({new_count}/{max_p})")
-
+    
     if new_count == max_p:
         if max_p == 2 or max_p % 2 != 0:
             db_query("UPDATE rooms SET game_mode = 'solo', status = 'playing' WHERE room_id = %s", (code,), commit=True)
             await message.answer("🚀 اكتمل العدد! جاري توزيع الأوراق...")
-            await start_private_game(code, message.bot)
+            # تشغيل المحرك بعد ثانية واحدة للتأكد من استقرار الداتا بيس
+            asyncio.create_task(start_private_game(code, message.bot))
         else:
             db_query("UPDATE rooms SET status = 'voting' WHERE room_id = %s", (code,), commit=True)
             kb = [[InlineKeyboardButton(text="👥 فريق", callback_data=f"vote_team_{code}"), InlineKeyboardButton(text="👤 فردي", callback_data=f"vote_solo_{code}")]]
@@ -134,6 +134,8 @@ async def process_room_join(message: types.Message, state: FSMContext):
             for p in all_p:
                 try: await message.bot.send_message(p['user_id'], "🎉 اكتمل العدد! صوتوا لنظام اللعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                 except: pass
+    else:
+        await message.answer(f"✅ تم الانضمام ({new_count}/{max_p})")
 
 @router.callback_query(F.data.startswith("vote_"))
 async def handle_voting(c: types.CallbackQuery):
@@ -149,9 +151,8 @@ async def handle_voting(c: types.CallbackQuery):
 # --- 3. محرك الأونو والواجهة ---
 async def start_private_game(room_id, bot):
     try:
-        # الكومة الحقيقية (108 ورقة)
+        await asyncio.sleep(1) # تأخير لضمان استقرار الداتا بيس
         colors = ['🔴', '🔵', '🟡', '🟢']
-        # رقم 0 مرة وحدة، والباقي مرتين
         numbers = ['0'] + [str(i) for i in range(1, 10)] * 2 + ['🚫', '🔄', '➕2'] * 2
         deck = [f"{c} {n}" for c in colors for n in numbers]
         for _ in range(4): 
@@ -172,6 +173,7 @@ async def start_private_game(room_id, bot):
             
         db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0, current_color = %s WHERE room_id = %s", 
                  (top_card, json.dumps(deck), top_card.split()[0], room_id), commit=True)
+        
         await refresh_game_ui(room_id, bot)
     except Exception as e:
         print(f"❌ Error starting game: {e}")
@@ -196,27 +198,24 @@ async def refresh_game_ui(room_id, bot):
             status_text += f"{star} {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}{' ✅' if p['said_uno'] else ''}\n"
 
         for p in players:
-            # تم تصليح مسح الرسالة هنا (إضافة try-except)
+            # مسح الرسالة القديمة (مع منع الخطأ)
             if p.get('last_msg_id'):
                 try: await bot.delete_message(p['user_id'], p['last_msg_id'])
                 except: pass
             
             hand = json.loads(p['hand'])
-            kb = []
-            friend_info = ""
-            if room['game_mode'] == 'team':
-                friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
-                if friend: friend_info = f"\n🤝 **أوراق شريكك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
-
-            # تقسيم الأزرار
+            kb_list = []
+            
+            # تقسيم الأوراق لصفوف
             row = []
             for idx, card in enumerate(hand):
                 row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
                 if len(row) == 2:
-                    kb.append(row)
+                    kb_list.append(row)
                     row = []
-            if row: kb.append(row)
+            if row: kb_list.append(row)
 
+            # زر الأونو والتبليغ
             uno_row = []
             if len(hand) == 1 and not p['said_uno']:
                 uno_row.append(InlineKeyboardButton(text="📢 أونو!", callback_data=f"uno_claim_{room_id}"))
@@ -224,13 +223,18 @@ async def refresh_game_ui(room_id, bot):
                 if len(json.loads(other['hand'])) == 1 and not other['said_uno'] and other['user_id'] != p['user_id']:
                     uno_row.append(InlineKeyboardButton(text=f"🚨 بلغ عن {other['player_name']}", callback_data=f"uno_report_{room_id}_{other['user_id']}"))
                     break
-            if uno_row: kb.append(uno_row)
+            if uno_row: kb_list.append(uno_row)
             
-            # إرسال الرسالة
-            msg = await bot.send_message(p['user_id'], status_text + friend_info, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            friend_info = ""
+            if room['game_mode'] == 'team':
+                friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
+                if friend: friend_info = f"\n🤝 **صديقك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
+
+            msg = await bot.send_message(p['user_id'], status_text + friend_info, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
             db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
     except Exception as e:
         print(f"❌ Error UI: {e}")
+
 
 # --- 4. منطق الحركة والتحدي ---
 @router.callback_query(F.data.startswith("play_"))
