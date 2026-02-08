@@ -27,7 +27,7 @@ def init_db():
     conn = get_conn()
     cur = conn.cursor()
     
-    # جدول المستخدمين
+    # 1. جدول المستخدمين
     cur.execute('''CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY, 
                     username TEXT,
@@ -36,7 +36,7 @@ def init_db():
                     is_registered BOOLEAN DEFAULT FALSE,
                     password TEXT)''')
     
-    # جدول الغرف (تأكد من وجود الأعمدة الجديدة)
+    # 2. جدول الغرف
     cur.execute('''CREATE TABLE IF NOT EXISTS rooms (
                     room_id VARCHAR(10) PRIMARY KEY,
                     creator_id BIGINT,
@@ -50,7 +50,7 @@ def init_db():
                     current_color VARCHAR(10) DEFAULT '🔴',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
-    # جدول اللاعبين
+    # 3. جدول اللاعبين داخل الغرفة
     cur.execute('''CREATE TABLE IF NOT EXISTS room_players (
                     room_id VARCHAR(10),
                     user_id BIGINT,
@@ -58,21 +58,34 @@ def init_db():
                     hand TEXT,
                     points INT DEFAULT 0,
                     team INT DEFAULT 0,
+                    said_uno BOOLEAN DEFAULT FALSE,
                     join_order SERIAL,
                     last_msg_id BIGINT,
                     PRIMARY KEY (room_id, user_id))''')
 
-    # 🚨 أوامر تحديث إجبارية في حال الجداول قديمة
-    try:
-        cur.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS current_color VARCHAR(10) DEFAULT '🔴';")
-        cur.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_mode VARCHAR(20) DEFAULT 'solo';")
-        cur.execute("ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team INT DEFAULT 0;")
-        cur.execute("ALTER TABLE room_players ADD COLUMN IF NOT EXISTS last_msg_id BIGINT;")
-    except: pass
+    # 🚨 تحديثات إجبارية (لإضافة الأعمدة إذا كان الجدول قديم)
+    # هذه الخطوة تضمن عدم توقف البوت عند تشغيل ملف common.py
+    alter_queries = [
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'waiting';",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_mode VARCHAR(20) DEFAULT 'solo';",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS current_color VARCHAR(10) DEFAULT '🔴';",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS deck TEXT;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team INT DEFAULT 0;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS points INT DEFAULT 0;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS said_uno BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS last_msg_id BIGINT;"
+    ]
+
+    for query in alter_queries:
+        try:
+            cur.execute(query)
+        except Exception as e:
+            print(f"⚠️ Note: {e}") # يتخطى إذا العمود موجود أصلاً
 
     conn.commit()
     cur.close()
     conn.close()
-    print("✅ تم تحديث الداتا بيس بنجاح!")
+    print("✅ تم تحديث وهيكلة قاعدة البيانات بنجاح!")
 
-init_db()
+if __name__ == "__main__":
+    init_db()
