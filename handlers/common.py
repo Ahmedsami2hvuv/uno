@@ -107,16 +107,18 @@ async def join_room_start(c: types.CallbackQuery, state: FSMContext):
 @router.message(RoomStates.wait_for_code)
 async def process_room_join(message: types.Message, state: FSMContext):
     code = message.text.strip().upper()
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
-    if not room: return await message.answer("❌ الكود غير صحيح.")
+    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room_data: return await message.answer("❌ الكود غير صحيح.")
+    room = room_data[0]
     current_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
     if any(p['user_id'] == message.from_user.id for p in current_players): return await message.answer("⚠️ أنت بالداخل!")
-    if len(current_players) >= room[0]['max_players']: return await message.answer("🚫 الغرفة ممتلئة!")
+    if len(current_players) >= room['max_players']: return await message.answer("🚫 الغرفة ممتلئة!")
     
     u_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, message.from_user.id, u_data[0]['player_name']), commit=True)
     
-    new_count, max_p = len(current_players) + 1, room[0]['max_players']
+    new_count = len(current_players) + 1
+    max_p = room['max_players']
     await state.clear()
     await message.answer(f"✅ تم الانضمام ({new_count}/{max_p})")
 
@@ -147,9 +149,14 @@ async def handle_voting(c: types.CallbackQuery):
 # --- 3. محرك الأونو والواجهة ---
 async def start_private_game(room_id, bot):
     try:
-        colors, numbers = ['🔴', '🔵', '🟡', '🟢'], [str(i) for i in range(10)] + ['🚫', '🔄', '➕2']
-        deck = [f"{c} {n}" for c in colors for n in numbers] + [f"{c} {n}" for c in colors for n in numbers if n != '0']
-        for _ in range(4): deck.extend(["🌈 جوكر", "🌈 جوكر +4 🔥"])
+        # الكومة الحقيقية (108 ورقة)
+        colors = ['🔴', '🔵', '🟡', '🟢']
+        # رقم 0 مرة وحدة، والباقي مرتين
+        numbers = ['0'] + [str(i) for i in range(1, 10)] * 2 + ['🚫', '🔄', '➕2'] * 2
+        deck = [f"{c} {n}" for c in colors for n in numbers]
+        for _ in range(4): 
+            deck.append("🌈 جوكر")
+            deck.append("🌈 جوكر +4 🔥")
         random.shuffle(deck)
 
         players = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
@@ -158,7 +165,11 @@ async def start_private_game(room_id, bot):
             db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
 
         top_card = deck.pop()
-        while any(x in top_card for x in ['🌈', '🚫', '🔄', '➕']): top_card = deck.pop()
+        while any(x in top_card for x in ['🌈', '🚫', '🔄', '➕']): 
+            deck.append(top_card)
+            random.shuffle(deck)
+            top_card = deck.pop()
+            
         db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0, current_color = %s WHERE room_id = %s", 
                  (top_card, json.dumps(deck), top_card.split()[0], room_id), commit=True)
         await refresh_game_ui(room_id, bot)
@@ -167,20 +178,25 @@ async def start_private_game(room_id, bot):
 
 async def refresh_game_ui(room_id, bot):
     try:
-        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data: return
+        room = room_data[0]
         players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
+        
         turn_idx, top_card, curr_col = room['turn_index'], room['top_card'], room['current_color']
         deck_count = len(json.loads(room['deck']))
 
         status_text = f"📦 **الكومة:** {deck_count} | 🎯 **السقف:** {room['score_limit']}\n"
         status_text += f"🃏 **الورقة:** [ {top_card} ] | 🎨 **اللون:** {curr_col}\n"
         status_text += "━━━━━━━━━━━━━━\n👥 **اللاعبين:**\n"
+        
         for i, p in enumerate(players):
             star = "🌟" if i == turn_idx else "⏳"
             team_tag = f" (فريق {p['team']})" if room['game_mode'] == 'team' else ""
             status_text += f"{star} {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}{' ✅' if p['said_uno'] else ''}\n"
 
         for p in players:
+            # تم تصليح مسح الرسالة هنا (إضافة try-except)
             if p.get('last_msg_id'):
                 try: await bot.delete_message(p['user_id'], p['last_msg_id'])
                 except: pass
@@ -190,22 +206,27 @@ async def refresh_game_ui(room_id, bot):
             friend_info = ""
             if room['game_mode'] == 'team':
                 friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
-                if friend: friend_info = f"\n🤝 **صديقك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
+                if friend: friend_info = f"\n🤝 **أوراق شريكك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
 
+            # تقسيم الأزرار
             row = []
             for idx, card in enumerate(hand):
                 row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
-                if len(row) == 2: kb.append(row); row = []
+                if len(row) == 2:
+                    kb.append(row)
+                    row = []
             if row: kb.append(row)
 
             uno_row = []
-            if len(hand) == 1 and not p['said_uno']: uno_row.append(InlineKeyboardButton(text="📢 أونو!", callback_data=f"uno_claim_{room_id}"))
+            if len(hand) == 1 and not p['said_uno']:
+                uno_row.append(InlineKeyboardButton(text="📢 أونو!", callback_data=f"uno_claim_{room_id}"))
             for other in players:
                 if len(json.loads(other['hand'])) == 1 and not other['said_uno'] and other['user_id'] != p['user_id']:
                     uno_row.append(InlineKeyboardButton(text=f"🚨 بلغ عن {other['player_name']}", callback_data=f"uno_report_{room_id}_{other['user_id']}"))
                     break
             if uno_row: kb.append(uno_row)
             
+            # إرسال الرسالة
             msg = await bot.send_message(p['user_id'], status_text + friend_info, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
             db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
     except Exception as e:
@@ -216,10 +237,13 @@ async def refresh_game_ui(room_id, bot):
 async def play_card(c: types.CallbackQuery, state: FSMContext):
     _, room_id, idx = c.data.split("_")
     idx, user_id = int(idx), c.from_user.id
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+    if not room_data: return
+    room = room_data[0]
     players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
     
-    if players[room['turn_index']]['user_id'] != user_id: return await c.answer("⏳ مو دورك!", show_alert=True)
+    if players[room['turn_index']]['user_id'] != user_id: 
+        return await c.answer("⏳ مو دورك!", show_alert=True)
     
     hand = json.loads(players[room['turn_index']]['hand'])
     played_card = hand[idx]
@@ -239,6 +263,8 @@ async def play_card(c: types.CallbackQuery, state: FSMContext):
 async def handle_wild_color(c: types.CallbackQuery, state: FSMContext):
     _, color, room_id = c.data.split("_")
     data = await state.get_data()
+    if not data or 'played_card' not in data: return
+    
     user_reg = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
@@ -255,6 +281,8 @@ async def handle_wild_color(c: types.CallbackQuery, state: FSMContext):
 async def handle_challenge_dare(c: types.CallbackQuery, state: FSMContext):
     _, room_id, choice = c.data.split("_")
     data = await state.get_data()
+    if not data or 'played_card' not in data: return
+    
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
     chall_idx = room['turn_index']
@@ -276,11 +304,15 @@ async def handle_challenge_dare(c: types.CallbackQuery, state: FSMContext):
         u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
         res = f"🏳️ {u_name} استسلم وسحب الأوراق."; nt = (target_idx + 1) % room['max_players'] if penalty > 0 else (chall_idx + 1) % room['max_players']
 
+    # إكمال الحركة
+    chall_user_id = players[chall_idx]['user_id']
     hand = json.loads(players[chall_idx]['hand'])
     hand.pop(data['card_idx'])
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, players[chall_idx]['user_id']), commit=True)
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, chall_user_id), commit=True)
     db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", (data['played_card'], data['chosen_color'], nt, room_id), commit=True)
-    await c.message.edit_text(res); await state.clear(); await refresh_game_ui(room_id, c.bot)
+    await c.message.edit_text(res)
+    await state.clear()
+    await refresh_game_ui(room_id, c.bot)
 
 async def finalize_move(room_id, user_id, hand, idx, played_card, bot):
     hand.pop(idx)
@@ -296,9 +328,14 @@ async def finalize_move(room_id, user_id, hand, idx, played_card, bot):
     db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", (played_card, played_card.split()[0], next_idx, room_id), commit=True)
     await auto_check_next_player(room_id, next_idx, played_card, bot)
 
+# --- 5. الدوال المساعدة ---
 async def apply_draw_penalty(room_id, p_idx, count, bot, target_user_id=None):
     room = db_query("SELECT deck FROM rooms WHERE room_id = %s", (room_id,))[0]
-    p = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_user_id))[0] if target_user_id else db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))[p_idx]
+    if target_user_id: 
+        p = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_user_id))[0]
+    else: 
+        p = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))[p_idx]
+    
     deck, hand = json.loads(room['deck']), json.loads(p['hand'])
     for _ in range(count): 
         if deck: hand.append(deck.pop(0))
@@ -323,19 +360,22 @@ async def handle_win_logic(room_id, user_id, bot):
 
 async def auto_check_next_player(room_id, next_idx, top_card, bot):
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    p = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))[next_idx]
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
+    p = players[next_idx]
     hand, curr = json.loads(p['hand']), room['current_color']
     can = any('🌈' in c or c.split()[0] == curr or c.split()[1] == top_card.split()[1] for c in hand)
     if not can:
         deck = json.loads(room['deck'])
         if deck:
-            new = deck.pop(0); hand.append(new)
+            new = deck.pop(0)
+            hand.append(new)
             db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
             await bot.send_message(p['user_id'], f"📥 سحب آلي: {new}")
             nt = (next_idx + 1) % room['max_players']
             db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (nt, room_id), commit=True)
             await auto_check_next_player(room_id, nt, top_card, bot)
+        else: await refresh_game_ui(room_id, bot)
     else: await refresh_game_ui(room_id, bot)
 
 def calculate_hand_points(hand_json):
@@ -350,7 +390,8 @@ def calculate_hand_points(hand_json):
 
 @router.callback_query(F.data == "home")
 async def go_home(c: types.CallbackQuery, state: FSMContext):
-    await state.clear(); u = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
+    await state.clear()
+    u = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
     await show_main_menu(c.message, u[0]['player_name'])
 
 @router.callback_query(F.data.startswith("uno_claim_"))
@@ -362,7 +403,9 @@ async def uno_claim(c: types.CallbackQuery):
 @router.callback_query(F.data.startswith("uno_report_"))
 async def uno_report(c: types.CallbackQuery):
     _, _, room_id, target_id = c.data.split("_")
-    target = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_id))[0]
+    target_data = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_id))
+    if not target_data: return
+    target = target_data[0]
     if not target.get('said_uno'):
         await apply_draw_penalty(room_id, None, 2, c.bot, target_user_id=target_id)
         await c.answer("✅ صيد موفق! سحب 2.", show_alert=True)
