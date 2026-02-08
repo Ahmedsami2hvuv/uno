@@ -321,15 +321,33 @@ async def handle_challenge_dare(c: types.CallbackQuery, state: FSMContext):
 async def finalize_move(room_id, user_id, hand, idx, played_card, bot):
     hand.pop(idx)
     db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, user_id), commit=True)
-    if len(hand) == 0: await handle_win_logic(room_id, user_id, bot); return
+    
+    if len(hand) == 0: 
+        await handle_win_logic(room_id, user_id, bot)
+        return
     
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     next_idx = (room['turn_index'] + 1) % room['max_players']
-    if "🚫" in played_card: next_idx = (next_idx + 1) % room['max_players']
-    elif "➕2" in played_card: await apply_draw_penalty(room_id, next_idx, 2, bot); next_idx = (next_idx + 1) % room['max_players']
-    elif "🔄" in played_card and room['max_players'] == 2: next_idx = (next_idx + 1) % room['max_players']
     
-    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", (played_card, played_card.split()[0], next_idx, room_id), commit=True)
+    # --- تعديل الـ 2 لاعبين (إذا نزلت منع أو +2 أو عكس يرجع الدور إلك) ---
+    if room['max_players'] == 2:
+        if any(x in played_card for x in ['🚫', '🔄', '➕2']):
+            next_idx = room['turn_index'] # يبقى الدور يمك
+            if '➕2' in played_card:
+                await apply_draw_penalty(room_id, (room['turn_index'] + 1) % 2, 2, bot)
+    else:
+        # النظام الطبيعي لأكثر من لاعبين
+        if "🚫" in played_card: next_idx = (next_idx + 1) % room['max_players']
+        elif "🔄" in played_card: 
+             # هنا ممكن تعكس المصفوفة بس للسهولة بالـ2 لاعبين هي تسوي منع
+             if room['max_players'] == 2: next_idx = room['turn_index']
+        elif "➕2" in played_card: 
+            await apply_draw_penalty(room_id, next_idx, 2, bot)
+            next_idx = (next_idx + 1) % room['max_players']
+
+    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", 
+             (played_card, played_card.split()[0], next_idx, room_id), commit=True)
+    
     await auto_check_next_player(room_id, next_idx, played_card, bot)
 
 # --- 5. الدوال المساعدة ---
@@ -366,21 +384,38 @@ async def auto_check_next_player(room_id, next_idx, top_card, bot):
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
     players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
     p = players[next_idx]
-    hand, curr = json.loads(p['hand']), room['current_color']
-    can = any('🌈' in c or c.split()[0] == curr or c.split()[1] == top_card.split()[1] for c in hand)
-    if not can:
+    hand = json.loads(p['hand'])
+    curr = room['current_color']
+    
+    # تشيك هل اللاعب عنده ورقة؟
+    can_play = any('🌈' in c or c.split()[0] == curr or c.split()[1] == top_card.split()[1] for c in hand)
+    
+    if not can_play:
         deck = json.loads(room['deck'])
         if deck:
-            new = deck.pop(0)
-            hand.append(new)
+            new_card = deck.pop(0)
+            hand.append(new_card)
+            # تحديث الداتا بيس فوراً بالورقة الجديدة
             db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            await bot.send_message(p['user_id'], f"📥 سحب آلي: {new}")
-            nt = (next_idx + 1) % room['max_players']
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (nt, room_id), commit=True)
-            await auto_check_next_player(room_id, nt, top_card, bot)
-        else: await refresh_game_ui(room_id, bot)
-    else: await refresh_game_ui(room_id, bot)
+            
+            await bot.send_message(p['user_id'], f"📥 ما عندك ورقة.. سحبت: {new_card}")
+            
+            # --- التعديل الجوهري: تشيك هل الورقة اللي سحبها ترهم؟ ---
+            can_play_new = '🌈' in new_card or new_card.split()[0] == curr or new_card.split()[1] == top_card.split()[1]
+            
+            if can_play_new:
+                # إذا ترهم، لا تعبر الدور، خليه هو ينزلها
+                await refresh_game_ui(room_id, bot)
+            else:
+                # إذا حتى الجديدة ما ترهم، هسة يلا يعبر الدور
+                nt = (next_idx + 1) % room['max_players']
+                db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (nt, room_id), commit=True)
+                await auto_check_next_player(room_id, nt, top_card, bot)
+        else:
+            await refresh_game_ui(room_id, bot)
+    else:
+        await refresh_game_ui(room_id, bot)
 
 def calculate_hand_points(hand_json):
     total = 0
