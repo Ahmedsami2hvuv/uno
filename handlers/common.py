@@ -470,3 +470,89 @@ async def uno_report(c: types.CallbackQuery):
         await c.answer("✅ صيد موفق! سحب 2.", show_alert=True)
         await refresh_game_ui(room_id, c.bot)
     else: await c.answer("❌ صرخها قبلك!")
+
+# 1. معالجة زر السحب / التعدي
+@router.callback_query(F.data.startswith("draw_"))
+async def handle_draw_btn(c: types.CallbackQuery):
+    room_id = c.data.split("_")[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
+    
+    # التأكد أن الدور فعلاً على هذا اللاعب
+    if players[room['turn_index']]['user_id'] != c.from_user.id:
+        return await c.answer("⏳ انتظر دورك!", show_alert=True)
+
+    deck = json.loads(room['deck'])
+    if not deck: return await c.answer("⚠️ الكومة فارغة!")
+
+    # سحب ورقة واحدة
+    new_card = deck.pop(0)
+    p = players[room['turn_index']]
+    hand = json.loads(p['hand'])
+    hand.append(new_card)
+
+    # تحديث البيانات
+    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
+    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+
+    # فحص هل الورقة ترهم؟
+    curr_col = room['current_color']
+    top_card = room['top_card']
+    can_play = '🌈' in new_card or new_card.split()[0] == curr_col or new_card.split()[1] == top_card.split()[1]
+
+    # جلب اسم اللاعب للتنبيه
+    p_name = p['player_name']
+    other_players = [pl['user_id'] for pl in players if pl['user_id'] != p['user_id']]
+
+    if can_play:
+        await c.answer(f"📥 سحبت {new_card} وترهم تلعبها!")
+        # تنبيه البقية
+        for op_id in other_players:
+            try: await c.bot.send_message(op_id, f"⚠️ {p_name} سحب ورقة ورهمت عنده، بعده يفكر...")
+            except: pass
+        await refresh_game_ui(room_id, c.bot)
+    else:
+        await c.answer(f"📥 سحبت {new_card} وما ترهم.. عبر دورك.")
+        # تنبيه البقية
+        for op_id in other_players:
+            try: await c.bot.send_message(op_id, f"📥 {p_name} سحب ورقة وما رهمت، الدور صار إلك!")
+            except: pass
+            
+        next_idx = (room['turn_index'] + 1) % room['max_players']
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_idx, room_id), commit=True)
+        await refresh_game_ui(room_id, c.bot)
+
+# 2. معالجة زر الاستسلام
+@router.callback_query(F.data.startswith("surrender_"))
+async def handle_surrender_btn(c: types.CallbackQuery):
+    room_id = c.data.split("_")[1]
+    user_id = c.from_user.id
+    
+    # جلب البيانات قبل الحذف
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+    p_name = db_query("SELECT player_name FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]['player_name']
+    
+    # حذف اللاعب
+    db_query("DELETE FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id), commit=True)
+    
+    remaining = db_query("SELECT * FROM room_players WHERE room_id = %s", (room_id,))
+    
+    if len(remaining) < 2:
+        # إذا بقى بس واحد أو محد بقى
+        winner_msg = f"🏆 انتهت اللعبة! {remaining[0]['player_name']} هو الفائز بالانسحاب." if remaining else "🔚 انتهت اللعبة بخروج الجميع."
+        for rp in remaining:
+            try: await c.bot.send_message(rp['user_id'], winner_msg)
+            except: pass
+        db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
+        await c.message.edit_text("🚩 استسلمت وطلعت من الغرفة.")
+    else:
+        # إبلاغ البقية
+        for rp in remaining:
+            try: await c.bot.send_message(rp['user_id'], f"🏳️ اللاعب {p_name} استسلم وطلع من اللعبة.")
+            except: pass
+        
+        # تصحيح الـ turn_index
+        new_turn = room['turn_index'] % len(remaining)
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (new_turn, room_id), commit=True)
+        await c.message.edit_text("🚩 استسلمت. البقية راح يكملون لعب.")
+        await refresh_game_ui(room_id, c.bot)
