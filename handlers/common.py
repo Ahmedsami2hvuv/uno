@@ -188,6 +188,7 @@ async def refresh_game_ui(room_id, bot):
         turn_idx, top_card, curr_col = room['turn_index'], room['top_card'], room['current_color']
         deck_count = len(json.loads(room['deck']))
 
+        # --- بناء نص الحالة ---
         status_text = f"📦 **الكومة:** {deck_count} | 🎯 **السقف:** {room['score_limit']}\n"
         status_text += f"🃏 **الورقة:** [ {top_card} ] | 🎨 **اللون:** {curr_col}\n"
         status_text += "━━━━━━━━━━━━━━\n👥 **اللاعبين:**\n"
@@ -197,8 +198,8 @@ async def refresh_game_ui(room_id, bot):
             team_tag = f" (فريق {p['team']})" if room['game_mode'] == 'team' else ""
             status_text += f"{star} {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}{' ✅' if p['said_uno'] else ''}\n"
 
-        for p in players:
-            # مسح الرسالة القديمة (مع منع الخطأ)
+        for i, p in enumerate(players):
+            # مسح الرسالة القديمة
             if p.get('last_msg_id'):
                 try: await bot.delete_message(p['user_id'], p['last_msg_id'])
                 except: pass
@@ -206,7 +207,7 @@ async def refresh_game_ui(room_id, bot):
             hand = json.loads(p['hand'])
             kb_list = []
             
-            # تقسيم الأوراق لصفوف
+            # 1. صفوف الأوراق
             row = []
             for idx, card in enumerate(hand):
                 row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
@@ -215,26 +216,45 @@ async def refresh_game_ui(room_id, bot):
                     row = []
             if row: kb_list.append(row)
 
-            # زر الأونو والتبليغ
+            # 2. أزرار التحكم (تظهر فقط للاعب اللي عليه الدور)
+            if i == turn_idx:
+                control_row = [
+                    InlineKeyboardButton(text="📥 سحب / تعدي", callback_data=f"draw_{room_id}"),
+                    InlineKeyboardButton(text="🏳️ استسلام", callback_data=f"surrender_{room_id}")
+                ]
+                kb_list.append(control_row)
+
+            # 3. زر الأونو والتبليغ
             uno_row = []
             if len(hand) == 1 and not p['said_uno']:
                 uno_row.append(InlineKeyboardButton(text="📢 أونو!", callback_data=f"uno_claim_{room_id}"))
+            
             for other in players:
                 if len(json.loads(other['hand'])) == 1 and not other['said_uno'] and other['user_id'] != p['user_id']:
                     uno_row.append(InlineKeyboardButton(text=f"🚨 بلغ عن {other['player_name']}", callback_data=f"uno_report_{room_id}_{other['user_id']}"))
                     break
             if uno_row: kb_list.append(uno_row)
             
+            # معلومات الفريق
             friend_info = ""
             if room['game_mode'] == 'team':
                 friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
-                if friend: friend_info = f"\n🤝 **صديقك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
+                if friend:
+                    friend_info = f"\n🤝 **صديقك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
 
-            msg = await bot.send_message(p['user_id'], status_text + friend_info, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
-            db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
+            # إرسال الرسالة الجديدة
+            msg = await bot.send_message(
+                p['user_id'], 
+                status_text + friend_info, 
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list)
+            )
+            
+            # تحديث معرف الرسالة بالداتا بيس
+            db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
+                     (msg.message_id, room_id, p['user_id']), commit=True)
+                     
     except Exception as e:
         print(f"❌ Error UI: {e}")
-
 
 # --- 4. منطق الحركة والتحدي ---
 @router.callback_query(F.data.startswith("play_"))
