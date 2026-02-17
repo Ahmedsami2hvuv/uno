@@ -46,7 +46,15 @@ def generate_room_code():
 
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
-    # تحديث حالة الظهور أونلاين
+    
+    # --- تحديث تلقائي للقاعدة (سيعمل مرة واحدة فقط بنجاح) ---
+    try:
+        db_query("ALTER TABLE follows ADD COLUMN notify_games BOOLEAN DEFAULT 0", commit=True)
+        db_query("ALTER TABLE users ADD COLUMN allow_invites BOOLEAN DEFAULT 1", commit=True)
+    except:
+        pass # إذا كانت الأعمدة موجودة مسبقاً سيتجاهل الخطأ
+    # --------------------------------------------------
+
     db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
     
     kb = [
@@ -63,10 +71,8 @@ async def show_main_menu(message, name, user_id=None):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
     if hasattr(message, 'edit_text'):
-        try:
-            await message.edit_text(msg_text, reply_markup=markup)
-        except:
-            await message.answer(msg_text, reply_markup=markup)
+        try: await message.edit_text(msg_text, reply_markup=markup)
+        except: await message.answer(msg_text, reply_markup=markup)
     else:
         await message.answer(msg_text, reply_markup=markup)
 
