@@ -219,7 +219,7 @@ async def render_keypad(cid, state, target, cur):
         [InlineKeyboardButton(text="4", callback_data=f"k_{target}_{cur}_4"), InlineKeyboardButton(text="5", callback_data=f"k_{target}_{cur}_5"), InlineKeyboardButton(text="6", callback_data=f"k_{target}_{cur}_6")],
         [InlineKeyboardButton(text="7", callback_data=f"k_{target}_{cur}_7"), InlineKeyboardButton(text="8", callback_data=f"k_{target}_{cur}_8"), InlineKeyboardButton(text="9", callback_data=f"k_{target}_{cur}_9")],
         [InlineKeyboardButton(text="0", callback_data=f"k_{target}_{cur}_0")],
-        [InlineKeyboardButton(text="🔄 (20)", callback_data=f"k_{target}_{cur}_20"), InlineKeyboardButton(text="🚫 (20)", callback_data=f"k_{target}_{cur}_20"), InlineKeyboardButton(text="➕2 (20)", callback_data=f"k_{target}_{cur}_20")],
+        [InlineKeyboardButton(text="🔄 (20)", callback_data=f"k_{target}_{cur}_20"), InlineKeyboardButton(text="🚫 (20)", callback_data=f"k_{target}_{cur}_20"), InlineKeyboardButton(text="⬆️2 (20)", callback_data=f"k_{target}_{cur}_20")],
         [InlineKeyboardButton(text="🌈 ملون (50)", callback_data=f"k_{target}_{cur}_50")],
         [InlineKeyboardButton(text="🃏 م+1 (10)", callback_data=f"k_{target}_{cur}_10"), InlineKeyboardButton(text="🃏 م+2 (20)", callback_data=f"k_{target}_{cur}_20"), InlineKeyboardButton(text="🃏 م+4 (50)", callback_data=f"k_{target}_{cur}_50")],
         [InlineKeyboardButton(text="🧹 إعادة", callback_data=f"calcpts_{target}"), InlineKeyboardButton(text="✅ تم", callback_data=f"kdone_{target}_{cur}")]
@@ -235,7 +235,7 @@ async def update_keypad(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="4", callback_data=f"k_{t}_{new}_4"), InlineKeyboardButton(text="5", callback_data=f"k_{t}_{new}_5"), InlineKeyboardButton(text="6", callback_data=f"k_{t}_{new}_6")],
         [InlineKeyboardButton(text="7", callback_data=f"k_{t}_{new}_7"), InlineKeyboardButton(text="8", callback_data=f"k_{t}_{new}_8"), InlineKeyboardButton(text="9", callback_data=f"k_{t}_{new}_9")],
         [InlineKeyboardButton(text="0", callback_data=f"k_{t}_{new}_0")],
-        [InlineKeyboardButton(text="🔄 (20)", callback_data=f"k_{t}_{new}_20"), InlineKeyboardButton(text="🚫 (20)", callback_data=f"k_{t}_{new}_20"), InlineKeyboardButton(text="➕2 (20)", callback_data=f"k_{t}_{new}_20")],
+        [InlineKeyboardButton(text="🔄 (20)", callback_data=f"k_{t}_{new}_20"), InlineKeyboardButton(text="🚫 (20)", callback_data=f"k_{t}_{new}_20"), InlineKeyboardButton(text="⬆️2 (20)", callback_data=f"k_{t}_{new}_20")],
         [InlineKeyboardButton(text="🌈 ملون (50)", callback_data=f"k_{t}_{new}_50")],
         [InlineKeyboardButton(text="🃏 م+1 (10)", callback_data=f"k_{t}_{new}_10"), InlineKeyboardButton(text="🃏 م+2 (20)", callback_data=f"k_{t}_{new}_20"), InlineKeyboardButton(text="🃏 م+4 (50)", callback_data=f"k_{t}_{new}_50")],
         [InlineKeyboardButton(text="🧹 إعادة", callback_data=f"calcpts_{t}"), InlineKeyboardButton(text="✅ تم", callback_data=f"kdone_{t}_{new}")]
