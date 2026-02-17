@@ -1494,12 +1494,6 @@ async def process_unfollow(c: types.CallbackQuery):
     # تحديث واجهة البروفايل فوراً
     await process_user_search_by_id(c, target_id)
 
-# كود لإرسال إشعارات للمتابعين (يوضع عند بدء اللعب)
-followers = db_query("SELECT follower_id FROM follows WHERE following_id = %s AND notify_games = 1", (player_id,))
-for f in followers:
-    try:
-        await bot.send_message(f['follower_id'], f"🚀 صديقك {player_name} بدأ لعبة أونو الآن! هل تريد الانضمام أو المشاهدة؟")
-    except: pass
 
 # --- دالة جديدة: تشغيل حاسبة الأونو (إصلاح الزر) ---
 @router.callback_query(F.data == "calc_start")
