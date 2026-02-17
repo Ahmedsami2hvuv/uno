@@ -36,7 +36,9 @@ class RoomStates(StatesGroup):
     complete_profile_password = State()
 
 persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="🏠 القائمة الرئيسية")]],
+    keyboard=[
+        [KeyboardButton(text="🏠 القائمة الرئيسية"), KeyboardButton(text="🚀 ابدأ")]
+    ],
     resize_keyboard=True,
     is_persistent=True
 )
@@ -47,13 +49,11 @@ def generate_room_code():
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
-    # --- تحديث تلقائي للقاعدة (سيعمل مرة واحدة فقط بنجاح) ---
+    # تحديث تلقائي للقاعدة (لحل مشكلة التيرمينال)
     try:
         db_query("ALTER TABLE follows ADD COLUMN notify_games BOOLEAN DEFAULT 0", commit=True)
         db_query("ALTER TABLE users ADD COLUMN allow_invites BOOLEAN DEFAULT 1", commit=True)
-    except:
-        pass # إذا كانت الأعمدة موجودة مسبقاً سيتجاهل الخطأ
-    # --------------------------------------------------
+    except: pass
 
     db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
     
@@ -70,11 +70,27 @@ async def show_main_menu(message, name, user_id=None):
     msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    if hasattr(message, 'edit_text'):
-        try: await message.edit_text(msg_text, reply_markup=markup)
-        except: await message.answer(msg_text, reply_markup=markup)
+    # --- منطق التنظيف (النظافة التامة) ---
+    if isinstance(message, types.CallbackQuery):
+        # حذف الرسالة القديمة التي تحتوي على الزر المكبوس
+        try: await message.message.delete()
+        except: pass
+        await message.message.answer(msg_text, reply_markup=markup)
     else:
+        # حذف رسالة المستخدم النصية (مثل كلمة "ابدأ") ليبقى البوت نظيفاً
+        try: await message.delete()
+        except: pass
         await message.answer(msg_text, reply_markup=markup)
+
+@router.message(F.text == "🚀 ابدأ")
+@router.message(Command("start")) # لتغطية أمر /start أيضاً بنفس الطريقة
+async def handle_start_and_btn(message: types.Message):
+    # جلب اسم اللاعب لإرساله للدالة
+    user_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
+    name = user_data[0]['player_name'] if user_data else message.from_user.full_name
+    
+    # استدعاء القائمة الرئيسية (التي ستقوم بالتنظيف تلقائياً)
+    await show_main_menu(message, name)
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
