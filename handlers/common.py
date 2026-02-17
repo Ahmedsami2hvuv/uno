@@ -70,17 +70,20 @@ async def show_main_menu(message, name, user_id=None):
     msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # --- منطق التنظيف (النظافة التامة) ---
+    # استدعاء الكيبورد السفلي اللي فيه (🏠 القائمة الرئيسية و 🚀 ابدأ)
+    from handlers.common import persistent_kb 
+
     if isinstance(message, types.CallbackQuery):
-        # حذف الرسالة القديمة التي تحتوي على الزر المكبوس
         try: await message.message.delete()
         except: pass
         await message.message.answer(msg_text, reply_markup=markup)
+        # هذا السطر يضمن ظهور الأزرار السفلية تحت لوحة الكتابة
+        await message.message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
     else:
-        # حذف رسالة المستخدم النصية (مثل كلمة "ابدأ") ليبقى البوت نظيفاً
         try: await message.delete()
         except: pass
         await message.answer(msg_text, reply_markup=markup)
+        await message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
 
 @router.message(F.text == "🚀 ابدأ")
 @router.message(Command("start")) # لتغطية أمر /start أيضاً بنفس الطريقة
@@ -1499,12 +1502,16 @@ async def process_unfollow(c: types.CallbackQuery):
 @router.callback_query(F.data == "calc_start")
 async def start_calculator(c: types.CallbackQuery):
     uid = c.from_user.id
-    text = "🧮 **حاسبة نقاط أونو**\n\nهذه الحاسبة تساعدك على حساب النقاط في نهاية الجولة.\nكم عدد اللاعبين؟"
-    # يمكنك توجيه المستخدم لأزرار الأرقام هنا
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="2", callback_data="calc_players_2"), InlineKeyboardButton(text="3", callback_data="calc_players_3")],
-        [InlineKeyboardButton(text="4", callback_data="calc_players_4"), InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
-    ]))
+    text = "🧮 **حاسبة نقاط أونو**\n\nكم عدد اللاعبين؟"
+    
+    # توزيع الأزرار بشكل مرتب لـ 10 لاعبين
+    kb = [
+        [InlineKeyboardButton(text="2", callback_data="calc_players_2"), InlineKeyboardButton(text="3", callback_data="calc_players_3"), InlineKeyboardButton(text="4", callback_data="calc_players_4")],
+        [InlineKeyboardButton(text="5", callback_data="calc_players_5"), InlineKeyboardButton(text="6", callback_data="calc_players_6"), InlineKeyboardButton(text="7", callback_data="calc_players_7")],
+        [InlineKeyboardButton(text="8", callback_data="calc_players_8"), InlineKeyboardButton(text="9", callback_data="calc_players_9"), InlineKeyboardButton(text="10", callback_data="calc_players_10")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 # --- دالة جديدة: عرض القوانين (إصلاح الزر) ---
 @router.callback_query(F.data == "rules")
@@ -1518,9 +1525,8 @@ async def show_rules_handler(c: types.CallbackQuery):
 @router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
-    # جلب الأشخاص الذين يتابعهم المستخدم وحالتهم
     following = db_query("""
-        SELECT u.user_id, u.player_name, u.username_key, u.last_seen 
+        SELECT u.user_id, u.player_name, u.last_seen 
         FROM follows f 
         JOIN users u ON f.following_id = u.user_id 
         WHERE f.follower_id = %s
@@ -1529,23 +1535,16 @@ async def show_following_list(c: types.CallbackQuery):
     if not following:
         return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
 
-    text = "📉 **قائمة الذين تتابعهم:**\n\n"
+    text = "📉 **قائمة الذين تتابعهم:**"
     kb = []
     from datetime import datetime, timedelta
-
     for user in following:
-        # تحديد إذا كان أونلاين (أقل من 5 دقائق)
         is_online = (datetime.now() - user['last_seen'] < timedelta(minutes=5))
         status_icon = "🟢" if is_online else "⚪"
-        
-        # إنشاء زر لكل مستخدم لمشاهدة بروفايله
-        kb.append([InlineKeyboardButton(
-            text=f"{status_icon} {user['player_name']} (@{user['username_key']})", 
-            callback_data=f"view_profile_{user['user_id']}"
-        )])
+        kb.append([InlineKeyboardButton(text=f"{status_icon} {user['player_name']}", callback_data=f"view_profile_{user['user_id']}")])
 
-    kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 # --- دالة جديدة: عرض قائمة "المتابعون" ---
 @router.callback_query(F.data == "list_followers")
@@ -1635,3 +1634,32 @@ async def notify_followers_game_started(player_id, player_name, bot):
             )
         except:
             continue
+
+@router.callback_query(F.data == "play_friends")
+async def play_friends_menu(c: types.CallbackQuery):
+    uid = c.from_user.id
+    text = "🎮 **اللعب مع الأصدقاء**\n\nيمكنك إنشاء غرفة جديدة أو الانضمام لغرفة صديق بواسطة الكود."
+    kb = [
+        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
+        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "my_account")
+async def my_account_menu(c: types.CallbackQuery):
+    uid = c.from_user.id
+    user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    if not user_data: return
+    user = user_data[0]
+    
+    text = (f"👤 **إعدادات حسابك**\n\n"
+            f"📦 الاسم: {user['player_name']}\n"
+            f"🏆 النقاط: {user['online_points']}")
+    
+    kb = [
+        [InlineKeyboardButton(text="✏️ تغيير الاسم", callback_data="edit_name")],
+        [InlineKeyboardButton(text="🔒 تغيير الباسورد", callback_data="edit_password")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
