@@ -372,15 +372,34 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
         if not room_res: return
         players = get_ordered_players(room_id)
         deck = generate_h2o_deck()
+        
+        # توزيع الأوراق على كل اللاعبين
         for p in players:
             hand = [deck.pop(0) for _ in range(7)]
             db_query("UPDATE room_players SET hand = %s, said_uno = FALSE, last_msg_id = NULL, is_ready = FALSE WHERE user_id = %s", (json.dumps(hand), p['user_id']), commit=True)
-        while any(x in deck[0] for x in ["🌈", "🔥", "💧", "🌊"]): random.shuffle(deck)
+        
+        # اختيار ورقة البداية (ما تكون جوكر)
+        while any(x in deck[0] for x in ["🌈", "🔥", "💧", "🌊"]): 
+            random.shuffle(deck)
         top_card = deck.pop(0)
         current_color = top_card.split()[0]
-        db_query("UPDATE rooms SET deck = %s, top_card = %s, current_color = %s, turn_index = %s, discard_pile = '[]', status = 'playing' WHERE room_id = %s", (json.dumps(deck), top_card, current_color, start_turn_idx, room_id), commit=True)
-        await refresh_ui_2p(room_id, bot)
-    except Exception as e: print(f"Error in start_new_round: {e}")
+        
+        # تحديث الغرفة في قاعدة البيانات
+        db_query("UPDATE rooms SET deck = %s, top_card = %s, current_color = %s, turn_index = %s, discard_pile = '[]', status = 'playing' WHERE room_id = %s", 
+                 (json.dumps(deck), top_card, current_color, start_turn_idx, room_id), commit=True)
+        
+        # إرسال رسالة بداية اللعبة للاعبين الاثنين
+        for p in players:
+            try:
+                await bot.send_message(p['user_id'], "🎮 بدأت اللعبة! استعد...")
+            except:
+                pass
+        
+        # تحديث الواجهة للاعبين الاثنين
+        await refresh_ui_2p(room_id, bot, alert_msgs)
+        
+    except Exception as e: 
+        print(f"Error in start_new_round: {e}")
 
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
     try:
