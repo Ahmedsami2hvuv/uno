@@ -8,6 +8,14 @@ from config import (
     IMG_CATCH_SUCCESS, IMG_CATCH_PENALTY
 )
 
+async def _send_temp_photo(bot_inst, chat_id, photo_id, delay=3):
+    try:
+        msg = await bot_inst.send_photo(chat_id, photo_id)
+        await asyncio.sleep(delay)
+        try: await bot_inst.delete_message(chat_id, msg.message_id)
+        except: pass
+    except: pass
+
 router = Router()
 
 # --- 1. محرك الأوراق (الحسبة الدقيقة) ---
@@ -16,18 +24,18 @@ def generate_deck():
     deck = []
     for c in colors:
         for n in range(0, 10): deck.extend([f"{c} {n}", f"{c} {n}"])
-        for a in ["🚫", "🔄", "➕2"]: deck.extend([f"{c} {a}", f"{c} {a}"])
-    for j in [("🌈", 50), ("🌈➕1", 10), ("🌈➕2", 30), ("🌈➕4", 50)]:
+        for a in ["🚫", "🔄", "⬆️2"]: deck.extend([f"{c} {a}", f"{c} {a}"])
+    for j in [("🌈", 50), ("🌈⬆️1", 10), ("🌈⬆️2", 30), ("🌈⬆️4", 50)]:
         deck.extend([j[0]] * 4)
     random.shuffle(deck)
     return deck
 
 def get_card_points(card):
     if "🌈" in card:
-        if "➕4" in card or card == "🌈": return 50
-        if "➕2" in card: return 30
+        if "⬆️4" in card or card == "🌈": return 50
+        if "⬆️2" in card: return 30
         return 10
-    if any(x in card for x in ["🚫", "🔄", "➕2"]): return 20
+    if any(x in card for x in ["🚫", "🔄", "⬆️2"]): return 20
     try:
         return int(card.split()[-1])
     except:
@@ -258,7 +266,7 @@ async def process_play(c: types.CallbackQuery):
     if not my_hand: return await end_game_logic(c.from_user.id, opp_id, g_id)
 
     nt = opp_id
-    if "➕" in played_card:
+    if "⬆️" in played_card:
         val = int(played_card[-1])
         opp_h = [h.strip() for h in (game['p2_hand'] if is_p1 else game['p1_hand']).split(",") if h.strip()]
         [opp_h.append(deck.pop(0)) for _ in range(val) if deck]
@@ -299,9 +307,9 @@ async def handle_challenge(c: types.CallbackQuery):
     is_cheat = any(("🌈" not in h and (h[0] == top_before[0] or (len(h.split()) > 1 and h.split()[-1] == top_before.split()[-1]))) for h in p_hand if h != played_card)
     
     # تحديد العقوبات (3 للـ +1، 4 للـ +2، 6 للـ +4)
-    if "➕1" in played_card: penalty = 3
-    elif "➕2" in played_card: penalty = 4
-    elif "➕4" in played_card: penalty = 6
+    if "⬆️1" in played_card: penalty = 3
+    elif "⬆️2" in played_card: penalty = 4
+    elif "⬆️4" in played_card: penalty = 6
     else: penalty = 3 # للجوكر الملون السادة
 
     if is_chal:
@@ -321,7 +329,7 @@ async def handle_challenge(c: types.CallbackQuery):
         else: 
             # 2️⃣ الحالة الثانية: اللاعب صادق والخصم تحدى غلط
             # الخصم يسحب قيمة الورقة (مثلاً 4) + ورقتين إضافية عقوبة
-            f_pen = (int(played_card[-1]) if "➕" in played_card else 1) + 2
+            f_pen = (int(played_card[-1]) if "⬆️" in played_card else 1) + 2
             [o_hand.append(deck.pop(0)) for _ in range(f_pen) if deck]
             
             # إزالة الجوكر من يد اللاعب وتثبيته كـ top_card
@@ -336,7 +344,7 @@ async def handle_challenge(c: types.CallbackQuery):
     else: 
         # 3️⃣ الحالة الثالثة: الخصم اختار "لا أتحدى"
         # يسحب القيمة الطبيعية (4 أوراق مثلاً)
-        s_val = int(played_card[-1]) if "➕" in played_card else 1
+        s_val = int(played_card[-1]) if "⬆️" in played_card else 1
         [o_hand.append(deck.pop(0)) for _ in range(s_val) if deck]
         
         if played_card in p_hand: p_hand.remove(played_card)
@@ -366,8 +374,8 @@ async def process_uno(c: types.CallbackQuery):
     # إرسال تنبيه بالصور (اختياري)
     opp_id = game['p2_id'] if is_p1 else game['p1_id']
     try:
-        await bot.send_photo(c.from_user.id, photo=IMG_UNO_SAFE_ME)
-        await bot.send_photo(opp_id, photo=IMG_UNO_SAFE_OPP)
+        asyncio.create_task(_send_temp_photo(bot, c.from_user.id, IMG_UNO_SAFE_ME))
+        asyncio.create_task(_send_temp_photo(bot, opp_id, IMG_UNO_SAFE_OPP))
     except: pass
 
     # تحديث اليد لإخفاء زر الأونو بعد الضغط عليه
