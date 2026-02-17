@@ -45,19 +45,26 @@ def generate_room_code():
 
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
+    # تحديث حالة الظهور فوراً عند فتح القائمة
+    db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
+    
     kb = [
-        [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="menu_random")],
-        [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="menu_friends")],
-        [InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="mode_calc")],
-        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account")],
-        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="show_rules")],
-        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
+        [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
+        [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
+        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")], # الزر الجديد
+        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
+         InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
+        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules"),
+         InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
     ]
-    text = t(uid, "main_menu", name=name)
-    if hasattr(message, "answer"):
-        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    
+    msg_text = t(uid, "main_menu", name=name)
+    
+    if hasattr(message, 'edit_text'):
+        await message.edit_text(msg_text, reply_markup=markup)
     else:
-        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        await message.answer(msg_text, reply_markup=markup)
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
