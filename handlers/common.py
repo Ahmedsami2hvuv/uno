@@ -18,6 +18,13 @@ kick_selections = {}
 
 class RoomStates(StatesGroup):
     wait_for_code = State()
+    # الحالات الجديدة للتسجيل المطور والترقية
+    reg_ask_username = State()
+    reg_ask_password = State()
+    reg_ask_name = State()
+    upgrade_username = State()
+    upgrade_password = State()
+    # ابقينا القديمة لضمان عدم تعطل أي كود مرتبط بها حالياً
     edit_name = State()
     edit_password = State()
     register_name = State()
@@ -54,36 +61,107 @@ async def show_main_menu(message, name, user_id=None):
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    args = message.text.split(maxsplit=1)
-    deep_link = args[1] if len(args) > 1 else None
-    uid = message.from_user.id
-
-    user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
-    if not user or not user[0].get('is_registered'):
-        if deep_link and deep_link.startswith("join_"):
-            await state.update_data(pending_join=deep_link.split("_", 1)[1])
+    user_id = message.from_user.id
+    # فحص إذا كان المستخدم مسجل أصلاً
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    
+    # 1. إذا كان مستخدم جديد كلياً
+    if not user:
+        # نبدأ بطلب اللغة أولاً (كودك القديم)
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🇸🇦 عربي", callback_data="set_lang_ar"),
-             InlineKeyboardButton(text="🇬🇧 English", callback_data="set_lang_en")]
+            [InlineKeyboardButton(text="العربية 🇮🇶", callback_data="setlang_ar"),
+             InlineKeyboardButton(text="English 🇺🇸", callback_data="setlang_en")]
         ])
-        await message.answer(t(uid, "choose_lang"), reply_markup=kb)
+        await message.answer(TEXTS["choose_lang"]["ar"], reply_markup=kb)
+        return
+
+    # 2. إذا كان مستخدم قديم بس ما عنده يوزر نيم (username_key)
+    if not user[0].get('username_key'):
+        await message.answer(t(user_id, "reg_upgrade_notice"))
+        await message.answer(t(user_id, "ask_username_key"))
+        await state.set_state(RoomStates.upgrade_username)
+        return
+
+    # 3. إذا كان حسابه كامل (عنده يوزر نيم وباسورد)
+    # نحدث وقت التواجد (Online Status)
+    db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (user_id,), commit=True)
+    await show_main_menu(message, user[0]['player_name'], user_id)
+
+@router.message(RoomStates.upgrade_username)
+async def process_username_step(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    username = message.text.strip().lower()
+    
+    # فحص الشروط
+    if not username.isalnum() or len(username) < 3:
+        return await message.answer("❌ اليوزر نيم يجب أن يكون أحرف إنجليزية وأرقام فقط (3 أحرف على الأقل):")
+
+    check = db_query("SELECT user_id FROM users WHERE username_key = %s", (username,))
+    if check:
+        return await message.answer(t(user_id, "username_taken"))
+
+    await state.update_data(chosen_username=username)
+    await message.answer(t(user_id, "ask_password_key"))
+    
+    current_state = await state.get_state()
+    if current_state == RoomStates.reg_ask_username:
+        await state.set_state(RoomStates.reg_ask_password)
     else:
-        if deep_link and deep_link.startswith("join_"):
-            await state.update_data(pending_join=deep_link.split("_", 1)[1])
-        if not user[0].get('password'):
-            name = user[0]['player_name']
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=t(uid, "btn_yes_name"), callback_data="cp_name_ok")],
-                [InlineKeyboardButton(text=t(uid, "btn_edit_name"), callback_data="cp_edit_name")]
-            ])
-            await message.answer(t(uid, "complete_profile", name=name), reply_markup=kb)
-        else:
-            if deep_link and deep_link.startswith("join_"):
-                code = deep_link.split("_", 1)[1]
-                await _join_room_by_code(message, code, user[0])
-            else:
-                await show_main_menu(message, user[0]['player_name'], uid)
+        await state.set_state(RoomStates.upgrade_password)
+
+@router.message(RoomStates.upgrade_password)
+async def process_password_step(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    password = message.text.strip()
+    
+    # التأكد من طول الباسورد
+    if len(password) < 4:
+        return await message.answer(t(user_id, "password_too_short"))
+
+    data = await state.get_data()
+    username = data['chosen_username']
+    current_state = await state.get_state()
+    
+    if current_state == RoomStates.upgrade_password:
+        # حالة الترقية: اللاعب مسجل أصلاً بس ينقصه يوزر وباسورد جديد
+        db_query("UPDATE users SET username_key = %s, password_key = %s WHERE user_id = %s", 
+                 (username, password, user_id), commit=True)
+        
+        user_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
+        p_name = user_info[0]['player_name'] if user_info else "لاعب"
+        
+        await message.answer(t(user_id, "reg_success", name=p_name, username=username))
+        await state.clear()
+        await show_main_menu(message, p_name, user_id)
+    
+    else:
+        # حالة التسجيل الجديد: نحفظ اليوزر والباسورد مؤقتاً ونطلب "الاسم"
+        await state.update_data(chosen_password=password)
+        await message.answer(t(user_id, "ask_name"))
+        await state.set_state(RoomStates.reg_ask_name)
+
+@router.message(RoomStates.reg_ask_name)
+async def process_final_name(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    name = message.text.strip()[:20]
+    
+    if len(name) < 2:
+        return await message.answer(t(user_id, "name_too_short"))
+
+    data = await state.get_data()
+    username = data['chosen_username']
+    password = data['chosen_password']
+    
+    # حفظ اللاعب الجديد كلياً في القاعدة
+    db_query("""INSERT INTO users (user_id, username_key, password_key, player_name, is_registered) 
+                VALUES (%s, %s, %s, %s, TRUE)""", 
+             (user_id, username, password, name), commit=True)
+    
+    await message.answer(t(user_id, "reg_success", name=name, username=username))
+    await state.clear()
+    await show_main_menu(message, name, user_id)
+    
+
 
 @router.callback_query(F.data.startswith("set_lang_"))
 async def set_lang_callback(c: types.CallbackQuery, state: FSMContext):
