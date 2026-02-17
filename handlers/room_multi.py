@@ -914,3 +914,26 @@ async def notify_followers_game_started(player_id, player_name, bot):
             )
         except:
             continue
+
+# دالة إرسال التنبيهات للمتابعين (كاملة ونظيفة)
+async def notify_followers_game_started(player_id, player_name, bot):
+    # جلب المتابعين اللي مفعلين الجرس (notify_games = 1) لهذا اللاعب
+    followers = db_query("""
+        SELECT follower_id FROM follows 
+        WHERE following_id = %s AND notify_games = 1
+    """, (player_id,))
+    
+    if not followers:
+        return # إذا ماكو أحد مفعل الجرس نطلع
+
+    # رسالة التنبيه مع زر سريع للدخول
+    text = f"🚀 **تنبيه متابعة!**\n\nصديقك **{player_name}** يقوم بإنشاء غرفة لعب الآن. هل تريد الانضمام؟"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎮 دخول للعب معه", callback_data=f"view_profile_{player_id}")]
+    ])
+
+    for f in followers:
+        try:
+            await bot.send_message(f['follower_id'], text, reply_markup=kb)
+        except Exception:
+            continue # إذا حظر البوت نتجاوزه ونكمل للباقين
