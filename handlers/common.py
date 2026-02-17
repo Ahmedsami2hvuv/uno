@@ -1368,3 +1368,36 @@ async def reject_invite(c: types.CallbackQuery):
     try:
         await c.bot.send_message(inv['creator'], f"❌ {p_name} رفض الدعوة.")
     except: pass
+
+# --- القائمة الاجتماعية (الأصدقاء والمتابعة) ---
+@router.callback_query(F.data == "social_menu")
+async def show_social_menu(c: types.CallbackQuery):
+    uid = c.from_user.id
+    
+    # حساب عدد المتابعين ومن يتابعهم اللاعب
+    followers_count = db_query("SELECT COUNT(*) as count FROM follows WHERE following_id = %s", (uid,))[0]['count']
+    following_count = db_query("SELECT COUNT(*) as count FROM follows WHERE follower_id = %s", (uid,))[0]['count']
+    
+    text = (f"👥 **القائمة الاجتماعية**\n\n"
+            f"📈 المتابعون: {followers_count}\n"
+            f"📉 الذين تتابعهم: {following_count}\n\n"
+            "هنا يمكنك البحث عن أصدقائك بواسطة (Username) ومتابعتهم لتعرف متى يكونون متصلين!")
+    
+    kb = [
+        [InlineKeyboardButton(text="🔍 البحث عن لاعب", callback_data="search_user")],
+        [InlineKeyboardButton(text=t(uid, "btn_followers_list"), callback_data="list_followers"),
+         InlineKeyboardButton(text=t(uid, "btn_following_list"), callback_data="list_following")],
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
+    ]
+    
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+
+# --- بدء عملية البحث ---
+@router.callback_query(F.data == "search_user")
+async def start_search_user(c: types.CallbackQuery, state: FSMContext):
+    uid = c.from_user.id
+    await c.message.answer("✍️ أرسل الآن اسم المستخدم (Username) الخاص باللاعب الذي تبحث عنه:\n(بدون علامة @)")
+    await state.set_state(RoomStates.wait_for_code) # سنستخدم حالة مؤقتة أو ننشئ حالة جديدة للبحث
+    # لكي لا نغير الـ StatesGroup كثيراً، سنعرف حالة جديدة اسمها search_user
+
+
