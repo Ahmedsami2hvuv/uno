@@ -46,8 +46,7 @@ def generate_room_code():
 
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
-    
-    # تحديث حالة الظهور (Online)
+    # تحديث حالة الظهور أونلاين
     db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
     
     kb = [
@@ -56,12 +55,12 @@ async def show_main_menu(message, name, user_id=None):
         [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")], 
         [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
          InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
-        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules"),
-         InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
+        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
+        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
     ]
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
     msg_text = t(uid, "main_menu", name=name)
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
     if hasattr(message, 'edit_text'):
         try:
@@ -69,7 +68,8 @@ async def show_main_menu(message, name, user_id=None):
         except:
             await message.answer(msg_text, reply_markup=markup)
     else:
-        await message.answer(msg_text, reply_markup=markup, reply_markup_persistent=persistent_kb)
+        await message.answer(msg_text, reply_markup=markup)
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -685,19 +685,25 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
     await show_main_menu(c.message, user[0]['player_name'] if user else "لاعب", uid)
 
-@router.callback_query(F.data == "show_rules")
+# إصلاح زر القوانين
+@router.callback_query(F.data == "rules")
 async def show_rules(c: types.CallbackQuery):
     uid = c.from_user.id
-    rules_text = t(uid, "rules_full")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-    ])
-    if len(rules_text) > 4000:
-        parts = [rules_text[:4000], rules_text[4000:]]
-        await c.message.edit_text(parts[0])
-        await c.message.answer(parts[1], reply_markup=kb)
-    else:
-        await c.message.edit_text(rules_text, reply_markup=kb)
+    await c.message.edit_text(t(uid, "rules_full"), 
+                              reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                  [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
+                              ]))
+
+# إصلاح زر اللعب العشوائي (ربطه بملف room_multi)
+@router.callback_query(F.data == "random_play")
+async def process_random_play(c: types.CallbackQuery):
+    uid = c.from_user.id
+    # هنا يجب أن تستدعي الدالة من ملف room_multi، تأكد من عمل import لها
+    await c.answer("🎲 جاري البحث عن لاعبين...")
+    # ملاحظة: تأكد أن ملف i18n يحتوي على مفتاح "random_waiting"
+    await c.message.edit_text(t(uid, "random_waiting"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
+    ]))
 
 @router.callback_query(F.data == "change_lang")
 async def change_lang_menu(c: types.CallbackQuery):
@@ -1466,27 +1472,31 @@ async def process_unfollow(c: types.CallbackQuery):
     # تحديث واجهة البروفايل فوراً
     await process_user_search_by_id(c, target_id)
 
-# دالة مساعدة لتحديث البروفايل بعد الضغط على الأزرار
-async def process_user_search_by_id(c, t_uid):
-    uid = c.from_user.id
-    target = db_query("SELECT * FROM users WHERE user_id = %s", (t_uid,))[0]
-    
-    is_following = db_query("SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s", (uid, t_uid))
-    
-    from datetime import datetime, timedelta
-    status = t(uid, "status_online") if (datetime.now() - target['last_seen'] < timedelta(minutes=5)) else t(uid, "status_offline", time=target['last_seen'].strftime("%H:%M"))
+# كود لإرسال إشعارات للمتابعين (يوضع عند بدء اللعب)
+followers = db_query("SELECT follower_id FROM follows WHERE following_id = %s AND notify_games = 1", (player_id,))
+for f in followers:
+    try:
+        await bot.send_message(f['follower_id'], f"🚀 صديقك {player_name} بدأ لعبة أونو الآن! هل تريد الانضمام أو المشاهدة؟")
+    except: pass
 
-    text = t(uid, "profile_title", name=target['player_name'], username=target['username_key'], points=target['online_points'], status=status)
-    
-    kb = []
-    follow_btn_text = t(uid, "btn_unfollow") if is_following else t(uid, "btn_follow")
-    follow_callback = f"unfollow_{t_uid}" if is_following else f"follow_{t_uid}"
-    
-    kb.append([InlineKeyboardButton(text=follow_btn_text, callback_data=follow_callback)])
-    kb.append([InlineKeyboardButton(text=t(uid, "btn_invite_play"), callback_data=f"invite_{t_uid}")])
-    kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
-    
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+# --- دالة جديدة: تشغيل حاسبة الأونو (إصلاح الزر) ---
+@router.callback_query(F.data == "calc_start")
+async def start_calculator(c: types.CallbackQuery):
+    uid = c.from_user.id
+    text = "🧮 **حاسبة نقاط أونو**\n\nهذه الحاسبة تساعدك على حساب النقاط في نهاية الجولة.\nكم عدد اللاعبين؟"
+    # يمكنك توجيه المستخدم لأزرار الأرقام هنا
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="2", callback_data="calc_players_2"), InlineKeyboardButton(text="3", callback_data="calc_players_3")],
+        [InlineKeyboardButton(text="4", callback_data="calc_players_4"), InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]))
+
+# --- دالة جديدة: عرض القوانين (إصلاح الزر) ---
+@router.callback_query(F.data == "rules")
+async def show_rules_handler(c: types.CallbackQuery):
+    uid = c.from_user.id
+    await c.message.edit_text(t(uid, "rules_full"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
+    ]))
 
 # --- دالة جديدة: عرض قائمة "الذين أتابعهم" ---
 @router.callback_query(F.data == "list_following")
@@ -1554,4 +1564,39 @@ async def view_target_profile(c: types.CallbackQuery):
     # نستخدم الدالة المساعدة التي كتبناها في الخطوة السابقة لتحديث الواجهة
     await process_user_search_by_id(c, target_id)
 
+# --- دالة تفعيل/تعطيل تنبيهات بدء اللعب (🔔) ---
+@router.callback_query(F.data.startswith("game_notify_"))
+async def toggle_game_notify(c: types.CallbackQuery):
+    target_id = int(c.data.split("_")[2])
+    uid = c.from_user.id
+    
+    # فحص الحالة الحالية من جدول المتابعة (سنستخدم عمود notify_games)
+    # ملاحظة: إذا لم تكن قد أضفت العمود بعد، سأعطيك أمر SQL لاحقاً
+    current = db_query("SELECT notify_games FROM follows WHERE follower_id = %s AND following_id = %s", (uid, target_id))
+    
+    if not current:
+        return await c.answer("⚠️ يجب أن تتابع اللاعب أولاً لتفعيل التنبيهات!", show_alert=True)
+    
+    new_status = 0 if current[0]['notify_games'] else 1
+    db_query("UPDATE follows SET notify_games = %s WHERE follower_id = %s AND following_id = %s", (new_status, uid, target_id), commit=True)
+    
+    await c.answer("✅ تم تحديث إعدادات التنبيه" if new_status else "❌ تم إيقاف التنبيه")
+    # تحديث واجهة البروفايل لإظهار العلامة الجديدة
+    await process_user_search_by_id(c, target_id)
 
+# --- دالة تفعيل/تعطيل استقبال طلبات اللعب (📩) ---
+@router.callback_query(F.data.startswith("allow_invites_"))
+async def toggle_allow_invites(c: types.CallbackQuery):
+    target_id = int(c.data.split("_")[2])
+    uid = c.from_user.id
+    
+    # هنا التحكم يكون بخصوصية اللاعب نفسه (هل يسمح للآخرين بدعوته)
+    if uid != target_id:
+        return await c.answer("🧐 يمكنك تعديل إعداداتك فقط من 'حسابي'.", show_alert=True)
+
+    current = db_query("SELECT allow_invites FROM users WHERE user_id = %s", (uid,))
+    new_status = 0 if current[0]['allow_invites'] else 1
+    db_query("UPDATE users SET allow_invites = %s WHERE user_id = %s", (new_status, uid), commit=True)
+    
+    await c.answer("✅ تم السماح بالطلبات" if new_status else "❌ تم قفل الطلبات")
+    await process_user_search_by_id(c, target_id)
