@@ -1663,3 +1663,194 @@ async def my_account_menu(c: types.CallbackQuery):
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# --- 1. دالة إرسال الطلب (عندما تضغط على "إرسال دعوة") ---
+@router.callback_query(F.data.startswith("invite_"))
+async def send_game_invite(c: types.CallbackQuery):
+    sender_id = c.from_user.id
+    target_id = int(c.data.split("_")[1])
+    
+    if sender_id == target_id:
+        return await c.answer("🚫 لا يمكنك دعوة نفسك!", show_alert=True)
+
+    # 1. جلب بيانات المرسل
+    sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
+    if not sender_data: return
+    sender = sender_data[0]
+
+    # 2. جلب بيانات المستهدف مع عمود الوقت (invite_expiry)
+    target_data = db_query("SELECT player_name, allow_invites, invite_expiry FROM users WHERE user_id = %s", (target_id,))
+    if not target_data: return
+    target = target_data[0]
+    
+    # --- 3. الفحص الذكي للمؤقت (الدقيقة، الساعة، الخ) ---
+    import datetime
+    if target['invite_expiry']:
+        # إذا انتهى الوقت الآن
+        if datetime.datetime.now() > target['invite_expiry']:
+            # قفل الاستقبال في القاعدة فوراً
+            db_query("UPDATE users SET allow_invites = 0, invite_expiry = NULL WHERE user_id = %s", (target_id,), commit=True)
+            return await c.answer("❌ انتهى وقت استقبال الطلبات لهذا اللاعب حالياً.", show_alert=True)
+    
+    # 4. التأكد إذا كان اللاعب مغلق الاستقبال يدوياً
+    if not target['allow_invites']:
+        return await c.answer("❌ هذا اللاعب يغلق استقبال طلبات اللعب حالياً.", show_alert=True)
+
+    # 5. بناء الأزرار (✅ قبول / ❌ رفض)
+    kb = [
+        [
+            InlineKeyboardButton(text="✅ قبول", callback_data=f"accept_inv_{sender_id}"),
+            InlineKeyboardButton(text="❌ رفض", callback_data=f"reject_inv_{sender_id}")
+        ]
+    ]
+    
+    # 6. إرسال الطلب
+    try:
+        await c.bot.send_message(
+            target_id, 
+            f"📩 **طلب لعب جديد!**\n\nاللاعب **{sender['player_name']}** يدعوك للانضمام إلى جولة أونو.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+        await c.answer("✅ تم إرسال طلب اللعب بنجاح!", show_alert=True)
+    except Exception as e:
+        await c.answer("⚠️ تعذر إرسال الطلب (ربما قام اللاعب بحظر البوت).", show_alert=True)
+
+# --- 2. دالة قبول الطلب ---
+@router.callback_query(F.data.startswith("accept_inv_"))
+async def accept_invite(c: types.CallbackQuery):
+    sender_id = int(c.data.split("_")[2])
+    target_id = c.from_user.id
+    
+    # إبلاغ المرسل بالقبول
+    target_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (target_id,))[0]['player_name']
+    
+    try:
+        await c.bot.send_message(sender_id, f"✅ وافق **{target_name}** على دعوتك! جاري تحويلكما للغرفة...")
+        # هنا يمكنك توجيههم لإنشاء غرفة في room_multi
+        await c.message.edit_text(f"🚀 تم قبول الدعوة. جاري بدء اللعب مع {sender_id}...")
+    except:
+        pass
+
+# --- 3. دالة رفض الطلب ---
+@router.callback_query(F.data.startswith("reject_inv_"))
+async def reject_invite(c: types.CallbackQuery):
+    sender_id = int(c.data.split("_")[2])
+    target_name = c.from_user.full_name
+    
+    try:
+        await c.bot.send_message(sender_id, f"❌ اعتذر **{target_name}** عن اللعب حالياً.")
+        await c.message.delete() # حذف رسالة الطلب عند الرفض
+    except:
+        pass
+
+# --- 1. عرض خيارات الوقت (تعديل الرسالة الحالية) ---
+@router.callback_query(F.data.startswith("allow_invites_"))
+async def show_invite_timer_options(c: types.CallbackQuery):
+    target_id = int(c.data.split("_")[2])
+    uid = c.from_user.id
+    
+    if uid != target_id:
+        return await c.answer("🧐 يمكنك تعديل إعداداتك فقط من 'حسابي'.", show_alert=True)
+
+    text = "🕒 **مدة استقبال طلبات اللعب**\n\nاختر المدة التي تريد فيها فتح استقبال الطلبات:"
+    
+    kb = [
+        [InlineKeyboardButton(text="⏳ لمدة دقيقة واحدة (للتجربة)", callback_data=f"set_inv_1m_{uid}")],
+        [InlineKeyboardButton(text="⌛ لمدة ساعة واحدة", callback_data=f"set_inv_1h_{uid}")],
+        [InlineKeyboardButton(text="✅ دائماً", callback_data=f"set_inv_always_{uid}")],
+        [InlineKeyboardButton(text="❌ إغلاق الآن", callback_data=f"set_inv_off_{uid}")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"view_profile_{uid}")]
+    ]
+    
+    # تعديل نص الرسالة الحالية (نظافة تامة)
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# --- 2. معالجة الحفظ في القاعدة مع المؤقت الجديد ---
+@router.callback_query(F.data.startswith("set_inv_"))
+async def process_invites_timer(c: types.CallbackQuery):
+    data = c.data.split("_")
+    action = data[2] # 1m, 1h, always, off
+    uid = int(data[3])
+    
+    expiry_time = None
+    status_val = 1
+    
+    if action == "off":
+        status_val = 0
+    elif action == "1m": # خيار الدقيقة الواحدة
+        expiry_time = datetime.datetime.now() + datetime.timedelta(minutes=1)
+    elif action == "1h":
+        expiry_time = datetime.datetime.now() + datetime.timedelta(hours=1)
+    elif action == "always":
+        expiry_time = None
+        status_val = 1
+    
+    # تحديث قاعدة البيانات (تأكد من إضافة عمود invite_expiry)
+    db_query("UPDATE users SET allow_invites = %s, invite_expiry = %s WHERE user_id = %s", 
+             (status_val, expiry_time, uid), commit=True)
+    
+    await c.answer("✅ تم التحديث")
+    
+    # العودة لبروفايل اللاعب باستخدام تعديل الرسالة
+    await process_user_search_by_id(c, uid)
+
+# --- 1. دالة قبول الطلب (تنفذ عند ضغط الصديق على ✅ قبول) ---
+@router.callback_query(F.data.startswith("accept_inv_"))
+async def accept_game_invite(c: types.CallbackQuery):
+    # sender_id هو الشخص الذي أرسل الدعوة
+    sender_id = int(c.data.split("_")[2])
+    # target_id هو الشخص الذي ضغط "قبول" الآن
+    target_id = c.from_user.id
+    
+    # جلب أسماء اللاعبين للتنسيق
+    sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
+    target_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (target_id,))
+    
+    if not sender_data or not target_data:
+        return await c.answer("⚠️ حدث خطأ، أحد اللاعبين غير موجود.")
+
+    s_name = sender_data[0]['player_name']
+    t_name = target_data[0]['player_name']
+
+    # 1. إبلاغ المرسل بأن دعوته قُبلت
+    try:
+        # نرسل للمرسل زر "دخول الغرفة"
+        kb_sender = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎮 دخول الغرفة الآن", callback_data=f"join_private_{target_id}")]
+        ])
+        await c.bot.send_message(
+            sender_id, 
+            f"✅ وافق **{t_name}** على دعوتك!\nاضغط على الزر بالأسفل لبدء اللعب.",
+            reply_markup=kb_sender
+        )
+    except:
+        return await c.answer("⚠️ يبدو أن المرسل أغلق البوت.")
+
+    # 2. تعديل رسالة الطلب عند الشخص الذي قبل (النظافة)
+    kb_target = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 إنشاء الغرفة", callback_data="create_room")]
+    ])
+    
+    await c.message.edit_text(
+        f"🚀 **تم قبول الدعوة!**\n\nأنت الآن ستلعب مع **{s_name}**.\nقم بإنشاء غرفة وأرسل الكود له أو انتظر دخوله.",
+        reply_markup=kb_target
+    )
+
+# --- 2. دالة رفض الطلب (تنفذ عند ضغط الصديق على ❌ رفض) ---
+@router.callback_query(F.data.startswith("reject_inv_"))
+async def reject_game_invite(c: types.CallbackQuery):
+    sender_id = int(c.data.split("_")[2])
+    target_name = c.from_user.full_name
+    
+    # إبلاغ المرسل بالرفض
+    try:
+        await c.bot.send_message(sender_id, f"❌ اعتذر **{target_name}** عن اللعب حالياً.")
+    except: pass
+    
+    # تنظيف الشاشة عند الشخص الذي رفض
+    try:
+        await c.message.delete()
+        await c.answer("تم رفض الطلب بنجاح.")
+    except:
+        await c.message.edit_text("❌ تم رفض الطلب.")
+
