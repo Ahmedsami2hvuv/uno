@@ -2,557 +2,1226 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from database import db_query
-import random
-import string
-import json
-import asyncio
+from i18n import t, get_lang, set_lang, TEXTS
+import random, string, json, asyncio
 
 router = Router()
 
+replay_data = {}
+pending_invites = {}
+pending_next_round = {}
+next_round_ready = {}
+friend_invite_selections = {}
+kick_selections = {}
+
 class RoomStates(StatesGroup):
     wait_for_code = State()
+    edit_name = State()
+    edit_password = State()
+    register_name = State()
+    register_password = State()
+    login_name = State()
+    login_password = State()
+    complete_profile_name = State()
+    complete_profile_password = State()
 
-class RegisterStates(StatesGroup):
-    wait_name = State()
-    wait_password = State()
+persistent_kb = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="🏠 القائمة الرئيسية")]],
+    resize_keyboard=True,
+    is_persistent=True
+)
 
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
-# --- 1. نظام الحسابات ---
+async def show_main_menu(message, name, user_id=None):
+    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
+    kb = [
+        [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="menu_random")],
+        [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="menu_friends")],
+        [InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="mode_calc")],
+        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account")],
+        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="show_rules")],
+        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
+    ]
+    text = t(uid, "main_menu", name=name)
+    if hasattr(message, "answer"):
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
+    args = message.text.split(maxsplit=1)
+    deep_link = args[1] if len(args) > 1 else None
+    uid = message.from_user.id
+
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
     if not user or not user[0].get('is_registered'):
-        if not user:
-            db_query("INSERT INTO users (user_id, username, is_registered) VALUES (%s, %s, FALSE)", 
-                     (message.from_user.id, message.from_user.username), commit=True)
-        await message.answer("👋 أهلاً بك! لإنشاء حسابك، أرسل اسم اللاعب الذي تريده:")
-        await state.set_state(RegisterStates.wait_name)
+        if deep_link and deep_link.startswith("join_"):
+            await state.update_data(pending_join=deep_link.split("_", 1)[1])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇸🇦 عربي", callback_data="set_lang_ar"),
+             InlineKeyboardButton(text="🇬🇧 English", callback_data="set_lang_en")]
+        ])
+        await message.answer(t(uid, "choose_lang"), reply_markup=kb)
     else:
-        await show_main_menu(message, user[0]['player_name'])
+        if deep_link and deep_link.startswith("join_"):
+            await state.update_data(pending_join=deep_link.split("_", 1)[1])
+        if not user[0].get('password'):
+            name = user[0]['player_name']
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=t(uid, "btn_yes_name"), callback_data="cp_name_ok")],
+                [InlineKeyboardButton(text=t(uid, "btn_edit_name"), callback_data="cp_edit_name")]
+            ])
+            await message.answer(t(uid, "complete_profile", name=name), reply_markup=kb)
+        else:
+            if deep_link and deep_link.startswith("join_"):
+                code = deep_link.split("_", 1)[1]
+                await _join_room_by_code(message, code, user[0])
+            else:
+                await show_main_menu(message, user[0]['player_name'], uid)
 
-@router.message(RegisterStates.wait_name)
-async def get_name(message: types.Message, state: FSMContext):
+@router.callback_query(F.data.startswith("set_lang_"))
+async def set_lang_callback(c: types.CallbackQuery, state: FSMContext):
+    lang = c.data.split("_")[-1]
+    uid = c.from_user.id
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    if user:
+        db_query("UPDATE users SET language = %s WHERE user_id = %s", (lang, uid), commit=True)
+    else:
+        db_query("INSERT INTO users (user_id, username, language, is_registered) VALUES (%s, %s, %s, FALSE)", (uid, c.from_user.username or '', lang), commit=True)
+    set_lang(uid, lang)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
+        [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")]
+    ])
+    await c.message.edit_text(t(uid, "welcome_new"), reply_markup=kb)
+
+@router.callback_query(F.data == "cp_name_ok")
+async def cp_name_ok(c: types.CallbackQuery, state: FSMContext):
+    uid = c.from_user.id
+    await c.message.edit_text(t(uid, "ask_password"))
+    await state.set_state(RoomStates.complete_profile_password)
+
+@router.callback_query(F.data == "cp_edit_name")
+async def cp_edit_name(c: types.CallbackQuery, state: FSMContext):
+    uid = c.from_user.id
+    await c.message.edit_text(t(uid, "ask_name"))
+    await state.set_state(RoomStates.complete_profile_name)
+
+@router.message(RoomStates.complete_profile_name)
+async def complete_profile_name_handler(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
     name = message.text.strip()
-    if db_query("SELECT user_id FROM users WHERE player_name = %s", (name,)):
-        return await message.answer("❌ الاسم محجوز! اختر غيره:")
-    await state.update_data(p_name=name)
-    await message.answer(f"أهلاً {name}! اختر رمزاً سرياً لحسابك:")
-    await state.set_state(RegisterStates.wait_password)
+    if not name or len(name) < 2:
+        await message.answer(t(uid, "name_too_short"))
+        return
+    if len(name) > 20:
+        await message.answer(t(uid, "name_too_long"))
+        return
+    existing = db_query("SELECT * FROM users WHERE player_name = %s AND user_id != %s", (name, uid))
+    if existing:
+        await message.answer(t(uid, "name_taken"))
+        return
+    db_query("UPDATE users SET player_name = %s WHERE user_id = %s", (name, uid), commit=True)
+    await message.answer(t(uid, "ask_password"))
+    await state.set_state(RoomStates.complete_profile_password)
 
-@router.message(RegisterStates.wait_password)
-async def get_pass(message: types.Message, state: FSMContext):
-    password, data = message.text.strip(), await state.get_data()
-    db_query("UPDATE users SET player_name = %s, password = %s, is_registered = TRUE WHERE user_id = %s",
-             (data['p_name'], password, message.from_user.id), commit=True)
-    await message.answer("✅ تم تفعيل حسابك!")
-    await show_main_menu(message, data['p_name'])
-
-async def show_main_menu(message, name):
-    kb = [[InlineKeyboardButton(text="🎲 لعب عشوائي", callback_data="mode_random"), 
-           InlineKeyboardButton(text="🏠 غرفة لعب", callback_data="private_room_menu")],
-          [InlineKeyboardButton(text="🧮 حاسبة اونو", callback_data="mode_calc")]]
-    text = f"🃏 مرحباً بك {name}\nاختر ما تريد فعله:"
-    if hasattr(message, "answer"): await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    else: await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-# --- 2. إدارة الغرف والتصويت ---
-@router.callback_query(F.data == "private_room_menu")
-async def private_room_main(c: types.CallbackQuery, state: FSMContext):
+@router.message(RoomStates.complete_profile_password)
+async def complete_profile_password_handler(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    password = message.text.strip()
+    if len(password) < 4:
+        await message.answer(t(uid, "password_too_short"))
+        return
+    db_query("UPDATE users SET password = %s WHERE user_id = %s", (password, uid), commit=True)
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
+    name = user[0]['player_name'] if user else 'Player'
+    data = await state.get_data()
+    pending_join = data.get('pending_join')
     await state.clear()
-    kb = [[InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create")],
-          [InlineKeyboardButton(text="🚪 انضمام لغرفة", callback_data="room_join_input")],
-          [InlineKeyboardButton(text="🏠 الرجوع", callback_data="home")]]
-    await c.message.edit_text("🎮 **غرف اللعب الخاصة**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await message.answer(t(uid, "profile_complete", name=name, password=password))
+    if pending_join:
+        user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+        if user_data:
+            await _join_room_by_code(message, pending_join, user_data[0])
+            return
+    await show_main_menu(message, name, uid)
 
-@router.callback_query(F.data == "room_create")
-async def room_create_start(c: types.CallbackQuery):
+async def _join_room_by_code(message, code, user_data):
+    uid = message.from_user.id
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s AND status = 'waiting'", (code,))
+    if not room:
+        await message.answer(t(uid, "room_not_found"))
+        await show_main_menu(message, user_data['player_name'], uid)
+        return
+
+    existing = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (code, uid))
+    if existing:
+        await message.answer(t(uid, "already_in_room"))
+        return
+
+    p_count = db_query("SELECT count(*) as count FROM room_players WHERE room_id = %s", (code,))[0]['count']
+    max_p = room[0]['max_players']
+    if p_count >= max_p:
+        await message.answer(t(uid, "room_full"))
+        await show_main_menu(message, user_data['player_name'], uid)
+        return
+
+    u_name = user_data['player_name']
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+
+    p_count += 1
+    creator_id = room[0]['creator_id']
+
+    all_in_room = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s", (code,))
+    num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    players_list = ""
+    for idx, rp in enumerate(all_in_room):
+        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
+        players_list += f"{marker} {rp['player_name']}\n"
+
+    if p_count >= max_p:
+        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
+        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+        if max_p == 2:
+            for p in all_players:
+                try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
+                except: pass
+            from handlers.room_2p import start_new_round
+            await start_new_round(code, message.bot, start_turn_idx=0)
+        else:
+            for p in all_players:
+                try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
+                except: pass
+            from handlers.room_multi import start_game_multi
+            await start_game_multi(code, message.bot)
+    else:
+        wait_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await message.answer(t(uid, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list), reply_markup=wait_kb)
+        try:
+            notify_text = t(creator_id, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list)
+            notify_text += t(creator_id, "waiting_players", n=max_p - p_count)
+            notify_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚙️ إعدادات الغرفة", callback_data=f"rsettings_{code}")],
+                [InlineKeyboardButton(text=t(creator_id, "btn_home"), callback_data="home")]
+            ])
+            await message.bot.send_message(creator_id, notify_text, reply_markup=notify_kb)
+        except: pass
+
+@router.callback_query(F.data == "auth_register")
+async def auth_register(c: types.CallbackQuery, state: FSMContext):
+    uid = c.from_user.id
+    await c.message.edit_text(t(uid, "ask_name"))
+    await state.set_state(RoomStates.register_name)
+
+@router.message(RoomStates.register_name)
+async def register_name(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    name = message.text.strip()
+    if not name or len(name) < 2:
+        await message.answer(t(uid, "name_too_short"))
+        return
+    if len(name) > 20:
+        await message.answer(t(uid, "name_too_long"))
+        return
+    existing = db_query("SELECT * FROM users WHERE player_name = %s", (name,))
+    if existing:
+        await message.answer(t(uid, "name_taken"))
+        return
+    await state.update_data(reg_name=name)
+    await message.answer(t(uid, "ask_password"))
+    await state.set_state(RoomStates.register_password)
+
+@router.message(RoomStates.register_password)
+async def register_password(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    password = message.text.strip()
+    if len(password) < 4:
+        await message.answer(t(uid, "password_too_short"))
+        return
+    data = await state.get_data()
+    name = data.get('reg_name', 'Player')
+    lang = get_lang(uid)
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    if user:
+        db_query("UPDATE users SET player_name = %s, password = %s, is_registered = TRUE, language = %s WHERE user_id = %s", (name, password, lang, uid), commit=True)
+    else:
+        db_query("INSERT INTO users (user_id, username, player_name, password, is_registered, language) VALUES (%s, %s, %s, %s, TRUE, %s)", (uid, message.from_user.username or '', name, password, lang), commit=True)
+    pending_join = data.get('pending_join')
+    await state.clear()
+    await message.answer(t(uid, "register_success", name=name, password=password))
+    if pending_join:
+        user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+        if user_data:
+            await _join_room_by_code(message, pending_join, user_data[0])
+            return
+    await show_main_menu(message, name, uid)
+
+@router.callback_query(F.data == "auth_login")
+async def auth_login(c: types.CallbackQuery, state: FSMContext):
+    uid = c.from_user.id
+    await c.message.edit_text(t(uid, "login_ask_name"))
+    await state.set_state(RoomStates.login_name)
+
+@router.message(RoomStates.login_name)
+async def login_name(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    name = message.text.strip()
+    user = db_query("SELECT * FROM users WHERE player_name = %s", (name,))
+    if not user:
+        await message.answer(t(uid, "login_fail"))
+        return
+    if not user[0].get('password'):
+        await message.answer(t(uid, "login_fail"))
+        await state.clear()
+        return
+    await state.update_data(login_target_name=name)
+    await message.answer(t(uid, "login_ask_password"))
+    await state.set_state(RoomStates.login_password)
+
+@router.message(RoomStates.login_password)
+async def login_password(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    data = await state.get_data()
+    name = data.get('login_target_name')
+    user = db_query("SELECT * FROM users WHERE player_name = %s", (name,))
+    if not user:
+        await message.answer(t(uid, "login_fail"))
+        await state.clear()
+        return
+    if message.text.strip() != user[0].get('password', ''):
+        await message.answer(t(uid, "login_fail"))
+        return
+    old_id = user[0]['user_id']
+    db_query("UPDATE users SET user_id = %s, username = %s, is_registered = TRUE WHERE player_name = %s", (uid, message.from_user.username or '', name), commit=True)
+    data_state = await state.get_data()
+    pending_join = data_state.get('pending_join')
+    await state.clear()
+    await message.answer(t(uid, "login_success", name=name))
+    if pending_join:
+        user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+        if user_data:
+            await _join_room_by_code(message, pending_join, user_data[0])
+            return
+    await show_main_menu(message, name, uid)
+
+@router.callback_query(F.data == "menu_random")
+async def menu_random(c: types.CallbackQuery):
+    uid = c.from_user.id
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    if not user:
+        await c.answer(t(uid, "room_not_found"), show_alert=True)
+        return
+    waiting = db_query("SELECT r.room_id FROM rooms r WHERE r.max_players = 2 AND r.status = 'waiting' AND r.is_random = TRUE AND NOT EXISTS (SELECT 1 FROM room_players rp WHERE rp.room_id = r.room_id AND rp.user_id = %s) LIMIT 1", (uid,))
+    if waiting:
+        code = waiting[0]['room_id']
+        await _join_room_by_code(c.message, code, user[0])
+    else:
+        code = generate_room_code()
+        u_name = user[0]['player_name']
+        db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, is_random) VALUES (%s, %s, 2, 0, 'waiting', TRUE)", (code, uid), commit=True)
+        db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await c.message.edit_text(t(uid, "random_waiting"), reply_markup=kb)
+
+@router.callback_query(F.data == "menu_friends")
+async def menu_friends(c: types.CallbackQuery):
+    uid = c.from_user.id
+    kb = [
+        [InlineKeyboardButton(text=t(uid, "btn_create_room"), callback_data="room_create_start")],
+        [InlineKeyboardButton(text=t(uid, "btn_join_room"), callback_data="room_join_input")],
+        [InlineKeyboardButton(text=t(uid, "btn_my_rooms"), callback_data="my_open_rooms")],
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
+    ]
+    await c.message.edit_text(t(uid, "friends_menu"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "room_create_start")
+async def room_create_menu(c: types.CallbackQuery):
     kb, row = [], []
     for i in range(2, 11):
-        row.append(InlineKeyboardButton(text=str(i), callback_data=f"setp_{i}"))
-        if len(row) == 3: kb.append(row); row = []
+        row.append(InlineKeyboardButton(text=f"{i} لاعبين", callback_data=f"setp_{i}"))
+        if len(row) == 2: kb.append(row); row = []
     if row: kb.append(row)
-    await c.message.edit_text("👥 حدد عدد اللاعبين الكلي (2-10):", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_friends")])
+    await c.message.edit_text("👥 اختر عدد اللاعبين:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-@router.callback_query(F.data.startswith("setp_"))
-async def set_room_players(c: types.CallbackQuery):
-    num = c.data.split("_")[1]
-    scores = [100, 150, 200, 250, 300, 350, 400, 450, 500]
-    kb, row = [], []
-    for s in scores:
-        row.append(InlineKeyboardButton(text=str(s), callback_data=f"sets_{num}_{s}"))
-        if len(row) == 3: kb.append(row); row = []
-    if row: kb.append(row)
-    await c.message.edit_text(f"🎯 اختر سقف النقاط للجولة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    @router.callback_query(F.data.startswith("setp_"))
+    async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
+        p_count = int(c.data.split("_")[1])
+        await state.update_data(p_count=p_count)
 
-@router.callback_query(F.data.startswith("sets_"))
-async def finalize_room_creation(c: types.CallbackQuery):
-    _, p_count, s_limit = c.data.split("_")
+        limits = [100, 150, 200, 250, 300, 350, 400, 450, 500]
+
+        kb = []
+        row = []
+        for val in limits:
+            row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"limit_{val}"))
+            if len(row) == 3:
+                kb.append(row)
+                row = []
+        if row: kb.append(row)
+
+        kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="limit_0")])
+        kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="room_create_start")])
+
+        await c.message.edit_text(
+            f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط للفوز (Score Limit):", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+
+@router.callback_query(F.data.startswith("limit_"))
+async def finalize_room(c: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    limit = int(c.data.split("_")[1])
     code = generate_room_code()
-    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
-    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, current_color, status) VALUES (%s, %s, %s, %s, '🔴', 'waiting')", 
-             (code, c.from_user.id, int(p_count), int(s_limit)), commit=True)
-    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, c.from_user.id, u_name), commit=True)
-    await c.message.edit_text(f"✅ تم إنشاء الغرفة!\n🔑 الكود: `{code}`"); await c.message.answer(f"`{code}`")
+    uid = c.from_user.id
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))[0]['player_name']
+
+    db_query("""INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, game_mode) 
+                VALUES (%s, %s, %s, %s, 'waiting', 'friends')""", 
+             (code, uid, data.get('p_count', 2), limit), commit=True)
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+
+    friends = db_query("""
+        SELECT u.user_id, u.player_name FROM friends f
+        JOIN users u ON (CASE WHEN f.user_id = %s THEN f.friend_id ELSE f.user_id END) = u.user_id
+        WHERE (f.user_id = %s OR f.friend_id = %s) AND f.status = 'accepted'
+    """, (uid, uid, uid))
+
+    if friends:
+        kb_invite = []
+        for f in friends:
+            kb_invite.append([InlineKeyboardButton(text=f"👤 {f['player_name']}", callback_data=f"finv_{code}_{f['user_id']}")])
+        kb_invite.append([InlineKeyboardButton(text="📨 إرسال الدعوات", callback_data=f"finvsend_{code}")])
+        kb_invite.append([InlineKeyboardButton(text="🔗 الحصول على رابط فقط", callback_data=f"finvskip_{code}")])
+        kb_invite.append([InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")])
+        if code not in friend_invite_selections:
+            friend_invite_selections[code] = set()
+        await c.message.edit_text(t(uid, "room_created_invite"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
+    else:
+        bot_info = await c.bot.get_me()
+        link = f"https://t.me/{bot_info.username}?start=join_{code}"
+        await c.message.edit_text(t(uid, "room_created_msg1"))
+        kb_link = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await c.message.answer(t(uid, "room_created_msg2", link=link), reply_markup=kb_link)
+
+    await state.clear()
+
+@router.callback_query(F.data == "my_open_rooms")
+async def my_open_rooms(c: types.CallbackQuery):
+    uid = c.from_user.id
+    rooms = db_query("""
+        SELECT r.room_id, r.max_players, r.status,
+               (SELECT count(*) FROM room_players rp WHERE rp.room_id = r.room_id) as p_count
+        FROM rooms r
+        WHERE r.creator_id = %s AND r.status = 'waiting'
+        ORDER BY r.room_id
+    """, (uid,))
+    if not rooms:
+        await c.answer(t(uid, "no_open_rooms"), show_alert=True)
+        return
+    kb = []
+    for r in rooms:
+        label = f"🎮 {r['room_id']} ({r['p_count']}/{r['max_players']})"
+        kb.append([
+            InlineKeyboardButton(text=label, callback_data=f"viewroom_{r['room_id']}"),
+            InlineKeyboardButton(text="❌", callback_data=f"closeroom_{r['room_id']}")
+        ])
+    kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="menu_friends")])
+    await c.message.edit_text(t(uid, "open_rooms_list"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("viewroom_"))
+async def view_room(c: types.CallbackQuery):
+    uid = c.from_user.id
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s AND creator_id = %s", (code, uid))
+    if not room:
+        await c.answer(t(uid, "room_gone"), show_alert=True)
+        return
+    players = db_query("SELECT player_name FROM room_players WHERE room_id = %s", (code,))
+    num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    plist = ""
+    for idx, p in enumerate(players):
+        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
+        plist += f"{marker} {p['player_name']}\n"
+    bot_info = await c.bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=join_{code}"
+    text = t(uid, "room_detail", code=code, count=len(players), max=room[0]['max_players'], players=plist, link=link)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(uid, "btn_close_room"), callback_data=f"closeroom_{code}")],
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="my_open_rooms")]
+    ])
+    await c.message.edit_text(text, reply_markup=kb)
+
+@router.callback_query(F.data.startswith("closeroom_"))
+async def close_room(c: types.CallbackQuery):
+    uid = c.from_user.id
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s AND creator_id = %s AND status = 'waiting'", (code, uid))
+    if not room:
+        await c.answer(t(uid, "room_gone"), show_alert=True)
+        return
+    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s AND user_id != %s", (code, uid))
+    for p in players:
+        try:
+            await c.bot.send_message(p['user_id'], t(p['user_id'], "room_closed_notification"))
+        except: pass
+    db_query("DELETE FROM room_players WHERE room_id = %s", (code,), commit=True)
+    db_query("DELETE FROM rooms WHERE room_id = %s", (code,), commit=True)
+    await c.answer(t(uid, "room_closed"), show_alert=True)
+    remaining = db_query("SELECT room_id FROM rooms WHERE creator_id = %s AND status = 'waiting'", (uid,))
+    if remaining:
+        await my_open_rooms(c)
+    else:
+        await c.message.edit_text(t(uid, "no_open_rooms_text"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="menu_friends")]
+        ]))
 
 @router.callback_query(F.data == "room_join_input")
-async def join_room_start(c: types.CallbackQuery, state: FSMContext):
-    await c.message.edit_text("📥 أرسل كود الغرفة:")
+async def join_input(c: types.CallbackQuery, state: FSMContext):
+    uid = c.from_user.id
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+    ])
+    await c.message.edit_text(t(uid, "send_room_code"), reply_markup=kb)
     await state.set_state(RoomStates.wait_for_code)
 
 @router.message(RoomStates.wait_for_code)
-async def process_room_join(message: types.Message, state: FSMContext):
+async def process_join(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
     code = message.text.strip().upper()
-    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
-    if not room_data: return await message.answer("❌ الكود غير صحيح.")
-    room = room_data[0]
-    current_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
-    if any(p['user_id'] == message.from_user.id for p in current_players): return await message.answer("⚠️ أنت بالداخل!")
-    if len(current_players) >= room['max_players']: return await message.answer("🚫 ممتلئة!")
-    
-    u_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
-    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, message.from_user.id, u_data[0]['player_name']), commit=True)
-    
-    new_count = len(current_players) + 1
-    max_p = room['max_players']
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s AND status = 'waiting'", (code,))
+    if not room:
+        return await message.answer(t(uid, "room_not_found"))
+
+    existing = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (code, uid))
+    if existing:
+        await state.clear()
+        return await message.answer(t(uid, "already_in_room"))
+
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))[0]['player_name']
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+
+    p_count = db_query("SELECT count(*) as count FROM room_players WHERE room_id = %s", (code,))[0]['count']
+    max_p = room[0]['max_players']
+    creator_id = room[0]['creator_id']
+
+    all_in_room = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s", (code,))
+    num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    players_list = ""
+    for idx, rp in enumerate(all_in_room):
+        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
+        players_list += f"{marker} {rp['player_name']}\n"
+
     await state.clear()
-    
-    if new_count == max_p:
-        if max_p == 2 or max_p % 2 != 0:
-            db_query("UPDATE rooms SET game_mode = 'solo', status = 'playing' WHERE room_id = %s", (code,), commit=True)
-            await message.answer("🚀 اكتمل العدد! جاري توزيع الأوراق...")
-            # تشغيل المحرك بعد ثانية واحدة للتأكد من استقرار الداتا بيس
-            asyncio.create_task(start_private_game(code, message.bot))
-        else:
-            db_query("UPDATE rooms SET status = 'voting' WHERE room_id = %s", (code,), commit=True)
-            kb = [[InlineKeyboardButton(text="👥 فريق", callback_data=f"vote_team_{code}"), InlineKeyboardButton(text="👤 فردي", callback_data=f"vote_solo_{code}")]]
-            all_p = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
-            for p in all_p:
-                try: await message.bot.send_message(p['user_id'], "🎉 اكتمل العدد! صوتوا لنظام اللعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+    if p_count >= max_p:
+        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
+        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+        if max_p == 2:
+            for p in all_players:
+                try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
                 except: pass
-    else:
-        await message.answer(f"✅ تم الانضمام ({new_count}/{max_p})")
-
-@router.callback_query(F.data.startswith("vote_"))
-async def handle_voting(c: types.CallbackQuery):
-    _, mode, code = c.data.split("_")
-    db_query("UPDATE rooms SET game_mode = %s, status = 'playing' WHERE room_id = %s", (mode, code), commit=True)
-    if mode == 'team':
-        players = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (code,))
-        for i, p in enumerate(players):
-            team = 1 if (i % 2 == 0) else 2
-            db_query("UPDATE room_players SET team = %s WHERE room_id = %s AND user_id = %s", (team, code, p['user_id']), commit=True)
-    await start_private_game(code, c.bot)
-
-# --- 3. محرك الأونو والواجهة ---
-async def start_private_game(room_id, bot):
-    try:
-        await asyncio.sleep(1) # تأخير لضمان استقرار الداتا بيس
-        colors = ['🔴', '🔵', '🟡', '🟢']
-        numbers = ['0'] + [str(i) for i in range(1, 10)] * 2 + ['🚫', '🔄', '➕2'] * 2
-        deck = [f"{c} {n}" for c in colors for n in numbers]
-        for _ in range(4): 
-            deck.append("🌈 جوكر")
-            deck.append("🌈 جوكر +4 🔥")
-        random.shuffle(deck)
-
-        players = db_query("SELECT user_id FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-        for p in players:
-            hand = [deck.pop() for _ in range(7)]
-            db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
-
-        top_card = deck.pop()
-        while any(x in top_card for x in ['🌈', '🚫', '🔄', '➕']): 
-            deck.append(top_card)
-            random.shuffle(deck)
-            top_card = deck.pop()
-            
-        db_query("UPDATE rooms SET top_card = %s, deck = %s, turn_index = 0, current_color = %s WHERE room_id = %s", 
-                 (top_card, json.dumps(deck), top_card.split()[0], room_id), commit=True)
-        
-        await refresh_game_ui(room_id, bot)
-    except Exception as e:
-        print(f"❌ Error starting game: {e}")
-
-async def refresh_game_ui(room_id, bot):
-    try:
-        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data: return
-        room = room_data[0]
-        players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-        
-        turn_idx, top_card, curr_col = room['turn_index'], room['top_card'], room['current_color']
-        deck_count = len(json.loads(room['deck']))
-
-        # --- بناء نص الحالة ---
-        status_text = f"📦 **الكومة:** {deck_count} | 🎯 **السقف:** {room['score_limit']}\n"
-        status_text += f"🃏 **الورقة:** [ {top_card} ] | 🎨 **اللون:** {curr_col}\n"
-        status_text += "━━━━━━━━━━━━━━\n👥 **اللاعبين:**\n"
-        
-        for i, p in enumerate(players):
-            star = "🌟" if i == turn_idx else "⏳"
-            team_tag = f" (فريق {p['team']})" if room['game_mode'] == 'team' else ""
-            status_text += f"{star} {p['player_name'][:10]} | 🃏 {len(json.loads(p['hand']))}{team_tag}{' ✅' if p['said_uno'] else ''}\n"
-
-        for i, p in enumerate(players):
-            # مسح الرسالة القديمة
-            if p.get('last_msg_id'):
-                try: await bot.delete_message(p['user_id'], p['last_msg_id'])
+            from handlers.room_2p import start_new_round
+            await start_new_round(code, message.bot, start_turn_idx=0)
+        else:
+            for p in all_players:
+                try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
                 except: pass
-            
-            hand = json.loads(p['hand'])
-            kb_list = []
-            
-            # 1. صفوف الأوراق
-            row = []
-            for idx, card in enumerate(hand):
-                row.append(InlineKeyboardButton(text=card, callback_data=f"play_{room_id}_{idx}"))
-                if len(row) == 2:
-                    kb_list.append(row)
-                    row = []
-            if row: kb_list.append(row)
-
-            # 2. أزرار التحكم (تظهر فقط للاعب اللي عليه الدور)
-            if i == turn_idx:
-                control_row = [
-                    InlineKeyboardButton(text="📥 سحب / تعدي", callback_data=f"draw_{room_id}"),
-                    InlineKeyboardButton(text="🏳️ استسلام", callback_data=f"surrender_{room_id}")
-                ]
-                kb_list.append(control_row)
-
-            # 3. زر الأونو والتبليغ
-            uno_row = []
-            if len(hand) == 1 and not p['said_uno']:
-                uno_row.append(InlineKeyboardButton(text="📢 أونو!", callback_data=f"uno_claim_{room_id}"))
-            
-            for other in players:
-                if len(json.loads(other['hand'])) == 1 and not other['said_uno'] and other['user_id'] != p['user_id']:
-                    uno_row.append(InlineKeyboardButton(text=f"🚨 بلغ عن {other['player_name']}", callback_data=f"uno_report_{room_id}_{other['user_id']}"))
-                    break
-            if uno_row: kb_list.append(uno_row)
-            
-            # معلومات الفريق
-            friend_info = ""
-            if room['game_mode'] == 'team':
-                friend = next((f for f in players if f['team'] == p['team'] and f['user_id'] != p['user_id']), None)
-                if friend:
-                    friend_info = f"\n🤝 **صديقك ({friend['player_name']}):** `{json.loads(friend['hand'])}`"
-
-            # إرسال الرسالة الجديدة
-            msg = await bot.send_message(
-                p['user_id'], 
-                status_text + friend_info, 
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list)
-            )
-            
-            # تحديث معرف الرسالة بالداتا بيس
-            db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", 
-                     (msg.message_id, room_id, p['user_id']), commit=True)
-                     
-    except Exception as e:
-        print(f"❌ Error UI: {e}")
-
-# --- 4. منطق الحركة والتحدي ---
-@router.callback_query(F.data.startswith("play_"))
-async def play_card(c: types.CallbackQuery, state: FSMContext):
-    _, room_id, idx = c.data.split("_")
-    idx, user_id = int(idx), c.from_user.id
-    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-    if not room_data: return
-    room = room_data[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    
-    if players[room['turn_index']]['user_id'] != user_id: 
-        return await c.answer("⏳ مو دورك!", show_alert=True)
-    
-    hand = json.loads(players[room['turn_index']]['hand'])
-    played_card = hand[idx]
-
-    if '🌈' in played_card:
-        await state.update_data(room_id=room_id, card_idx=idx, played_card=played_card)
-        kb = [[InlineKeyboardButton(text=col, callback_data=f"setcol_{col}_{room_id}") for col in ['🔴', '🔵', '🟡', '🟢']]]
-        await c.message.answer("🎨 اختر اللون الجديد:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        return
-
-    if not (played_card.split()[0] == room['current_color'] or played_card.split()[1] == room['top_card'].split()[1]):
-        return await c.answer("❌ ما ترهم!", show_alert=True)
-
-    await finalize_move(room_id, user_id, hand, idx, played_card, c.bot)
-
-@router.callback_query(F.data.startswith("setcol_"))
-async def handle_wild_color(c: types.CallbackQuery, state: FSMContext):
-    _, color, room_id = c.data.split("_")
-    data = await state.get_data()
-    if not data or 'played_card' not in data: return
-    
-    user_reg = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    next_p = players[(room['turn_index'] + 1) % room['max_players']]
-    
-    await state.update_data(chosen_color=color)
-    kb = [[InlineKeyboardButton(text="⚔️ أتحداه (غشاش)", callback_data=f"dare_{room_id}_yes"),
-           InlineKeyboardButton(text="🏳️ استسلام", callback_data=f"dare_{room_id}_no")]]
-    
-    await c.bot.send_message(next_p['user_id'], f"⚠️ {user_reg} لعب {data['played_card']}!\nهل تشك أنه يغش؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await c.message.edit_text(f"✅ اخترت {color}. انتظر قرار {next_p['player_name']}...")
-
-@router.callback_query(F.data.startswith("dare_"))
-async def handle_challenge_dare(c: types.CallbackQuery, state: FSMContext):
-    _, room_id, choice = c.data.split("_")
-    data = await state.get_data()
-    if not data or 'played_card' not in data: return
-    
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    chall_idx = room['turn_index']
-    target_idx = (chall_idx + 1) % room['max_players']
-    
-    if choice == 'yes':
-        hand = json.loads(players[chall_idx]['hand'])
-        is_guilty = any(room['current_color'] in card for card in hand if '🌈' not in card)
-        penalty = 6 if "🔥" in data['played_card'] else 3
-        if is_guilty:
-            await apply_draw_penalty(room_id, chall_idx, penalty, c.bot)
-            res = f"⚔️ نجح التحدي! {players[chall_idx]['player_name']} غشاش وسحب {penalty}!"; nt = chall_idx
-        else:
-            await apply_draw_penalty(room_id, target_idx, penalty, c.bot)
-            res = f"❌ فشل التحدي! {players[chall_idx]['player_name']} نظيف وسحبت {penalty}!"; nt = (target_idx + 1) % room['max_players']
+            from handlers.room_multi import start_game_multi
+            await start_game_multi(code, message.bot)
     else:
-        penalty = 4 if "🔥" in data['played_card'] else 0
-        if penalty > 0: await apply_draw_penalty(room_id, target_idx, penalty, c.bot)
-        u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
-        res = f"🏳️ {u_name} استسلم وسحب الأوراق."; nt = (target_idx + 1) % room['max_players'] if penalty > 0 else (chall_idx + 1) % room['max_players']
-
-    # إكمال الحركة
-    chall_user_id = players[chall_idx]['user_id']
-    hand = json.loads(players[chall_idx]['hand'])
-    hand.pop(data['card_idx'])
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, chall_user_id), commit=True)
-    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", (data['played_card'], data['chosen_color'], nt, room_id), commit=True)
-    await c.message.edit_text(res)
-    await state.clear()
-    await refresh_game_ui(room_id, c.bot)
-
-async def finalize_move(room_id, user_id, hand, idx, played_card, bot):
-    hand.pop(idx)
-    db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, user_id), commit=True)
-    
-    if len(hand) == 0: 
-        await handle_win_logic(room_id, user_id, bot)
-        return
-    
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    next_idx = (room['turn_index'] + 1) % room['max_players']
-    
-    # --- تعديل الـ 2 لاعبين (إذا نزلت منع أو +2 أو عكس يرجع الدور إلك) ---
-    if room['max_players'] == 2:
-        if any(x in played_card for x in ['🚫', '🔄', '➕2']):
-            next_idx = room['turn_index'] # يبقى الدور يمك
-            if '➕2' in played_card:
-                await apply_draw_penalty(room_id, (room['turn_index'] + 1) % 2, 2, bot)
-    else:
-        # النظام الطبيعي لأكثر من لاعبين
-        if "🚫" in played_card: next_idx = (next_idx + 1) % room['max_players']
-        elif "🔄" in played_card: 
-             # هنا ممكن تعكس المصفوفة بس للسهولة بالـ2 لاعبين هي تسوي منع
-             if room['max_players'] == 2: next_idx = room['turn_index']
-        elif "➕2" in played_card: 
-            await apply_draw_penalty(room_id, next_idx, 2, bot)
-            next_idx = (next_idx + 1) % room['max_players']
-
-    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s WHERE room_id = %s", 
-             (played_card, played_card.split()[0], next_idx, room_id), commit=True)
-    
-    await auto_check_next_player(room_id, next_idx, played_card, bot)
-
-# --- 5. الدوال المساعدة ---
-async def apply_draw_penalty(room_id, p_idx, count, bot, target_user_id=None):
-    room = db_query("SELECT deck FROM rooms WHERE room_id = %s", (room_id,))[0]
-    if target_user_id: 
-        p = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_user_id))[0]
-    else: 
-        p = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))[p_idx]
-    
-    deck, hand = json.loads(room['deck']), json.loads(p['hand'])
-    for _ in range(count): 
-        if deck: hand.append(deck.pop(0))
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
-    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-
-async def handle_win_logic(room_id, user_id, bot):
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s", (room_id,))
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    winner = next(p for p in players if p['user_id'] == user_id)
-    round_pts = sum(calculate_hand_points(p['hand']) for p in players if p['user_id'] != user_id)
-    db_query("UPDATE room_players SET points = points + %s WHERE room_id = %s AND user_id = %s", (round_pts, room_id, user_id), commit=True)
-    total_pts = db_query("SELECT points FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]['points']
-    
-    if total_pts >= room['score_limit']:
-        res = f"🏆 **الفائز النهائي: {winner['player_name']}**\nوصل لـ {total_pts} نقطة!"
-        for p in players: await bot.send_message(p['user_id'], res)
-        db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
-    else:
-        for p in players: await bot.send_message(p['user_id'], f"🎉 {winner['player_name']} فاز بالجولة (+{round_pts})!")
-        await asyncio.sleep(3); await start_private_game(room_id, bot)
-
-async def auto_check_next_player(room_id, next_idx, top_card, bot):
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    p = players[next_idx]
-    hand = json.loads(p['hand'])
-    curr = room['current_color']
-    
-    # تشيك هل اللاعب عنده ورقة؟
-    can_play = any('🌈' in c or c.split()[0] == curr or c.split()[1] == top_card.split()[1] for c in hand)
-    
-    if not can_play:
-        deck = json.loads(room['deck'])
-        if deck:
-            new_card = deck.pop(0)
-            hand.append(new_card)
-            # تحديث الداتا بيس فوراً بالورقة الجديدة
-            db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            
-            await bot.send_message(p['user_id'], f"📥 ما عندك ورقة.. سحبت: {new_card}")
-            
-            # --- التعديل الجوهري: تشيك هل الورقة اللي سحبها ترهم؟ ---
-            can_play_new = '🌈' in new_card or new_card.split()[0] == curr or new_card.split()[1] == top_card.split()[1]
-            
-            if can_play_new:
-                # إذا ترهم، لا تعبر الدور، خليه هو ينزلها
-                await refresh_game_ui(room_id, bot)
-            else:
-                # إذا حتى الجديدة ما ترهم، هسة يلا يعبر الدور
-                nt = (next_idx + 1) % room['max_players']
-                db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (nt, room_id), commit=True)
-                await auto_check_next_player(room_id, nt, top_card, bot)
-        else:
-            await refresh_game_ui(room_id, bot)
-    else:
-        await refresh_game_ui(room_id, bot)
-
-def calculate_hand_points(hand_json):
-    total = 0
-    for card in json.loads(hand_json):
-        if any(x in card for x in ['🚫', '🔄', '➕2']): total += 20
-        elif '🌈' in card: total += 50
-        else:
-            try: total += int(card.split()[1])
-            except: total += 10
-    return total
+        wait_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await message.answer(t(uid, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list), reply_markup=wait_kb)
+        try:
+            notify_text = t(creator_id, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list)
+            notify_text += t(creator_id, "waiting_players", n=max_p - p_count)
+            notify_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚙️ إعدادات الغرفة", callback_data=f"rsettings_{code}")],
+                [InlineKeyboardButton(text=t(creator_id, "btn_home"), callback_data="home")]
+            ])
+            await message.bot.send_message(creator_id, notify_text, reply_markup=notify_kb)
+        except: pass
 
 @router.callback_query(F.data == "home")
 async def go_home(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    u = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
-    await show_main_menu(c.message, u[0]['player_name'])
+    uid = c.from_user.id
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
+    await show_main_menu(c.message, user[0]['player_name'] if user else "لاعب", uid)
 
-@router.callback_query(F.data.startswith("uno_claim_"))
-async def uno_claim(c: types.CallbackQuery):
-    room_id = c.data.split("_")[2]
-    db_query("UPDATE room_players SET said_uno = TRUE WHERE room_id = %s AND user_id = %s", (room_id, c.from_user.id), commit=True)
-    await c.answer("📢 أونووووو! 🃏🔥")
-
-@router.callback_query(F.data.startswith("uno_report_"))
-async def uno_report(c: types.CallbackQuery):
-    _, _, room_id, target_id = c.data.split("_")
-    target_data = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, target_id))
-    if not target_data: return
-    target = target_data[0]
-    if not target.get('said_uno'):
-        await apply_draw_penalty(room_id, None, 2, c.bot, target_user_id=target_id)
-        await c.answer("✅ صيد موفق! سحب 2.", show_alert=True)
-        await refresh_game_ui(room_id, c.bot)
-    else: await c.answer("❌ صرخها قبلك!")
-
-# 1. معالجة زر السحب / التعدي
-@router.callback_query(F.data.startswith("draw_"))
-async def handle_draw_btn(c: types.CallbackQuery):
-    room_id = c.data.split("_")[1]
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s ORDER BY join_order ASC", (room_id,))
-    
-    # التأكد أن الدور فعلاً على هذا اللاعب
-    if players[room['turn_index']]['user_id'] != c.from_user.id:
-        return await c.answer("⏳ انتظر دورك!", show_alert=True)
-
-    deck = json.loads(room['deck'])
-    if not deck: return await c.answer("⚠️ الكومة فارغة!")
-
-    # سحب ورقة واحدة
-    new_card = deck.pop(0)
-    p = players[room['turn_index']]
-    hand = json.loads(p['hand'])
-    hand.append(new_card)
-
-    # تحديث البيانات
-    db_query("UPDATE room_players SET hand = %s WHERE room_id = %s AND user_id = %s", (json.dumps(hand), room_id, p['user_id']), commit=True)
-    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-
-    # فحص هل الورقة ترهم؟
-    curr_col = room['current_color']
-    top_card = room['top_card']
-    can_play = '🌈' in new_card or new_card.split()[0] == curr_col or new_card.split()[1] == top_card.split()[1]
-
-    # جلب اسم اللاعب للتنبيه
-    p_name = p['player_name']
-    other_players = [pl['user_id'] for pl in players if pl['user_id'] != p['user_id']]
-
-    if can_play:
-        await c.answer(f"📥 سحبت {new_card} وترهم تلعبها!")
-        # تنبيه البقية
-        for op_id in other_players:
-            try: await c.bot.send_message(op_id, f"⚠️ {p_name} سحب ورقة ورهمت عنده، بعده يفكر...")
-            except: pass
-        await refresh_game_ui(room_id, c.bot)
+@router.callback_query(F.data == "show_rules")
+async def show_rules(c: types.CallbackQuery):
+    uid = c.from_user.id
+    rules_text = t(uid, "rules_full")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+    ])
+    if len(rules_text) > 4000:
+        parts = [rules_text[:4000], rules_text[4000:]]
+        await c.message.edit_text(parts[0])
+        await c.message.answer(parts[1], reply_markup=kb)
     else:
-        await c.answer(f"📥 سحبت {new_card} وما ترهم.. عبر دورك.")
-        # تنبيه البقية
-        for op_id in other_players:
-            try: await c.bot.send_message(op_id, f"📥 {p_name} سحب ورقة وما رهمت، الدور صار إلك!")
-            except: pass
-            
-        next_idx = (room['turn_index'] + 1) % room['max_players']
-        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_idx, room_id), commit=True)
-        await refresh_game_ui(room_id, c.bot)
+        await c.message.edit_text(rules_text, reply_markup=kb)
 
-# 2. معالجة زر الاستسلام
-@router.callback_query(F.data.startswith("surrender_"))
-async def handle_surrender_btn(c: types.CallbackQuery):
-    room_id = c.data.split("_")[1]
-    user_id = c.from_user.id
-    
-    # جلب البيانات قبل الحذف
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-    p_name = db_query("SELECT player_name FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id))[0]['player_name']
-    
-    # حذف اللاعب
-    db_query("DELETE FROM room_players WHERE room_id = %s AND user_id = %s", (room_id, user_id), commit=True)
-    
-    remaining = db_query("SELECT * FROM room_players WHERE room_id = %s", (room_id,))
-    
-    if len(remaining) < 2:
-        # إذا بقى بس واحد أو محد بقى
-        winner_msg = f"🏆 انتهت اللعبة! {remaining[0]['player_name']} هو الفائز بالانسحاب." if remaining else "🔚 انتهت اللعبة بخروج الجميع."
-        for rp in remaining:
-            try: await c.bot.send_message(rp['user_id'], winner_msg)
-            except: pass
-        db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
-        await c.message.edit_text("🚩 استسلمت وطلعت من الغرفة.")
+@router.callback_query(F.data == "change_lang")
+async def change_lang_menu(c: types.CallbackQuery):
+    uid = c.from_user.id
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇸🇦 عربي", callback_data="switch_lang_ar"),
+         InlineKeyboardButton(text="🇬🇧 English", callback_data="switch_lang_en")],
+        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+    ])
+    await c.message.edit_text(t(uid, "choose_lang"), reply_markup=kb)
+
+@router.callback_query(F.data.startswith("switch_lang_"))
+async def switch_lang(c: types.CallbackQuery):
+    uid = c.from_user.id
+    lang = c.data.split("_")[-1]
+    db_query("UPDATE users SET language = %s WHERE user_id = %s", (lang, uid), commit=True)
+    set_lang(uid, lang)
+    await c.answer(t(uid, "lang_changed"), show_alert=True)
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
+    name = user[0]['player_name'] if user else 'Player'
+    await show_main_menu(c.message, name, uid)
+
+@router.callback_query(F.data.startswith("nextround_"))
+async def next_round_go(c: types.CallbackQuery):
+    room_id = c.data.split("_", 1)[1]
+    nr = pending_next_round.get(room_id)
+    if not nr:
+        return await c.answer("⚠️ انتهت صلاحية هذا الخيار.", show_alert=True)
+
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+
+    uid = c.from_user.id
+    if room_id not in next_round_ready:
+        next_round_ready[room_id] = set()
+
+    if uid in next_round_ready[room_id]:
+        return await c.answer("✅ سبق وأكدت! بانتظار البقية...", show_alert=True)
+
+    next_round_ready[room_id].add(uid)
+    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (room_id,))
+    total = len(players)
+    ready_count = len(next_round_ready[room_id])
+
+    try:
+        await c.message.edit_text(f"✅ جاهز! ({ready_count}/{total}) بانتظار البقية...")
+    except: pass
+
+    if ready_count >= total:
+        await _start_next_round(room_id, c.bot)
+
+async def _start_next_round(room_id, bot):
+    nr = pending_next_round.pop(room_id, None)
+    next_round_ready.pop(room_id, None)
+    if not nr:
+        return
+
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+    if not room:
+        return
+
+    if nr['mode'] == '2p':
+        from handlers.room_2p import start_new_round
+        await start_new_round(room_id, bot, start_turn_idx=nr.get('start_turn', 0))
     else:
-        # إبلاغ البقية
-        for rp in remaining:
-            try: await c.bot.send_message(rp['user_id'], f"🏳️ اللاعب {p_name} استسلم وطلع من اللعبة.")
+        from handlers.room_multi import start_game_multi
+        await start_game_multi(room_id, bot, start_turn_idx=nr.get('start_turn', 0))
+
+async def _next_round_timeout(room_id, bot):
+    await asyncio.sleep(20)
+    if room_id in pending_next_round:
+        await _start_next_round(room_id, bot)
+
+@router.callback_query(F.data.startswith("addfrnd_"))
+async def add_friend(c: types.CallbackQuery):
+    target_id = int(c.data.split("_")[1])
+    uid = c.from_user.id
+    if target_id == uid:
+        return await c.answer("❌ ما تقدر تضيف نفسك!", show_alert=True)
+    existing = db_query("SELECT * FROM friends WHERE (user_id = %s AND friend_id = %s) OR (user_id = %s AND friend_id = %s)", (uid, target_id, target_id, uid))
+    if existing:
+        st = existing[0]['status']
+        if st == 'accepted':
+            return await c.answer("✅ هذا اللاعب أصلاً صديقك!", show_alert=True)
+        else:
+            return await c.answer("⏳ يوجد طلب صداقة معلق بالفعل.", show_alert=True)
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
+    u_name = u_name[0]['player_name'] if u_name else "لاعب"
+    db_query("INSERT INTO friends (user_id, friend_id, status) VALUES (%s, %s, 'pending')", (uid, target_id), commit=True)
+    await c.answer("✅ تم إرسال طلب الصداقة!", show_alert=True)
+    try:
+        frnd_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ قبول", callback_data=f"frndy_{uid}"),
+             InlineKeyboardButton(text="❌ رفض", callback_data=f"frndn_{uid}")]
+        ])
+        await c.bot.send_message(target_id, f"📨 {u_name} يريد إضافتك كصديق!", reply_markup=frnd_kb)
+    except: pass
+
+@router.callback_query(F.data.startswith("frndy_"))
+async def accept_friend(c: types.CallbackQuery):
+    sender_id = int(c.data.split("_")[1])
+    uid = c.from_user.id
+    req = db_query("SELECT * FROM friends WHERE user_id = %s AND friend_id = %s AND status = 'pending'", (sender_id, uid))
+    if not req:
+        return await c.answer("⚠️ لا يوجد طلب صداقة.", show_alert=True)
+    db_query("UPDATE friends SET status = 'accepted' WHERE user_id = %s AND friend_id = %s", (sender_id, uid), commit=True)
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
+    u_name = u_name[0]['player_name'] if u_name else "لاعب"
+    await c.message.edit_text(f"✅ تم قبول صداقة {db_query('SELECT player_name FROM users WHERE user_id = %s', (sender_id,))[0]['player_name']}!")
+    try:
+        await c.bot.send_message(sender_id, f"✅ {u_name} قبل طلب صداقتك!")
+    except: pass
+
+@router.callback_query(F.data.startswith("frndn_"))
+async def reject_friend(c: types.CallbackQuery):
+    sender_id = int(c.data.split("_")[1])
+    uid = c.from_user.id
+    db_query("DELETE FROM friends WHERE user_id = %s AND friend_id = %s", (sender_id, uid), commit=True)
+    await c.message.edit_text("❌ تم رفض طلب الصداقة.")
+
+@router.callback_query(F.data.startswith("finv_"))
+async def toggle_friend_invite(c: types.CallbackQuery):
+    parts = c.data.split("_")
+    code = parts[1]
+    friend_id = int(parts[2])
+    if code not in friend_invite_selections:
+        friend_invite_selections[code] = set()
+    sel = friend_invite_selections[code]
+    if friend_id in sel:
+        sel.discard(friend_id)
+    else:
+        sel.add(friend_id)
+    friends = db_query("""
+        SELECT u.user_id, u.player_name FROM friends f
+        JOIN users u ON (CASE WHEN f.user_id = %s THEN f.friend_id ELSE f.user_id END) = u.user_id
+        WHERE (f.user_id = %s OR f.friend_id = %s) AND f.status = 'accepted'
+    """, (c.from_user.id, c.from_user.id, c.from_user.id))
+    kb_invite = []
+    for f in friends:
+        check = "✅" if f['user_id'] in sel else "👤"
+        kb_invite.append([InlineKeyboardButton(text=f"{check} {f['player_name']}", callback_data=f"finv_{code}_{f['user_id']}")])
+    kb_invite.append([InlineKeyboardButton(text=f"📨 إرسال الدعوات ({len(sel)})", callback_data=f"finvsend_{code}")])
+    kb_invite.append([InlineKeyboardButton(text="🔗 الحصول على رابط فقط", callback_data=f"finvskip_{code}")])
+    kb_invite.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
+    await c.message.edit_text("✅ تم إنشاء الغرفة!\n\n👥 اختر الأصدقاء اللي تبي تدعوهم (اضغط على اسم اللاعب لتحديده):", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
+
+@router.callback_query(F.data.startswith("finvsend_"))
+async def send_friend_invites(c: types.CallbackQuery):
+    code = c.data.split("_")[1]
+    sel = friend_invite_selections.pop(code, set())
+    if not sel:
+        return await c.answer("⚠️ لم تختر أي صديق!", show_alert=True)
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    max_p = room[0]['max_players'] if room else 10
+    bot_info = await c.bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=join_{code}"
+    sent = 0
+    for fid in sel:
+        try:
+            inv_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ موافق", callback_data=f"invy_{code}"),
+                 InlineKeyboardButton(text="❌ رفض", callback_data=f"invn_{code}")]
+            ])
+            await c.bot.send_message(fid, f"📨 {u_name} يدعوك للعب!\n\n⏳ عندك 30 ثانية للرد\nهل تريد الانضمام؟", reply_markup=inv_kb)
+            sent += 1
+        except: pass
+
+    pending_invites[code] = {
+        'creator': c.from_user.id,
+        'creator_name': u_name,
+        'invited': {fid: '' for fid in sel},
+        'accepted': set(),
+        'rejected': set(),
+        'max_players': max_p,
+        'score_limit': room[0].get('score_limit', 0) if room else 0,
+        'mode': '2p' if max_p == 2 else 'multi'
+    }
+
+    wait_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+    ])
+    await c.message.edit_text(f"📨 تم إرسال {sent} دعوة!\n⏳ بانتظار الردود...\n\n🎮 هذا رابط الدخول للعبة، انقر الرابط للدخول:\n{link}", reply_markup=wait_kb)
+    asyncio.create_task(_invite_auto_check(code, c.bot))
+
+@router.callback_query(F.data.startswith("finvskip_"))
+async def skip_friend_invite(c: types.CallbackQuery):
+    code = c.data.split("_")[1]
+    friend_invite_selections.pop(code, None)
+    bot_info = await c.bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=join_{code}"
+    kb_code = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+    ])
+    await c.message.edit_text(f"🎮 هذا رابط الدخول للعبة، انقر الرابط للدخول:\n{link}", reply_markup=kb_code)
+
+@router.callback_query(F.data.startswith("rsettings_"))
+async def room_settings(c: types.CallbackQuery):
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يدخل الإعدادات!", show_alert=True)
+
+    is_playing = room[0]['status'] == 'playing'
+    score_text = f"🎯 {room[0]['score_limit']}" if room[0]['score_limit'] > 0 else "🃏 جولة واحدة"
+    players = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s", (code,))
+    p_count = len(players)
+
+    kb = [
+        [InlineKeyboardButton(text="🚫 طرد لاعبين", callback_data=f"rkicklist_{code}")],
+        [InlineKeyboardButton(text=f"🔢 تغيير سقف اللعب ({score_text})", callback_data=f"rchglimit_{code}")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"rsetback_{code}")]
+    ]
+    await c.message.edit_text(f"⚙️ إعدادات الغرفة\n\n👥 عدد اللاعبين: {p_count}/{room[0]['max_players']}\n📊 سقف النقاط: {score_text}", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("rsetback_"))
+async def room_settings_back(c: types.CallbackQuery):
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+
+    if room[0]['status'] == 'playing':
+        await c.message.edit_text("🔄 جاري العودة للعبة...")
+        p_count = len(db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,)))
+        if p_count == 2:
+            from handlers.room_2p import refresh_ui
+            await refresh_ui(code, c.bot)
+        else:
+            from handlers.room_multi import refresh_ui_multi
+            await refresh_ui_multi(code, c.bot)
+        return
+
+    players = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s", (code,))
+    num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    players_list = ""
+    for idx, rp in enumerate(players):
+        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
+        players_list += f"{marker} {rp['player_name']}\n"
+    p_count = len(players)
+    max_p = room[0]['max_players']
+    txt = f"👥 اللاعبين ({p_count}/{max_p}):\n{players_list}"
+    if p_count < max_p:
+        txt += f"\n⏳ بانتظار {max_p - p_count} لاعب آخر..."
+    else:
+        txt += "\n✅ اكتمل العدد!"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚙️ إعدادات الغرفة", callback_data=f"rsettings_{code}")],
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+    ])
+    await c.message.edit_text(txt, reply_markup=kb)
+
+@router.callback_query(F.data.startswith("rkicklist_"))
+async def kick_player_list(c: types.CallbackQuery):
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يطرد!", show_alert=True)
+    players = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s AND user_id != %s", (code, c.from_user.id))
+    if not players:
+        return await c.answer("⚠️ ما في لاعبين ثانيين في الغرفة!", show_alert=True)
+    if code not in kick_selections:
+        kick_selections[code] = set()
+    existing_ids = {p['user_id'] for p in players}
+    kick_selections[code] = kick_selections[code] & existing_ids
+    kb = []
+    for p in players:
+        selected = p['user_id'] in kick_selections[code]
+        mark = "✅" if selected else "⬜"
+        kb.append([InlineKeyboardButton(text=f"{mark} {p['player_name']}", callback_data=f"rkickp_{code}_{p['user_id']}")])
+    selected_count = len(kick_selections[code])
+    if selected_count > 0:
+        kb.append([InlineKeyboardButton(text=f"🚫 طرد المحددين ({selected_count})", callback_data=f"rkickgo_{code}")])
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data=f"rsettings_{code}")])
+    await c.message.edit_text("🚫 حدد اللاعبين اللي تبي تطردهم:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("rkickp_"))
+async def kick_player_toggle(c: types.CallbackQuery):
+    parts = c.data.split("_")
+    code = parts[1]
+    target_id = int(parts[2])
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يطرد!", show_alert=True)
+    if code not in kick_selections:
+        kick_selections[code] = set()
+    if target_id in kick_selections[code]:
+        kick_selections[code].discard(target_id)
+    else:
+        kick_selections[code].add(target_id)
+    c.data = f"rkicklist_{code}"
+    await kick_player_list(c)
+
+@router.callback_query(F.data.startswith("rkickgo_"))
+async def kick_player_confirm(c: types.CallbackQuery):
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يطرد!", show_alert=True)
+    selected = kick_selections.get(code, set())
+    if not selected:
+        return await c.answer("⚠️ ما حددت أحد!", show_alert=True)
+    names = []
+    for uid in selected:
+        p = db_query("SELECT player_name FROM room_players WHERE room_id = %s AND user_id = %s", (code, uid))
+        if p:
+            names.append(p[0]['player_name'])
+    names_text = "، ".join(names)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"✅ نعم، اطردهم", callback_data=f"rkickyes_{code}"),
+         InlineKeyboardButton(text="❌ لا", callback_data=f"rkicklist_{code}")]
+    ])
+    await c.message.edit_text(f"⚠️ هل أنت متأكد من طرد:\n{names_text}؟", reply_markup=kb)
+
+@router.callback_query(F.data.startswith("rkickyes_"))
+async def kick_player_execute(c: types.CallbackQuery):
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يطرد!", show_alert=True)
+    selected = kick_selections.pop(code, set())
+    if not selected:
+        return await c.answer("⚠️ ما حددت أحد!", show_alert=True)
+    kicked_names = []
+    for target_id in selected:
+        target = db_query("SELECT player_name FROM room_players WHERE room_id = %s AND user_id = %s", (code, target_id))
+        if target:
+            kicked_names.append(target[0]['player_name'])
+            db_query("DELETE FROM room_players WHERE room_id = %s AND user_id = %s", (code, target_id), commit=True)
+            try:
+                await c.bot.send_message(target_id, "🚫 تم طردك من الغرفة بواسطة صاحب الغرفة.")
             except: pass
-        
-        # تصحيح الـ turn_index
-        new_turn = room['turn_index'] % len(remaining)
-        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (new_turn, room_id), commit=True)
-        await c.message.edit_text("🚩 استسلمت. البقية راح يكملون لعب.")
-        await refresh_game_ui(room_id, c.bot)
+    await c.answer(f"✅ تم طرد {len(kicked_names)} لاعب!", show_alert=True)
+    c.data = f"rsettings_{code}"
+    await room_settings(c)
+
+@router.callback_query(F.data.startswith("rchglimit_"))
+async def change_score_limit(c: types.CallbackQuery):
+    code = c.data.split("_", 1)[1]
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يغير السقف!", show_alert=True)
+
+    limits = [100, 150, 200, 250, 300, 350, 400, 450, 500]
+    current = room[0]['score_limit']
+    kb = []
+    row = []
+    for val in limits:
+        label = f"✅ {val}" if val == current else f"🎯 {val}"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"rnewlimit_{code}_{val}"))
+        if len(row) == 3:
+            kb.append(row)
+            row = []
+    if row: kb.append(row)
+    one_round_label = "✅ جولة واحدة" if current == 0 else "🃏 جولة واحدة"
+    kb.append([InlineKeyboardButton(text=one_round_label, callback_data=f"rnewlimit_{code}_0")])
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data=f"rsettings_{code}")])
+    await c.message.edit_text(f"🔢 اختر سقف النقاط الجديد:\n\n📊 السقف الحالي: {current if current > 0 else 'جولة واحدة'}", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("rnewlimit_"))
+async def set_new_score_limit(c: types.CallbackQuery):
+    parts = c.data.split("_")
+    code = parts[1]
+    new_limit = int(parts[2])
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
+    if not room:
+        return await c.message.edit_text("⚠️ الغرفة لم تعد موجودة.")
+    if room[0]['creator_id'] != c.from_user.id:
+        return await c.answer("⚠️ فقط صاحب الغرفة يقدر يغير السقف!", show_alert=True)
+    db_query("UPDATE rooms SET score_limit = %s WHERE room_id = %s", (new_limit, code), commit=True)
+    limit_text = f"🎯 {new_limit}" if new_limit > 0 else "🃏 جولة واحدة"
+    await c.answer(f"✅ تم تغيير سقف النقاط إلى: {limit_text}", show_alert=True)
+    players = db_query("SELECT user_id FROM room_players WHERE room_id = %s AND user_id != %s", (code, c.from_user.id))
+    for p in players:
+        try:
+            await c.bot.send_message(p['user_id'], f"📢 صاحب الغرفة غيّر سقف النقاط إلى: {limit_text}")
+        except: pass
+    c.data = f"rsettings_{code}"
+    await room_settings(c)
+
+@router.callback_query(F.data == "my_account")
+async def my_account_menu(c: types.CallbackQuery):
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
+    if not user: return
+    u = user[0]
+    txt = f"👤 حسابي\n\n📛 الاسم: {u['player_name']}\n🔑 الرمز: {u.get('password', 'لا يوجد')}\n⭐ النقاط: {u.get('online_points', 0)}"
+    kb = [
+        [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
+        [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "edit_account")
+async def edit_account_menu(c: types.CallbackQuery):
+    kb = [
+        [InlineKeyboardButton(text="📛 تغيير الاسم", callback_data="change_name")],
+        [InlineKeyboardButton(text="🔑 تغيير الرمز السري", callback_data="change_password")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="my_account")]
+    ]
+    await c.message.edit_text("✏️ ماذا تريد تعديله؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "change_name")
+async def ask_new_name(c: types.CallbackQuery, state: FSMContext):
+    await c.message.edit_text("📛 أرسل الاسم الجديد:")
+    await state.set_state(RoomStates.edit_name)
+
+@router.message(RoomStates.edit_name)
+async def process_new_name(message: types.Message, state: FSMContext):
+    new_name = message.text.strip()
+    if len(new_name) < 1 or len(new_name) > 30:
+        return await message.answer("❌ الاسم لازم يكون بين 1 و 30 حرف. حاول مرة ثانية:")
+    db_query("UPDATE users SET player_name = %s WHERE user_id = %s", (new_name, message.from_user.id), commit=True)
+    await state.clear()
+    await message.answer(f"✅ تم تغيير الاسم إلى: {new_name}")
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
+    if user:
+        u = user[0]
+        txt = f"👤 حسابي\n\n📛 الاسم: {u['player_name']}\n🔑 الرمز: {u.get('password', 'لا يوجد')}\n⭐ النقاط: {u.get('online_points', 0)}"
+        kb = [
+            [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
+            [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
+            [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        ]
+        await message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "change_password")
+async def ask_new_password(c: types.CallbackQuery, state: FSMContext):
+    await c.message.edit_text("🔑 أرسل الرمز السري الجديد:")
+    await state.set_state(RoomStates.edit_password)
+
+@router.message(RoomStates.edit_password)
+async def process_new_password(message: types.Message, state: FSMContext):
+    new_pass = message.text.strip()
+    if len(new_pass) < 1 or len(new_pass) > 30:
+        return await message.answer("❌ الرمز لازم يكون بين 1 و 30 حرف. حاول مرة ثانية:")
+    db_query("UPDATE users SET password = %s WHERE user_id = %s", (new_pass, message.from_user.id), commit=True)
+    await state.clear()
+    await message.answer("✅ تم تغيير الرمز السري بنجاح!")
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
+    if user:
+        u = user[0]
+        txt = f"👤 حسابي\n\n📛 الاسم: {u['player_name']}\n🔑 الرمز: {u.get('password', 'لا يوجد')}\n⭐ النقاط: {u.get('online_points', 0)}"
+        kb = [
+            [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
+            [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
+            [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        ]
+        await message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "logout_confirm")
+async def logout_confirm(c: types.CallbackQuery):
+    kb = [
+        [InlineKeyboardButton(text="✅ نعم، خروج", callback_data="logout_yes")],
+        [InlineKeyboardButton(text="❌ لا، رجوع", callback_data="my_account")]
+    ]
+    await c.message.edit_text("🚪 هل أنت متأكد من تسجيل الخروج؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "logout_yes")
+async def logout_yes(c: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    db_query("UPDATE users SET is_registered = FALSE WHERE user_id = %s", (c.from_user.id,), commit=True)
+    await c.message.edit_text("👋 تم تسجيل الخروج بنجاح!\nأرسل /start للتسجيل مرة أخرى.")
+
+@router.callback_query(F.data.startswith("replay_"))
+async def replay_menu(c: types.CallbackQuery):
+    replay_id = c.data.split("_", 1)[1]
+    rdata = replay_data.get(replay_id)
+    kb = []
+    if rdata and rdata.get('creator_id') == c.from_user.id:
+        kb.append([InlineKeyboardButton(text="👥 اللعب مع نفس الفريق", callback_data=f"sameteam_{replay_id}")])
+    kb.append([InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")])
+    kb.append([InlineKeyboardButton(text="🚪 انضمام لغرفة", callback_data="room_join_input")])
+    kb.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
+    await c.message.edit_text("🔄 اختر طريقة اللعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data.startswith("sameteam_"))
+async def same_team_invite(c: types.CallbackQuery):
+    replay_id = c.data.split("_", 1)[1]
+    rdata = replay_data.pop(replay_id, None)
+    if not rdata:
+        return await c.answer("⚠️ انتهت صلاحية هذا الخيار.", show_alert=True)
+
+    creator_id = c.from_user.id
+    other_players = [(uid, uname) for uid, uname in rdata['players'] if uid != creator_id]
+    if not other_players:
+        return await c.answer("⚠️ لا يوجد لاعبين آخرين للدعوة.", show_alert=True)
+
+    code = generate_room_code()
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
+    db_query("""INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, game_mode) 
+                VALUES (%s, %s, %s, %s, 'waiting', 'friends')""",
+             (code, creator_id, rdata['max_players'], rdata['score_limit']), commit=True)
+    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, creator_id, u_name), commit=True)
+
+    pending_invites[code] = {
+        'creator': creator_id,
+        'creator_name': u_name,
+        'invited': {uid: uname for uid, uname in other_players},
+        'accepted': set(),
+        'rejected': set(),
+        'max_players': rdata['max_players'],
+        'score_limit': rdata['score_limit'],
+        'mode': rdata['mode'],
+        'replay_id': replay_id
+    }
+
+    inv_wait_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+    ])
+    await c.message.edit_text(f"📨 تم إرسال الدعوات لـ {len(other_players)} لاعب...\n⏳ بانتظار الردود...", reply_markup=inv_wait_kb)
+
+    for uid, uname in other_players:
+        try:
+            inv_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ موافق", callback_data=f"invy_{code}"),
+                 InlineKeyboardButton(text="❌ رفض", callback_data=f"invn_{code}")]
+            ])
+            await c.bot.send_message(uid, f"📨 {u_name} يدعوك للعب مرة أخرى مع نفس الفريق!\n\n⏳ عندك 30 ثانية للرد\nهل تريد الانضمام؟", reply_markup=inv_kb)
+        except Exception as e:
+            print(f"Invite send error to {uid}: {e}")
+            pending_invites[code]['rejected'].add(uid)
+
+    asyncio.create_task(_invite_auto_check(code, c.bot))
+
+async def _invite_auto_check(room_id, bot):
+    try:
+        for _ in range(30):
+            await asyncio.sleep(1)
+            inv = pending_invites.get(room_id)
+            if not inv:
+                return
+            total_invited = len(inv['invited'])
+            total_responded = len(inv['accepted']) + len(inv['rejected'])
+            if total_responded >= total_invited:
+                break
+
+        inv = pending_invites.pop(room_id, None)
+        if not inv:
+            return
+
+        room_check = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_check or room_check[0]['status'] != 'waiting':
+            return
+
+        accepted_names = [inv['invited'][uid] for uid in inv['accepted']]
+        rejected_uids = set(inv['invited'].keys()) - inv['accepted']
+        for uid in rejected_uids:
+            inv['rejected'].add(uid)
+        rejected_names = [inv['invited'][uid] for uid in inv['rejected'] if uid in inv['invited']]
+
+        total_players = 1 + len(inv['accepted'])
+
+        if total_players < 2:
+            db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
+            end_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")],
+                [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+            ])
+            msg = "❌ لم يقبل أحد الدعوة."
+            if rejected_names:
+                msg += f"\n\n🚫 رفضوا: {', '.join(rejected_names)}"
+            await bot.send_message(inv['creator'], msg, reply_markup=end_kb)
+            return
+
+        db_query("UPDATE rooms SET max_players = %s, status = 'playing' WHERE room_id = %s", (total_players, room_id), commit=True)
+
+        status_msg = f"🎮 بدء اللعب مع {total_players} لاعبين!"
+        if rejected_names:
+            status_msg += f"\n🚫 رفضوا الانضمام: {', '.join(rejected_names)}"
+        if accepted_names:
+            status_msg += f"\n✅ انضموا: {', '.join(accepted_names)}"
+
+        all_player_ids = [inv['creator']] + list(inv['accepted'])
+        for pid in all_player_ids:
+            try:
+                await bot.send_message(pid, status_msg)
+            except: pass
+
+        if total_players == 2:
+            from handlers.room_2p import start_new_round
+            await start_new_round(room_id, bot, start_turn_idx=0)
+        else:
+            from handlers.room_multi import start_game_multi
+            await start_game_multi(room_id, bot)
+
+    except Exception as e:
+        print(f"Auto check invite error: {e}")
+
+@router.callback_query(F.data.startswith("invy_"))
+async def accept_invite(c: types.CallbackQuery):
+    room_id = c.data.split("_", 1)[1]
+    inv = pending_invites.get(room_id)
+    if not inv:
+        return await c.answer("⚠️ انتهت صلاحية الدعوة.", show_alert=True)
+
+    if c.from_user.id not in inv['invited']:
+        return await c.answer("⚠️ هذه الدعوة ليست لك.", show_alert=True)
+
+    if c.from_user.id in inv['accepted'] or c.from_user.id in inv['rejected']:
+        return await c.answer("⚠️ سبق ورديت على الدعوة.", show_alert=True)
+
+    inv['accepted'].add(c.from_user.id)
+    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
+    db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (room_id, c.from_user.id, u_name), commit=True)
+
+    accept_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+    ])
+    await c.message.edit_text("✅ قبلت الدعوة! بانتظار بقية اللاعبين...", reply_markup=accept_kb)
+
+    try:
+        await c.bot.send_message(inv['creator'], f"✅ {u_name} قبل الدعوة!")
+    except: pass
+
+@router.callback_query(F.data.startswith("invn_"))
+async def reject_invite(c: types.CallbackQuery):
+    room_id = c.data.split("_", 1)[1]
+    inv = pending_invites.get(room_id)
+    if not inv:
+        return await c.answer("⚠️ انتهت صلاحية الدعوة.", show_alert=True)
+
+    if c.from_user.id not in inv['invited']:
+        return await c.answer("⚠️ هذه الدعوة ليست لك.", show_alert=True)
+
+    if c.from_user.id in inv['accepted'] or c.from_user.id in inv['rejected']:
+        return await c.answer("⚠️ سبق ورديت على الدعوة.", show_alert=True)
+
+    inv['rejected'].add(c.from_user.id)
+    p_name = inv['invited'].get(c.from_user.id, "لاعب")
+
+    await c.message.edit_text("❌ رفضت الدعوة.")
+
+    try:
+        await c.bot.send_message(inv['creator'], f"❌ {p_name} رفض الدعوة.")
+    except: pass
