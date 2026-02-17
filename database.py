@@ -2,10 +2,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
 def get_conn():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    return psycopg2.connect(
+        host=os.environ.get('PGHOST'),
+        port=os.environ.get('PGPORT'),
+        user=os.environ.get('PGUSER'),
+        password=os.environ.get('PGPASSWORD'),
+        dbname=os.environ.get('PGDATABASE')
+    )
 
 def db_query(sql, params=(), commit=False):
     conn = get_conn()
@@ -63,6 +67,14 @@ def init_db():
                     last_msg_id BIGINT,
                     PRIMARY KEY (room_id, user_id))''')
 
+    # 4. جدول الأصدقاء
+    cur.execute('''CREATE TABLE IF NOT EXISTS friends (
+                    user_id BIGINT,
+                    friend_id BIGINT,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, friend_id))''')
+
     # 🚨 تحديثات إجبارية (لإضافة الأعمدة إذا كان الجدول قديم)
     # هذه الخطوة تضمن عدم توقف البوت عند تشغيل ملف common.py
     alter_queries = [
@@ -73,7 +85,11 @@ def init_db():
         "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team INT DEFAULT 0;",
         "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS points INT DEFAULT 0;",
         "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS said_uno BOOLEAN DEFAULT FALSE;",
-        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS last_msg_id BIGINT;"
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS last_msg_id BIGINT;",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS score_limit INT DEFAULT 0;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR(2) DEFAULT 'ar';",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_random BOOLEAN DEFAULT FALSE;",
     ]
 
     for query in alter_queries:
