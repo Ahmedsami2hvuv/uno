@@ -157,23 +157,31 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             
             if cd_info:
                 try:
-                    # حذف الرسالة القديمة
-                    await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                except:
-                    pass
-                
-                try:
-                    # إرسال رسالة جديدة
-                    new_msg = await bot.send_message(
-                        cd_info['chat_id'],
-                        f"⏳ باقي {remaining} ثانية\n{bar}"
+                    # التعديل هنا: نستخدم edit_message_text بدلاً من الحذف والإرسال
+                    await bot.edit_message_text(
+                        chat_id=cd_info['chat_id'],
+                        message_id=cd_info['msg_id'],
+                        text=f"⏳ باقي {remaining} ثانية\n{bar}"
                     )
-                    cd_info['msg_id'] = new_msg.message_id
                 except Exception as e:
-                    print(f"Countdown send error: {e}")
+                    # إذا انمسحت الرسالة بالخطأ، نرسل وحدة جديدة ونحدث الـ ID
+                    if "message to edit not found" in str(e).lower():
+                        try:
+                            new_msg = await bot.send_message(
+                                cd_info['chat_id'],
+                                f"⏳ باقي {remaining} ثانية\n{bar}"
+                            )
+                            cd_info['msg_id'] = new_msg.message_id
+                        except: pass
+                    # تجاهل خطأ "لم يتم تعديل الرسالة"
+                    elif "message is not modified" in str(e).lower():
+                        pass
+                    else:
+                        print(f"Countdown edit error: {e}")
             
             await asyncio.sleep(2)
             
+        # --- بقية المنطق الخاص بسحب الورقة عند انتهاء الوقت يبقى كما هو ---
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
@@ -181,10 +189,12 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
         players = get_ordered_players(room_id)
         curr_idx = room['turn_index']
         if curr_idx != expected_turn: return
+        
         curr_p = players[curr_idx]
         p_name = curr_p.get('player_name') or "لاعب"
         curr_hand = safe_load(curr_p['hand'])
         deck = safe_load(room['deck'])
+        
         if not deck:
             discard = safe_load(room['discard_pile'])
             if discard:
@@ -193,22 +203,29 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                 db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
             else:
                 deck = generate_h2o_deck()
+                
         new_card = deck.pop(0)
         curr_hand.append(new_card)
         next_turn = (curr_idx + 1) % 2
+        
         db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
         db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", (json.dumps(deck), next_turn, room_id), commit=True)
+        
         opp_id = players[(curr_idx + 1) % 2]['user_id']
         msgs = {
             curr_p['user_id']: f"⏰ انتهى وقتك! سحبت ورقة ({new_card}) وعبر الدور",
             opp_id: f"⏰ {p_name} ما لعب بالوقت! سحب ورقة والدور رجع لك ✅"
         }
+        
         turn_timers.pop(room_id, None)
         cd_del = countdown_msgs.pop(room_id, None)
+        # عند النهاية فقط نحذف رسالة العداد
         if cd_del:
             try: await bot.delete_message(cd_del['chat_id'], cd_del['msg_id'])
             except: pass
+            
         await refresh_ui_2p(room_id, bot, msgs)
+        
     except asyncio.CancelledError:
         pass
     except Exception as e:
