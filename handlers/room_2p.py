@@ -438,14 +438,20 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                     summary += f"🎯 سقف اللعب: {score_limit} نقطة"
                     for target_p in players:
                         end_kb = make_end_kb(players, room, '2p', for_user_id=target_p['user_id'])
-                        await bot.send_message(target_p['user_id'], summary, reply_markup=end_kb)
+                        try:
+                            await bot.send_message(target_p['user_id'], summary, reply_markup=end_kb)
+                        except Exception as send_err:
+                            print(f"❌ ما قدرت أرسل رسالة نهاية اللعبة لـ {target_p['user_id']}: {send_err}")
                     db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
                     return
                 elif score_limit == 0:
                     summary = f"🏆 {p_name} فاز بالجولة! (+{round_points} نقطة)\n\n📊 النقاط المأخوذة:\n{breakdown_text}\n\n🎯 الوضع: جولة واحدة"
                     for target_p in players:
                         end_kb = make_end_kb(players, room, '2p', for_user_id=target_p['user_id'])
-                        await bot.send_message(target_p['user_id'], summary, reply_markup=end_kb)
+                        try:
+                            await bot.send_message(target_p['user_id'], summary, reply_markup=end_kb)
+                        except Exception as send_err:
+                            print(f"❌ ما قدرت أرسل رسالة نهاية الجولة لـ {target_p['user_id']}: {send_err}")
                     db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
                     return
                 else:
@@ -456,7 +462,10 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                         [InlineKeyboardButton(text="🔄 كمل جولة جديدة", callback_data=f"nextround_{room_id}")]
                     ])
                     for tp in players:
-                        await bot.send_message(tp['user_id'], round_text, reply_markup=next_kb)
+                        try:
+                            await bot.send_message(tp['user_id'], round_text, reply_markup=next_kb)
+                        except Exception as send_err:
+                            print(f"❌ ما قدرت أرسل رسالة جولة جديدة لـ {tp['user_id']}: {send_err}")
                     asyncio.create_task(_next_round_timeout(room_id, bot))
                     return
 
@@ -488,9 +497,10 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 msgs[opp_id] = f"📥 {p_name} سحب ورقة والورقة تشتغل وسيلعبها 🔄"
             else:
                 msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وما تشتغل ❌ والدور عبر"
-                msgs[opp_id] = f"📥 {p_name} ما عنده ورقة مناسبة وسحب ورقة وما اشتغلت، الدور رجع الك ✅"
+                msgs[opp_id] = f"📥 {p_name} ما عنده ورقة مناسبة وسحب ورقة وما اشتغلت، الدور رجع لك ✅"
             return await refresh_ui_2p(room_id, bot, msgs)
 
+        # 🔥 هنا التعديل الرئيسي: نرسل الواجهة للاعبين الاثنين
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
 
@@ -510,7 +520,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             if alert_msg_dict and p['user_id'] in alert_msg_dict:
                 status_text += f"\n──────────────\n📢 {alert_msg_dict[p['user_id']]}"
             if room['turn_index'] == i:
-                status_text += f"\n──────────────\n⏱ الك وقت 20 ثانية"
+                status_text += f"\n──────────────\n⏱ لك وقت 20 ثانية"
             status_text += f"\n──────────────\n🃏 الورقة النازلة: [ {room['top_card']} ]           {turn_status}"
 
             kb = []
@@ -543,27 +553,42 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 exit_row.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(exit_row)
 
-            if p.get('last_msg_id'):
-                try:
-                    msg = await bot.edit_message_text(
-                        text=status_text,
-                        chat_id=p['user_id'],
-                        message_id=p['last_msg_id'],
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-                    )
-                except:
-                    try: await bot.delete_message(p['user_id'], p['last_msg_id'])
-                    except: pass
+            # 🔥 هنا نتأكد إننا نرسل للجميع (حتى لو مو دوره)
+            try:
+                if p.get('last_msg_id'):
+                    try:
+                        msg = await bot.edit_message_text(
+                            text=status_text,
+                            chat_id=p['user_id'],
+                            message_id=p['last_msg_id'],
+                            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+                        )
+                    except:
+                        try: 
+                            await bot.delete_message(p['user_id'], p['last_msg_id'])
+                        except: 
+                            pass
+                        msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+                else:
                     msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-            else:
-                msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-            db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
-            if i == room['turn_index']:
-                cd_msg = await bot.send_message(p['user_id'], "⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
-                countdown_msgs[room_id] = {'bot': bot, 'chat_id': p['user_id'], 'msg_id': cd_msg.message_id}
+                
+                db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
+                
+                # العداد بس للاعب اللي دوره
+                if i == room['turn_index']:
+                    cd_msg = await bot.send_message(p['user_id'], "⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
+                    countdown_msgs[room_id] = {'bot': bot, 'chat_id': p['user_id'], 'msg_id': cd_msg.message_id}
+                    
+            except Exception as ui_err:
+                print(f"❌ ما قدرت أرسل الواجهة لـ {p['user_id']}: {ui_err}")
+                # لو اللاعب بوت، نتجاهله ونكمل
+                continue
 
+        # نبدأ العداد التلقائي
         turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
-    except Exception as e: print(f"UI Error: {e}")
+        
+    except Exception as e: 
+        print(f"UI Error: {e}")
 
 @router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
