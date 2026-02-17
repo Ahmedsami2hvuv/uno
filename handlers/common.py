@@ -45,13 +45,14 @@ def generate_room_code():
 
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
-    # تحديث حالة الظهور فوراً عند فتح القائمة
+    
+    # تحديث حالة الظهور (Online)
     db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
     
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
-        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")], # الزر الجديد
+        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")], 
         [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
          InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
         [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules"),
@@ -62,10 +63,12 @@ async def show_main_menu(message, name, user_id=None):
     msg_text = t(uid, "main_menu", name=name)
     
     if hasattr(message, 'edit_text'):
-        await message.edit_text(msg_text, reply_markup=markup)
+        try:
+            await message.edit_text(msg_text, reply_markup=markup)
+        except:
+            await message.answer(msg_text, reply_markup=markup)
     else:
-        await message.answer(msg_text, reply_markup=markup)
-
+        await message.answer(msg_text, reply_markup=markup, reply_markup_persistent=persistent_kb)
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1088,17 +1091,39 @@ async def set_new_score_limit(c: types.CallbackQuery):
     await room_settings(c)
 
 @router.callback_query(F.data == "my_account")
-async def my_account_menu(c: types.CallbackQuery):
-    user = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
-    if not user: return
-    u = user[0]
-    txt = f"👤 حسابي\n\n📛 الاسم: {u['player_name']}\n🔑 الرمز: {u.get('password', 'لا يوجد')}\n⭐ النقاط: {u.get('online_points', 0)}"
+async def process_my_account_callback(c: types.CallbackQuery):
+    uid = c.from_user.id
+    # جلب بيانات المستخدم من القاعدة (الأعمدة الجديدة والقديمة)
+    user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    
+    if not user_data:
+        return await c.answer("⚠️ حسابك غير موجود.")
+    
+    user = user_data[0]
+    
+    # تحضير المتغيرات للعرض
+    name = user.get('player_name', 'لاعب')
+    username = user.get('username_key') or "---"
+    points = user.get('online_points', 0)
+    # نأخذ الباسورد الجديد، وإذا فارغ نأخذ القديم
+    password = user.get('password_key') or user.get('password', '----')
+
+    # بناء النص باستخدام مفتاح profile_title من i18n
+    text = t(uid, "profile_title", 
+             name=name, 
+             username=username, 
+             points=points, 
+             status=t(uid, "status_online"))
+    
+    text += f"\n\n🔑 الرمز السري: `{password}`"
+    
+    # الأزرار (تعديل الحساب ورجوع)
     kb = [
-        [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
-        [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        [InlineKeyboardButton(text=t(uid, "btn_edit_account"), callback_data="edit_acc")],
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]
-    await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data == "edit_account")
 async def edit_account_menu(c: types.CallbackQuery):
