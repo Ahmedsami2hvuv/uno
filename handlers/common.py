@@ -1120,7 +1120,7 @@ async def process_my_account_callback(c: types.CallbackQuery):
     
     # الأزرار (تعديل الحساب ورجوع)
     kb = [
-        [InlineKeyboardButton(text=t(uid, "btn_edit_account"), callback_data="edit_acc")],
+        [InlineKeyboardButton(text=t(uid, "تعديل الحساب"), callback_data="edit_acc")],
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]
     
@@ -1396,7 +1396,7 @@ async def show_social_menu(c: types.CallbackQuery):
 @router.callback_query(F.data == "search_user")
 async def start_search_user(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
-    await c.message.answer("✍️ أرسل الآن اسم المستخدم (Username) للشخص الذي تبحث عنه:")
+    await c.message.answer("✍️ أرسل الآن اسم المستخدم (اليوزر نيم) للشخص الذي تبحث عنه:")
     await state.set_state(RoomStates.search_user) # هنا البوت ينتظر نص من المستخدم
 
 # 3. معالج البحث (هذه الدالة اللي سألت عنها، توضع هنا)
