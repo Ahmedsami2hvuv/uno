@@ -1,4 +1,5 @@
 from aiogram import Router, types, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -163,10 +164,12 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id']
                     )
-                except Exception as e:
-                    # Catch MessageNotModified error silently
+                except TelegramBadRequest as e:
+                    # Silently ignore if message content hasn't changed
                     if "message is not modified" not in str(e).lower():
                         print(f"Countdown edit error: {e}")
+                except Exception as e:
+                    print(f"Countdown edit error: {e}")
             
             await asyncio.sleep(2)
             
@@ -226,10 +229,12 @@ async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color, challenge_msg
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id']
                     )
-                except Exception as e:
-                    # Catch MessageNotModified error silently
+                except TelegramBadRequest as e:
+                    # Silently ignore if message content hasn't changed
                     if "message is not modified" not in str(e).lower():
                         print(f"Challenge countdown edit error: {e}")
+                except Exception as e:
+                    print(f"Challenge countdown edit error: {e}")
                     
         ch_cd = challenge_countdown_msgs.pop(room_id, None)
         if ch_cd:
@@ -288,10 +293,12 @@ async def color_timeout_2p(room_id, bot, player_id):
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id']
                     )
-                except Exception as e:
-                    # Catch MessageNotModified error silently
+                except TelegramBadRequest as e:
+                    # Silently ignore if message content hasn't changed
                     if "message is not modified" not in str(e).lower():
                         print(f"Color countdown edit error: {e}")
+                except Exception as e:
+                    print(f"Color countdown edit error: {e}")
                     
         cl_cd = color_countdown_msgs.pop(room_id, None)
         if cl_cd:
