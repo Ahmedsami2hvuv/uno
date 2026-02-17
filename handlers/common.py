@@ -1616,3 +1616,22 @@ async def toggle_allow_invites(c: types.CallbackQuery):
     
     await c.answer("✅ تم السماح بالطلبات" if new_status else "❌ تم قفل الطلبات")
     await process_user_search_by_id(c, target_id)
+
+# وضعه في نهاية ملف room_multi.py
+async def notify_followers_game_started(player_id, player_name, bot):
+    # جلب المتابعين الذين فعلوا التنبيه
+    followers = db_query("SELECT follower_id FROM follows WHERE following_id = %s AND notify_games = 1", (player_id,))
+    
+    for f in followers:
+        try:
+            # زر للمشاهدة
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="👁 مشاهدة اللعبة", callback_data=f"spectate_{player_id}")]
+            ])
+            await bot.send_message(
+                f['follower_id'], 
+                f"🚀 صديقك {player_name} بدأ لعبة أونو الآن! هل تريد المشاهدة؟",
+                reply_markup=kb
+            )
+        except:
+            continue
