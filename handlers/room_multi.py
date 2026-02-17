@@ -892,3 +892,25 @@ async def confirm_leave_multi(c: types.CallbackQuery):
 async def cancel_leave_multi(c: types.CallbackQuery):
     rid = c.data.split("_")[1]
     await refresh_ui_multi(rid, c.bot)
+
+# هذا الكود يرسل تنبيه لكل شخص مفعل زر الجرس (🔔) لهذا اللاعب
+async def notify_followers_game_started(player_id, player_name, bot):
+    # جلب المتابعين الذين فعلوا التنبيه فقط
+    followers = db_query("""
+        SELECT follower_id FROM follows 
+        WHERE following_id = %s AND notify_games = 1
+    """, (player_id,))
+    
+    for f in followers:
+        try:
+            # زر يسمح للمتابع بالدخول لمشاهدة اللعبة أو الانضمام
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="👁 مشاهدة اللعبة", callback_data=f"spectate_{player_id}")]
+            ])
+            await bot.send_message(
+                f['follower_id'], 
+                f"🚀 صديقك {player_name} بدأ لعبة أونو الآن! هل تريد المشاهدة؟",
+                reply_markup=kb
+            )
+        except:
+            continue
