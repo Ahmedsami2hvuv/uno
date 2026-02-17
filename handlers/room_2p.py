@@ -157,20 +157,16 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             
             if cd_info:
                 try:
-                    # حذف الرسالة القديمة
-                    await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                except:
-                    pass
-                
-                try:
-                    # إرسال رسالة جديدة
-                    new_msg = await bot.send_message(
-                        cd_info['chat_id'],
-                        f"⏳ باقي {remaining} ثانية\n{bar}"
+                    # ✅ Edit existing message (no notification)
+                    await bot.edit_message_text(
+                        text=f"⏳ باقي {remaining} ثانية\n{bar}",
+                        chat_id=cd_info['chat_id'],
+                        message_id=cd_info['msg_id']
                     )
-                    cd_info['msg_id'] = new_msg.message_id
                 except Exception as e:
-                    print(f"Countdown send error: {e}")
+                    # Catch MessageNotModified error silently
+                    if "message is not modified" not in str(e).lower():
+                        print(f"Countdown edit error: {e}")
             
             await asyncio.sleep(2)
             
@@ -224,20 +220,16 @@ async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color, challenge_msg
             
             if cd_info:
                 try:
-                    # حذف الرسالة القديمة
-                    await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                except:
-                    pass
-                
-                try:
-                    # إرسال رسالة جديدة
-                    new_msg = await bot.send_message(
-                        cd_info['chat_id'],
-                        f"⏳ باقي {remaining} ثانية للرد\n{bar}"
+                    # ✅ Edit existing message (no notification)
+                    await bot.edit_message_text(
+                        text=f"⏳ باقي {remaining} ثانية للرد\n{bar}",
+                        chat_id=cd_info['chat_id'],
+                        message_id=cd_info['msg_id']
                     )
-                    cd_info['msg_id'] = new_msg.message_id
                 except Exception as e:
-                    print(f"Challenge countdown send error: {e}")
+                    # Catch MessageNotModified error silently
+                    if "message is not modified" not in str(e).lower():
+                        print(f"Challenge countdown edit error: {e}")
                     
         ch_cd = challenge_countdown_msgs.pop(room_id, None)
         if ch_cd:
@@ -290,20 +282,16 @@ async def color_timeout_2p(room_id, bot, player_id):
             
             if cd_info:
                 try:
-                    # حذف الرسالة القديمة
-                    await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                except:
-                    pass
-                
-                try:
-                    # إرسال رسالة جديدة
-                    new_msg = await bot.send_message(
-                        cd_info['chat_id'],
-                        f"⏳ باقي {remaining} ثانية لاختيار اللون\n{bar}"
+                    # ✅ Edit existing message (no notification)
+                    await bot.edit_message_text(
+                        text=f"⏳ باقي {remaining} ثانية لاختيار اللون\n{bar}",
+                        chat_id=cd_info['chat_id'],
+                        message_id=cd_info['msg_id']
                     )
-                    cd_info['msg_id'] = new_msg.message_id
                 except Exception as e:
-                    print(f"Color countdown send error: {e}")
+                    # Catch MessageNotModified error silently
+                    if "message is not modified" not in str(e).lower():
+                        print(f"Color countdown edit error: {e}")
                     
         cl_cd = color_countdown_msgs.pop(room_id, None)
         if cl_cd:
