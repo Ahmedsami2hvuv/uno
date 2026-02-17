@@ -9,6 +9,9 @@ import random, string, json, asyncio
 
 router = Router()
 
+# Delay in seconds to ensure Telegram messages are delivered before game starts
+MESSAGE_DELIVERY_DELAY_SECONDS = 0.5
+
 replay_data = {}
 pending_invites = {}
 pending_next_round = {}
@@ -193,7 +196,7 @@ async def _join_room_by_code(message, code, user_data):
                 try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
                 except: pass
             # Add small delay to ensure messages arrive before game starts
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(MESSAGE_DELIVERY_DELAY_SECONDS)
             from handlers.room_2p import start_new_round
             await start_new_round(code, message.bot, start_turn_idx=0)
         else:
@@ -201,7 +204,7 @@ async def _join_room_by_code(message, code, user_data):
                 try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
                 except: pass
             # Add small delay to ensure messages arrive before game starts
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(MESSAGE_DELIVERY_DELAY_SECONDS)
             from handlers.room_multi import start_game_multi
             await start_game_multi(code, message.bot)
     else:
@@ -538,7 +541,7 @@ async def process_join(message: types.Message, state: FSMContext):
                 try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
                 except: pass
             # Add small delay to ensure messages arrive before game starts
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(MESSAGE_DELIVERY_DELAY_SECONDS)
             from handlers.room_2p import start_new_round
             await start_new_round(code, message.bot, start_turn_idx=0)
         else:
@@ -546,7 +549,7 @@ async def process_join(message: types.Message, state: FSMContext):
                 try: await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
                 except: pass
             # Add small delay to ensure messages arrive before game starts
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(MESSAGE_DELIVERY_DELAY_SECONDS)
             from handlers.room_multi import start_game_multi
             await start_game_multi(code, message.bot)
     else:
