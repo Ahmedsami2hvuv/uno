@@ -2,8 +2,8 @@ import os
 from aiogram import Bot
 
 # 1. الإعدادات الأساسية من ريلوي
-TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or ""
+ADMIN_ID = int(os.getenv("ADMIN_ID") or "0")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 DB_URL = os.getenv("DATABASE_URL")
 
