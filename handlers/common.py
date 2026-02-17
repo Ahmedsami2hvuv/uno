@@ -322,15 +322,45 @@ async def menu_random(c: types.CallbackQuery):
     if not user:
         await c.answer(t(uid, "room_not_found"), show_alert=True)
         return
-    waiting = db_query("SELECT r.room_id FROM rooms r WHERE r.max_players = 2 AND r.status = 'waiting' AND r.is_random = TRUE AND NOT EXISTS (SELECT 1 FROM room_players rp WHERE rp.room_id = r.room_id AND rp.user_id = %s) LIMIT 1", (uid,))
+    
+    # البحث عن غرفة عشوائية تنتظر لاعب ثانٍ
+    waiting = db_query("""
+        SELECT r.room_id FROM rooms r 
+        WHERE r.max_players = 2 
+        AND r.status = 'waiting' 
+        AND r.is_random = TRUE 
+        AND NOT EXISTS (SELECT 1 FROM room_players rp WHERE rp.room_id = r.room_id AND rp.user_id = %s) 
+        LIMIT 1""", (uid,))
+    
     if waiting:
         code = waiting[0]['room_id']
-        await _join_room_by_code(c.message, code, user[0])
+        # جلب بيانات اللاعب الثاني (الحالي)
+        u_name = user[0]['player_name']
+        
+        # إضافة اللاعب الثاني لقاعدة البيانات فوراً
+        db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+        # تحديث حالة الغرفة إلى 'playing'
+        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
+        
+        # إشعار اللاعبين ببدء اللعبة
+        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+        for p in all_players:
+            try: 
+                await c.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
+            except: 
+                pass
+        
+        # تشغيل ملف اللعبة لشخصين
+        from handlers.room_2p import start_new_round
+        await start_new_round(code, c.bot, start_turn_idx=0)
+        
     else:
+        # إذا لم توجد غرفة، إنشاء غرفة جديدة (اللاعب الأول)
         code = generate_room_code()
         u_name = user[0]['player_name']
         db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, is_random) VALUES (%s, %s, 2, 0, 'waiting', TRUE)", (code, uid), commit=True)
         db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+        
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
         ])
