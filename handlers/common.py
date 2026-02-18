@@ -37,20 +37,9 @@ class RoomStates(StatesGroup):
     complete_profile_password = State()
 
 persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🏠 القائمة الرئيسية"), KeyboardButton(text="🚀 ابدأ")]
-    ],
+    keyboard=[[KeyboardButton(text="/start")]],
     resize_keyboard=True,
-    is_persistent=True
-)
-
-persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🚀 ابدأ اللعب")],
-        [KeyboardButton(text="🏠 القائمة الرئيسية")]
-    ],
-    resize_keyboard=True, # ليصغر حجم الأزرار وتكون أنيقة
-    persistent=True       # لتبقى ظاهرة دائماً ولا تختفي
+    persistent=True
 )
 
 def generate_room_code():
