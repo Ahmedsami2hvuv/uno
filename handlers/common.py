@@ -655,7 +655,7 @@ async def view_profile_handler(c: types.CallbackQuery):
         await process_user_search_by_id(c, target_id)
     except Exception as e:
         print(f"view_profile_handler error: {e}")
-        await c.answer("⚠️ فشل فتح بروفايل اللاعب.", show_alert=
+        await c.answer("⚠️ فشل فتح بروفايل اللاعب.", show_alert=True)
                        
 
 @router.callback_query(F.data == "home")
