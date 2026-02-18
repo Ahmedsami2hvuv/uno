@@ -16,6 +16,12 @@ pending_next_round = {}
 next_round_ready = {}
 friend_invite_selections = {}
 kick_selections = {}
+# Track last menu message ID per user to delete old menus
+_last_menu_msg_id = {}
+# Track if user has received persistent keyboard
+_persistent_kb_sent = set()
+# Track last menu message ID per user to delete old menus
+_last_menu_msg_id = {}
 
 class RoomStates(StatesGroup):
     wait_for_code = State()
@@ -38,25 +44,18 @@ class RoomStates(StatesGroup):
 
 persistent_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🏠 القائمة الرئيسية"), KeyboardButton(text="🚀 ابدأ")]
-    ],
-    resize_keyboard=True,
-    is_persistent=True
-)
-
-persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
         [KeyboardButton(text="🚀 ابدأ اللعب")],
         [KeyboardButton(text="🏠 القائمة الرئيسية")]
     ],
     resize_keyboard=True, # ليصغر حجم الأزرار وتكون أنيقة
-    persistent=True       # لتبقى ظاهرة دائماً ولا تختفي
+    is_persistent=True    # لتبقى ظاهرة دائماً ولا تختفي
 )
 
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
 async def show_main_menu(message, name, user_id=None):
+    """Unified main menu function - deletes old menu and shows new one."""
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
     # تحديث القاعدة تلقائياً
@@ -75,24 +74,45 @@ async def show_main_menu(message, name, user_id=None):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     msg_text = t(uid, "main_menu", name=name)
 
-    # الإصلاح هنا: إرسال الـ markup (الأزرار الشفافة) فقط في الـ reply_markup
-    # والـ persistent_kb (الأزرار السفلية) تظهر تلقائياً بمجرد إرسالها مع أي رسالة نصية
+    # Handle callback query (button press)
     if isinstance(message, types.CallbackQuery):
         try:
             await message.message.delete()
         except:
             pass
-        # نرسل رسالة جديدة تحتوي على الأزرار الشفافة والكيبورد السفلي
-        await message.message.answer(msg_text, reply_markup=markup)
-        # لإظهار الكيبورد السفلي، نرسله في رسالة تأكيد بسيطة أو مع المنيو
-        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+        # Delete previous menu message if exists
+        if uid in _last_menu_msg_id:
+            try:
+                await message.bot.delete_message(chat_id=message.message.chat.id, message_id=_last_menu_msg_id[uid])
+            except:
+                pass
+        # Send new menu - inline keyboard only, persistent keyboard stays visible
+        sent_msg = await message.message.answer(msg_text, reply_markup=markup)
+        _last_menu_msg_id[uid] = sent_msg.message_id
     else:
+        # Handle regular message (command or reply keyboard button)
         try:
             await message.delete()
         except:
             pass
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+        # Delete previous menu message if exists
+        if uid in _last_menu_msg_id:
+            try:
+                await message.bot.delete_message(chat_id=message.chat.id, message_id=_last_menu_msg_id[uid])
+            except:
+                pass
+        # Send menu message with inline keyboard
+        # On first interaction, also set persistent keyboard
+        if uid not in _persistent_kb_sent:
+            # First time - set persistent keyboard with a temporary message that gets deleted
+            temp_msg = await message.answer(".", reply_markup=persistent_kb)
+            _persistent_kb_sent.add(uid)
+            try:
+                await temp_msg.delete()
+            except:
+                pass
+        sent_msg = await message.answer(msg_text, reply_markup=markup)
+        _last_menu_msg_id[uid] = sent_msg.message_id
 
 
 @router.message(Command("start"))
@@ -106,13 +126,10 @@ async def cb_home(c: types.CallbackQuery):
     await show_main_menu(c, name)
 @router.message(F.text == "🚀 ابدأ اللعب")
 @router.message(F.text == "🏠 القائمة الرئيسية")
-
-
 async def quick_start_button(message: types.Message):
     # مسح رسالة المستخدم ليبقى الشات نظيفاً
-    try: await message.delete()
-    except: pass
-    await (message, message.from_user.full_name)
+    name = message.from_user.full_name
+    await show_main_menu(message, name)
 
 
 
@@ -701,42 +718,7 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
     uid = c.from_user.id
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
-    await show_main_menu(c.message, user[0]['player_name'] if user else "لاعب", uid)
-async def show_main_menu(message, name, user_id=None):
-    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
-    
-    # تحديث قاعدة البيانات تلقائياً
-    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
-    except: pass
-
-    kb = [
-        [InlineKeyboardButton(text="🎮 لعب عشوائي", callback_data="random_play")],
-        [InlineKeyboardButton(text="👥 لعب مع الأصدقاء", callback_data="play_friends")],
-        [InlineKeyboardButton(text="🏆 المتابعين", callback_data="social_menu")], 
-        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_account"),
-         InlineKeyboardButton(text="🧮 الحاسبة", callback_data="calc_start")],
-        [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
-        [InlineKeyboardButton(text="🌐 اللغة", callback_data="change_lang")]
-    ]
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    msg_text = f"اهلا بك يا {name} في بوت اونو العراقي الأول 🇮🇶\nاستخدم الأزرار للبدء:"
-
-    if isinstance(message, types.CallbackQuery):
-        try:
-            await message.message.delete()
-        except:
-            pass
-        # نرسل المنيو بالأزرار الشفافة (markup)
-        await message.message.answer(msg_text, reply_markup=markup)
-        # نرسل الكيبورد السفلي (persistent_kb) في رسالة منفصلة
-        await message.message.answer("استخدم الأزرار للتنقل 👇", reply_markup=persistent_kb)
-    else:
-        try:
-            await message.delete()
-        except:
-            pass
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("استخدم الأزرار للتنقل 👇", reply_markup=persistent_kb)
+    await show_main_menu(c, user[0]['player_name'] if user else "لاعب", uid)
 
 
 # إصلاح زر القوانين
@@ -778,7 +760,7 @@ async def switch_lang(c: types.CallbackQuery):
     await c.answer(t(uid, "lang_changed"), show_alert=True)
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
     name = user[0]['player_name'] if user else 'Player'
-    await show_main_menu(c.message, name, uid)
+    await show_main_menu(c, name, uid)
 
 @router.callback_query(F.data.startswith("nextround_"))
 async def next_round_go(c: types.CallbackQuery):
@@ -1542,15 +1524,6 @@ async def start_calculator(c: types.CallbackQuery):
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# 1. الأزرار السفلية (زر واحد يرسل نص /start)
-persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="/start")] # يرسل كلمة ستارت كأنه المستخدم كتبها
-    ],
-    resize_keyboard=True,
-    persistent=True
-)
-
 # 2. تعديل قائمة المتابعين (حذف None وإصلاح الدخول للاعب)
 @router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
@@ -1598,46 +1571,6 @@ async def handle_view_profile_btn(c: types.CallbackQuery):
         print(f"Error in view_profile: {e}")
         await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
 
-# قائمة المتابعين - نسخة نظيفة بدون None وبدون يوزرنيم
-@router.callback_query(F.data == "list_following")
-async def show_following_list(c: types.CallbackQuery):
-    uid = c.from_user.id
-    # جلب البيانات من القاعدة
-    following = db_query("""
-        SELECT u.user_id, u.player_name, u.last_seen 
-        FROM follows f 
-        JOIN users u ON f.following_id = u.user_id 
-        WHERE f.follower_id = %s
-    """, (uid,))
-
-    if not following:
-        return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
-
-    text = "📉 **قائمة الذين تتابعهم:**\nاضغط على اسم اللاعب للدخول إلى ملفه."
-    kb = []
-    
-    from datetime import datetime, timedelta
-    
-    for user in following:
-        # فحص حالة المتصل
-        last_seen = user['last_seen'] if user['last_seen'] else datetime.min
-        is_online = (datetime.now() - last_seen < timedelta(minutes=5))
-        status_icon = "🟢" if is_online else "⚪"
-        
-        # هنا الحل: نأخذ الاسم فقط ونضعه في زر
-        # الـ callback_data لازم يكون view_profile_ وبعده الايدي
-        kb.append([
-            InlineKeyboardButton(
-                text=f"{status_icon} {user['player_name']}", 
-                callback_data=f"view_profile_{user['user_id']}"
-            )
-        ])
-
-    # زر الرجوع
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
-    
-    # تعديل الرسالة الحالية
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 # --- دالة جديدة: عرض قائمة "المتابعون" ---
 @router.callback_query(F.data == "list_followers")
 async def show_followers_list(c: types.CallbackQuery):
@@ -1663,13 +1596,6 @@ async def show_followers_list(c: types.CallbackQuery):
 
     kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-
-# --- دالة جديدة: عرض بروفايل أي لاعب بالضغط عليه من القائمة ---
-@router.callback_query(F.data.startswith("view_profile_"))
-async def view_target_profile(c: types.CallbackQuery):
-    target_id = int(c.data.split("_")[2])
-    # نستخدم الدالة المساعدة التي كتبناها في الخطوة السابقة لتحديث الواجهة
-    await process_user_search_by_id(c, target_id)
 
 # --- دالة تفعيل/تعطيل تنبيهات بدء اللعب (🔔) ---
 @router.callback_query(F.data.startswith("game_notify_"))
@@ -1727,35 +1653,6 @@ async def notify_followers_game_started(player_id, player_name, bot):
         except:
             continue
 
-@router.callback_query(F.data == "play_friends")
-async def play_friends_menu(c: types.CallbackQuery):
-    uid = c.from_user.id
-    text = "🎮 **اللعب مع الأصدقاء**\n\nيمكنك إنشاء غرفة جديدة أو الانضمام لغرفة صديق بواسطة الكود."
-    kb = [
-        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
-        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
-    ]
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-@router.callback_query(F.data == "my_account")
-async def my_account_menu(c: types.CallbackQuery):
-    uid = c.from_user.id
-    user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
-    if not user_data: return
-    user = user_data[0]
-    
-    text = (f"👤 **إعدادات حسابك**\n\n"
-            f"📦 الاسم: {user['player_name']}\n"
-            f"🏆 النقاط: {user['online_points']}")
-    
-    kb = [
-        [InlineKeyboardButton(text="✏️ تغيير الاسم", callback_data="edit_name")],
-        [InlineKeyboardButton(text="🔒 تغيير الباسورد", callback_data="edit_password")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
-    ]
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
 # --- 1. دالة إرسال الطلب (عندما تضغط على "إرسال دعوة") ---
 @router.callback_query(F.data.startswith("invite_"))
 async def send_game_invite(c: types.CallbackQuery):
@@ -1809,7 +1706,7 @@ async def send_game_invite(c: types.CallbackQuery):
 
 # --- 2. دالة قبول الطلب ---
 @router.callback_query(F.data.startswith("accept_inv_"))
-async def accept_invite(c: types.CallbackQuery):
+async def accept_game_invite(c: types.CallbackQuery):
     sender_id = int(c.data.split("_")[2])
     target_id = c.from_user.id
     
@@ -1825,7 +1722,7 @@ async def accept_invite(c: types.CallbackQuery):
 
 # --- 3. دالة رفض الطلب ---
 @router.callback_query(F.data.startswith("reject_inv_"))
-async def reject_invite(c: types.CallbackQuery):
+async def reject_game_invite(c: types.CallbackQuery):
     sender_id = int(c.data.split("_")[2])
     target_name = c.from_user.full_name
     
@@ -1886,107 +1783,5 @@ async def process_invites_timer(c: types.CallbackQuery):
     # العودة لبروفايل اللاعب باستخدام تعديل الرسالة
     await process_user_search_by_id(c, uid)
 
-# --- 1. دالة قبول الطلب (تنفذ عند ضغط الصديق على ✅ قبول) ---
-@router.callback_query(F.data.startswith("accept_inv_"))
-async def accept_game_invite(c: types.CallbackQuery):
-    # sender_id هو الشخص الذي أرسل الدعوة
-    sender_id = int(c.data.split("_")[2])
-    # target_id هو الشخص الذي ضغط "قبول" الآن
-    target_id = c.from_user.id
-    
-    # جلب أسماء اللاعبين للتنسيق
-    sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
-    target_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (target_id,))
-    
-    if not sender_data or not target_data:
-        return await c.answer("⚠️ حدث خطأ، أحد اللاعبين غير موجود.")
-
-    s_name = sender_data[0]['player_name']
-    t_name = target_data[0]['player_name']
-
-    # 1. إبلاغ المرسل بأن دعوته قُبلت
-    try:
-        # نرسل للمرسل زر "دخول الغرفة"
-        kb_sender = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎮 دخول الغرفة الآن", callback_data=f"join_private_{target_id}")]
-        ])
-        await c.bot.send_message(
-            sender_id, 
-            f"✅ وافق **{t_name}** على دعوتك!\nاضغط على الزر بالأسفل لبدء اللعب.",
-            reply_markup=kb_sender
-        )
-    except:
-        return await c.answer("⚠️ يبدو أن المرسل أغلق البوت.")
-
-    # 2. تعديل رسالة الطلب عند الشخص الذي قبل (النظافة)
-    kb_target = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎲 إنشاء الغرفة", callback_data="create_room")]
-    ])
-    
-    await c.message.edit_text(
-        f"🚀 **تم قبول الدعوة!**\n\nأنت الآن ستلعب مع **{s_name}**.\nقم بإنشاء غرفة وأرسل الكود له أو انتظر دخوله.",
-        reply_markup=kb_target
-    )
-
-# --- 2. دالة رفض الطلب (تنفذ عند ضغط الصديق على ❌ رفض) ---
-@router.callback_query(F.data.startswith("reject_inv_"))
-async def reject_game_invite(c: types.CallbackQuery):
-    sender_id = int(c.data.split("_")[2])
-    target_name = c.from_user.full_name
-    
-    # إبلاغ المرسل بالرفض
-    try:
-        await c.bot.send_message(sender_id, f"❌ اعتذر **{target_name}** عن اللعب حالياً.")
-    except: pass
-    
-    # تنظيف الشاشة عند الشخص الذي رفض
-    try:
-        await c.message.delete()
-        await c.answer("تم رفض الطلب بنجاح.")
-    except:
-        await c.message.edit_text("❌ تم رفض الطلب.")
-
-
-@router.callback_query(F.data.startswith("view_profile_"))
-async def handle_view_profile_from_list(c: types.CallbackQuery):
-    try:
-        # تقسيم النص للحصول على الرقم: view_profile_12345 -> 12345
-        target_id = int(c.data.split("_")[2])
-        # استدعاء دالة عرض البروفايل الموجودة بملفك
-        await process_user_search_by_id(c, target_id)
-    except Exception as e:
-        await c.answer("❌ تعذر العثور على اللاعب.")
-
-# معالج زر اللعب مع الأصدقاء
-@router.callback_query(F.data == "play_friends")
-async def play_friends_btn(c: types.CallbackQuery):
-    uid = c.from_user.id
-    text = "🎮 **اللعب مع الأصدقاء**\n\nأنشئ غرفة جديدة أو انضم لصديقك عبر الكود."
-    kb = [
-        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
-        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
-    ]
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-# معالج زر تعديل الحساب
-@router.callback_query(F.data == "my_account")
-async def my_account_btn(c: types.CallbackQuery):
-    uid = c.from_user.id
-    user = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (uid,))[0]
-    text = f"👤 **إعدادات حسابك**\n\n📦 الاسم: {user['player_name']}\n🏆 النقاط: {user['online_points']}"
-    kb = [
-        [InlineKeyboardButton(text="✏️ تغيير الاسم", callback_data="edit_name")],
-        [InlineKeyboardButton(text="⚙️ استقبال الدعوات", callback_data=f"allow_invites_{uid}")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
-    ]
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-@router.message(F.text == "🚀 ابدأ اللعب")
-@router.message(F.text == "🏠 القائمة الرئيسية")
-async def handle_bottom_buttons(message: types.Message):
-    # نقوم باستدعاء دالة الستارت نفسها
-    name = message.from_user.full_name
-    await show_main_menu(message, name)
 
 
