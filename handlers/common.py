@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from database import db_query
 from i18n import t, get_lang, set_lang, TEXTS
 import random, string, json, asyncio
+from datetime import datetime, timedelta
 
 router = Router()
 
@@ -81,23 +82,19 @@ async def show_main_menu(message, name, user_id=None):
         try: await message.message.delete()
         except: pass
         # نرسل الرسالة مع الكيبورد السفلي مرة واحدة فقط
-        await message.message.answer(msg_text, reply_markup=markup)
-        # إرسال الكيبورد السفلي بدون رسالة نصية إضافية
+        sent = await message.message.answer(msg_text, reply_markup=markup)
+        # تحديث الكيبورد السفلي بدون رسالة إضافية
         try:
             await message.bot.send_message(message.from_user.id, ".", reply_markup=persistent_kb)
-            # حذف الرسالة النقطة فوراً
-            await message.bot.delete_message(message.from_user.id, message.message.message_id + 1)
         except:
             pass
     else:
         try: await message.delete()
         except: pass
-        await message.answer(msg_text, reply_markup=markup)
-        # إرسال الكيبورد السفلي بدون رسالة نصية إضافية
+        sent = await message.answer(msg_text, reply_markup=markup)
+        # تحديث الكيبورد السفلي بدون رسالة إضافية
         try:
-            sent = await message.bot.send_message(message.from_user.id, ".", reply_markup=persistent_kb)
-            # حذف الرسالة النقطة فوراً
-            await sent.delete()
+            await message.bot.send_message(message.from_user.id, ".", reply_markup=persistent_kb)
         except:
             pass
 
@@ -1602,7 +1599,6 @@ async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
     is_following = db_query("SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s", (uid, target_id))
     
     # بناء حالة الأونلاين
-    from datetime import datetime, timedelta
     status = t(uid, "status_online") if (datetime.now() - t_user['last_seen'] < timedelta(minutes=5)) else t(uid, "status_offline", time=t_user['last_seen'].strftime("%H:%M"))
     
     username_display = t_user.get('username_key') or "غير محدد"
