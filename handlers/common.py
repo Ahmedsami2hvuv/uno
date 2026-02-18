@@ -84,24 +84,15 @@ async def show_main_menu(message, name, user_id=None):
         await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
 
 
-@router.message(Command("start"))
-async def cmd_start(message: types.Message):
-    name = message.from_user.full_name
-    await show_main_menu(message, name)
-
-@router.callback_query(F.data == "home")
-async def cb_home(c: types.CallbackQuery):
-    name = c.from_user.full_name
-    await show_main_menu(c, name)
-@router.message(F.text == "🚀 ابدأ اللعب")
-@router.message(F.text == "🏠 القائمة الرئيسية")
-
 
 async def quick_start_button(message: types.Message):
-    # مسح رسالة المستخدم ليبقى الشات نظيفاً
-    try: await message.delete()
-    except: pass
-    await (message, message.from_user.full_name)
+    try:
+        await message.delete()  # يمسح رسالة المستخدم
+    except:
+        pass
+
+    # ينزل منيو جديد + ينظف القديم
+    await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
 
 
 
@@ -150,7 +141,7 @@ async def process_password_step(message: types.Message, state: FSMContext):
         
         await message.answer(t(user_id, "reg_success", name=p_name, username=username))
         await state.clear()
-        await show_main_menu(message, p_name, user_id)
+        await (message, p_name, user_id)
     
     else:
         # حالة التسجيل الجديد: نحفظ اليوزر والباسورد مؤقتاً ونطلب "الاسم"
@@ -177,7 +168,7 @@ async def process_final_name(message: types.Message, state: FSMContext):
     
     await message.answer(t(user_id, "reg_success", name=name, username=username))
     await state.clear()
-    await show_main_menu(message, name, user_id)
+    await (message, name, user_id)
     
 
 
@@ -246,14 +237,14 @@ async def complete_profile_password_handler(message: types.Message, state: FSMCo
         if user_data:
             await _join_room_by_code(message, pending_join, user_data[0])
             return
-    await show_main_menu(message, name, uid)
+    await (message, name, uid)
 
 async def _join_room_by_code(message, code, user_data):
     uid = message.from_user.id
     room = db_query("SELECT * FROM rooms WHERE room_id = %s AND status = 'waiting'", (code,))
     if not room:
         await message.answer(t(uid, "room_not_found"))
-        await show_main_menu(message, user_data['player_name'], uid)
+        await (message, user_data['player_name'], uid)
         return
 
     existing = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (code, uid))
@@ -265,7 +256,7 @@ async def _join_room_by_code(message, code, user_data):
     max_p = room[0]['max_players']
     if p_count >= max_p:
         await message.answer(t(uid, "room_full"))
-        await show_main_menu(message, user_data['player_name'], uid)
+        await (message, user_data['player_name'], uid)
         return
 
     u_name = user_data['player_name']
@@ -361,7 +352,7 @@ async def register_password(message: types.Message, state: FSMContext):
         if user_data:
             await _join_room_by_code(message, pending_join, user_data[0])
             return
-    await show_main_menu(message, name, uid)
+    await (message, name, uid)
 
 @router.callback_query(F.data == "auth_login")
 async def auth_login(c: types.CallbackQuery, state: FSMContext):
@@ -409,7 +400,7 @@ async def login_password(message: types.Message, state: FSMContext):
         if user_data:
             await _join_room_by_code(message, pending_join, user_data[0])
             return
-    await show_main_menu(message, name, uid)
+    await (message, name, uid)
 
 @router.callback_query(F.data == "menu_random")
 async def menu_random(c: types.CallbackQuery):
@@ -690,55 +681,66 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
     uid = c.from_user.id
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
-    await show_main_menu(c.message, user[0]['player_name'] if user else "لاعب", uid)
-async def show_main_menu(message, name, user_id=None):
-    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
+    await (c.message, user[0]['player_name'] if user else "لاعب", uid)
     
-    # تحديث قاعدة البيانات تلقائياً
-    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
-    except: pass
+async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
+    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
+
+    # تحديث القاعدة تلقائياً
+    try:
+        db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
+    except:
+        pass
 
     kb = [
-        [InlineKeyboardButton(text="🎮 لعب عشوائي", callback_data="random_play")],
-        [InlineKeyboardButton(text="👥 لعب مع الأصدقاء", callback_data="play_friends")],
-        [InlineKeyboardButton(text="🏆 المتابعين", callback_data="social_menu")], 
-        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_account"),
-         InlineKeyboardButton(text="🧮 الحاسبة", callback_data="calc_start")],
-        [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
-        [InlineKeyboardButton(text="🌐 اللغة", callback_data="change_lang")]
+        [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
+        [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
+        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")],
+        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
+         InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
+        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
+        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    msg_text = f"اهلا بك يا {name} في بوت اونو العراقي الأول 🇮🇶\nاستخدم الأزرار للبدء:"
-
-    if isinstance(message, types.CallbackQuery):
-        try:
-            await message.message.delete()
-        except:
-            pass
-        # نرسل المنيو بالأزرار الشفافة (markup)
-        await message.message.answer(msg_text, reply_markup=markup)
-        # نرسل الكيبورد السفلي (persistent_kb) في رسالة منفصلة
-        await message.message.answer("استخدم الأزرار للتنقل 👇", reply_markup=persistent_kb)
-    else:
-        try:
-            await message.delete()
-        except:
-            pass
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("استخدم الأزرار للتنقل 👇", reply_markup=persistent_kb)
-
-
-# إصلاح زر القوانين
-@router.callback_query(F.data == "rules")
-async def show_rules(c: types.CallbackQuery):
-    uid = c.from_user.id
-    await c.message.edit_text(t(uid, "rules_full"), 
-                              reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                  [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
-                              ]))
+    msg_text = t(uid, "main_menu", name=name)
 
 # إصلاح زر اللعب العشوائي (ربطه بملف room_multi)
 @router.callback_query(F.data == "random_play")
+
+async def _cleanup_chat(msg_obj, limit: int = 15):
+        if not cleanup:
+            return
+        try:
+            last_id = msg_obj.message_id
+            for mid in range(last_id, max(last_id - limit, 1), -1):
+                try:
+                    await msg_obj.bot.delete_message(msg_obj.chat.id, mid)
+                except:
+                    pass
+        except:
+            pass
+
+    if isinstance(message, types.CallbackQuery):
+        # اذا جاينا من زر شفاف (Callback)
+        try:
+            await _cleanup_chat(message.message, limit=15)
+        except:
+            pass
+
+        # نرسل منيو جديد
+        await message.message.answer(msg_text, reply_markup=markup)
+        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+    else:
+        # اذا جاينا من رسالة نصية (مثل زر ستارت)
+        try:
+            await _cleanup_chat(message, limit=15)
+        except:
+            pass
+
+        await message.answer(msg_text, reply_markup=markup)
+        await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+
+
 async def process_random_play(c: types.CallbackQuery):
     uid = c.from_user.id
     # هنا يجب أن تستدعي الدالة من ملف room_multi، تأكد من عمل import لها
