@@ -62,8 +62,8 @@ async def on_play_friends(c: types.CallbackQuery):
     uid = c.from_user.id
     text = "🎮 **اللعب مع الأصدقاء**\n\nاختر:"
     kb = [
-        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
-        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
+        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")],
+        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="room_join_input")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
@@ -424,20 +424,6 @@ async def menu_random(c: types.CallbackQuery):
         ])
         await c.message.edit_text(t(uid, "random_waiting"), reply_markup=kb)
 
-@router.callback_query(F.data == "random_play")
-async def on_random_play(c: types.CallbackQuery):
-    await menu_random(c)
-
-
-@router.callback_query(F.data == "random_play")
-async def on_random_play(c: types.CallbackQuery):
-    await c.answer("🎲 جاري البحث عن لاعبين...")
-    await c.message.edit_text(
-        t(c.from_user.id, "random_waiting"),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=t(c.from_user.id, "btn_back"), callback_data="home")]
-        ])
-    )
 
 @router.callback_query(F.data == "menu_friends")
 async def menu_friends(c: types.CallbackQuery):
@@ -662,12 +648,23 @@ async def process_join(message: types.Message, state: FSMContext):
             await message.bot.send_message(creator_id, notify_text, reply_markup=notify_kb)
         except: pass
 
+@router.callback_query(F.data.startswith("view_profile_"))
+async def view_profile_handler(c: types.CallbackQuery):
+    try:
+        target_id = int(c.data.split("_")[-1])  # ياخذ الرقم الأخير
+        await process_user_search_by_id(c, target_id)
+    except Exception as e:
+        print(f"view_profile_handler error: {e}")
+        await c.answer("⚠️ فشل فتح بروفايل اللاعب.", show_alert=
+                       
+
 @router.callback_query(F.data == "home")
 async def go_home(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
     uid = c.from_user.id
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
-    await (c.message, user[0]['player_name'] if user else "لاعب", uid)
+    name = user[0]["player_name"] if user else (c.from_user.full_name or "لاعب")
+    await show_main_menu(c, name, user_id=uid, cleanup=True)
     
 async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     uid = user_id or (message.from_user.id if hasattr(message, "from_user") else 0)
