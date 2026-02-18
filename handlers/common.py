@@ -37,13 +37,10 @@ class RoomStates(StatesGroup):
     complete_profile_password = State()
 
 persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🏠 القائمة الرئيسية"), KeyboardButton(text="🚀 ابدأ")]
-    ],
+    keyboard=[[KeyboardButton(text="/start")]],
     resize_keyboard=True,
-    is_persistent=True
+    persistent=True
 )
-
 persistent_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🚀 ابدأ اللعب")],
@@ -60,7 +57,8 @@ async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
     # تحديث القاعدة تلقائياً
-    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
+    try: 
+        db_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expiry TIMESTAMP", commit=True)
     except: pass
 
     kb = [
@@ -75,24 +73,19 @@ async def show_main_menu(message, name, user_id=None):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     msg_text = t(uid, "main_menu", name=name)
 
-    # الإصلاح هنا: إرسال الـ markup (الأزرار الشفافة) فقط في الـ reply_markup
-    # والـ persistent_kb (الأزرار السفلية) تظهر تلقائياً بمجرد إرسالها مع أي رسالة نصية
+    # داخل دالة show_main_menu
     if isinstance(message, types.CallbackQuery):
         try:
-            await message.message.delete()
+            # التعديل يخلي البوت "تطبيق" مو محادثة
+            await message.message.edit_text(msg_text, reply_markup=markup)
         except:
-            pass
-        # نرسل رسالة جديدة تحتوي على الأزرار الشفافة والكيبورد السفلي
-        await message.message.answer(msg_text, reply_markup=markup)
-        # لإظهار الكيبورد السفلي، نرسله في رسالة تأكيد بسيطة أو مع المنيو
-        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+            try: await message.message.delete()
+            except: pass
+            await message.message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
     else:
-        try:
-            await message.delete()
-        except:
-            pass
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+        try: await message.delete()
+        except: pass
+        await message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
 
 
 @router.message(Command("start"))
@@ -473,6 +466,115 @@ async def menu_random(c: types.CallbackQuery):
         ])
         await c.message.edit_text(t(uid, "random_waiting"), reply_markup=kb)
 
+@router.callback_query(F.data == "list_following")
+
+async def (c: types.CallbackQuery):
+
+    uid = c.from_user.id
+
+    following = db_query("""
+
+        SELECT u.user_id, u.player_name, u.last_seen 
+
+        FROM follows f 
+
+        JOIN users u ON f.following_id = u.user_id 
+
+        WHERE f.follower_id = %s
+
+    """, (uid,))
+
+
+
+    if not following:
+
+        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
+
+
+
+    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
+
+    kb = []
+
+    for user in following:
+
+        # هنا سحب الاسم فقط بدون None
+
+        display_name = user['player_name'] if user['player_name'] else "لاعب"
+
+        kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
+
+
+
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+
+# أضف هذا المعالج تحتها مباشرة
+
+@router.callback_query(F.data.startswith("vp_"))
+
+async def handle_view_profile_fix(c: types.CallbackQuery):
+
+    target_id = int(c.data.split("_")[1])
+
+    # استدعاء الدالة اللي أصلاً موجودة بملفك
+
+    await process_user_search_by_id(c, target_id)
+
+
+
+async def process_user_search_by_id(c, target_id):
+    # جلب بيانات اللاعب من القاعدة باستخدام الآيدي
+    user_data = db_query("SELECT * FROM users WHERE user_id = %s", (target_id,))
+    
+    if not user_data:
+        return await c.answer("❌ هذا اللاعب غير موجود أو محظور.", show_alert=True)
+    
+    user = user_data[0]
+    # عرض البيانات بدون @None أو يوزرنيم
+    text = (f"👤 **ملف اللاعب الشخصي**\n\n"
+            f"📦 الاسم: {user['player_name']}\n"
+            f"🏆 النقاط: {user['online_points']}\n"
+            f"🆔 الآيدي: `{user['user_id']}`")
+    
+    kb = [
+        [InlineKeyboardButton(text="➕ متابعة", callback_data=f"follow_{user['user_id']}")],
+        [InlineKeyboardButton(text="🔙 رجوع للمتابعين", callback_data="list_following")]
+    ]
+    
+    # التعديل في نفس الرسالة (نظافة)
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+
+@router.callback_query(F.data == "list_following")
+async def (c: types.CallbackQuery):
+    uid = c.from_user.id
+    following = db_query("""
+        SELECT u.user_id, u.player_name, u.last_seen 
+        FROM follows f 
+        JOIN users u ON f.following_id = u.user_id 
+        WHERE f.follower_id = %s
+    """, (uid,))
+
+    if not following:
+        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
+
+    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
+    kb = []
+    for user in following:
+        # هنا الحل لـ "نيون" (None): نأخذ player_name فقط
+        name = user['player_name'] if user['player_name'] else "لاعب"
+        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"vp_{user['user_id']}")])
+
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+
 @router.callback_query(F.data == "menu_friends")
 async def menu_friends(c: types.CallbackQuery):
     uid = c.from_user.id
@@ -702,11 +804,13 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
     await show_main_menu(c.message, user[0]['player_name'] if user else "لاعب", uid)
+    
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
     # تحديث قاعدة البيانات تلقائياً
-    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
+    try: 
+        db_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_expiry TIMESTAMP", commit=True)
     except: pass
 
     kb = [
@@ -1551,40 +1655,7 @@ persistent_kb = ReplyKeyboardMarkup(
     persistent=True
 )
 
-# 2. تعديل قائمة المتابعين (حذف None وإصلاح الدخول للاعب)
-@router.callback_query(F.data == "list_following")
-async def show_following_list(c: types.CallbackQuery):
-    uid = c.from_user.id
-    following = db_query("""
-        SELECT u.user_id, u.player_name, u.last_seen 
-        FROM follows f 
-        JOIN users u ON f.following_id = u.user_id 
-        WHERE f.follower_id = %s
-    """, (uid,))
 
-    if not following:
-        return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
-
-    text = "📉 **قائمة المتابعة:**\n(اضغط على الاسم لفتح البروفايل)"
-    kb = []
-    from datetime import datetime, timedelta
-    
-    for user in following:
-        # فحص الاتصال
-        last_seen = user['last_seen'] if user['last_seen'] else datetime.min
-        is_online = (datetime.now() - last_seen < timedelta(minutes=5))
-        status_icon = "🟢" if is_online else "⚪"
-        
-        # الحل النهائي: عرض الاسم فقط بدون أي يوزر أو None
-        display_name = user['player_name'] if user['player_name'] else "لاعب"
-        
-        kb.append([InlineKeyboardButton(
-            text=f"{status_icon} {display_name}", 
-            callback_data=f"view_profile_{user['user_id']}" # تأكد من هذا الاسم
-        )])
-
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 # 3. معالج الدخول للاعب (تأكد من وجوده في نهاية الملف)
 @router.callback_query(F.data.startswith("view_profile_"))
@@ -1598,46 +1669,7 @@ async def handle_view_profile_btn(c: types.CallbackQuery):
         print(f"Error in view_profile: {e}")
         await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
 
-# قائمة المتابعين - نسخة نظيفة بدون None وبدون يوزرنيم
-@router.callback_query(F.data == "list_following")
-async def show_following_list(c: types.CallbackQuery):
-    uid = c.from_user.id
-    # جلب البيانات من القاعدة
-    following = db_query("""
-        SELECT u.user_id, u.player_name, u.last_seen 
-        FROM follows f 
-        JOIN users u ON f.following_id = u.user_id 
-        WHERE f.follower_id = %s
-    """, (uid,))
 
-    if not following:
-        return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
-
-    text = "📉 **قائمة الذين تتابعهم:**\nاضغط على اسم اللاعب للدخول إلى ملفه."
-    kb = []
-    
-    from datetime import datetime, timedelta
-    
-    for user in following:
-        # فحص حالة المتصل
-        last_seen = user['last_seen'] if user['last_seen'] else datetime.min
-        is_online = (datetime.now() - last_seen < timedelta(minutes=5))
-        status_icon = "🟢" if is_online else "⚪"
-        
-        # هنا الحل: نأخذ الاسم فقط ونضعه في زر
-        # الـ callback_data لازم يكون view_profile_ وبعده الايدي
-        kb.append([
-            InlineKeyboardButton(
-                text=f"{status_icon} {user['player_name']}", 
-                callback_data=f"view_profile_{user['user_id']}"
-            )
-        ])
-
-    # زر الرجوع
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
-    
-    # تعديل الرسالة الحالية
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 # --- دالة جديدة: عرض قائمة "المتابعون" ---
 @router.callback_query(F.data == "list_followers")
 async def show_followers_list(c: types.CallbackQuery):
@@ -1988,5 +2020,23 @@ async def handle_bottom_buttons(message: types.Message):
     # نقوم باستدعاء دالة الستارت نفسها
     name = message.from_user.full_name
     await show_main_menu(message, name)
+
+@router.callback_query(F.data.startswith("vp_"))
+async def handle_view_profile_callback(c: types.CallbackQuery):
+    try:
+        # استخراج الآيدي من vp_12345
+        target_id = int(c.data.split("_")[1])
+        
+        # استدعاء دالة البحث الموجودة بملفك (process_user_search)
+        # نحن نمرر target_id كرسالة وهمية لكي تعمل دالتك
+        from aiogram.types import Message
+        dummy_message = c.message
+        dummy_message.text = str(target_id)
+        dummy_message.from_user.id = c.from_user.id
+        
+        await process_user_search(dummy_message, None) # استدعاء دالتك الأصلية
+    except Exception as e:
+        print(f"Error: {e}")
+        await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
 
 
