@@ -57,6 +57,18 @@ async def quick_start_button(message: types.Message):
     # تنظيف + منيو جديد
     await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
 
+@router.callback_query(F.data == "play_friends")
+async def on_play_friends(c: types.CallbackQuery):
+    uid = c.from_user.id
+    text = "🎮 **اللعب مع الأصدقاء**\n\nاختر:"
+    kb = [
+        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
+        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+
+
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -414,6 +426,16 @@ async def menu_random(c: types.CallbackQuery):
         ])
         await c.message.edit_text(t(uid, "random_waiting"), reply_markup=kb)
 
+@router.callback_query(F.data == "random_play")
+async def on_random_play(c: types.CallbackQuery):
+    await c.answer("🎲 جاري البحث عن لاعبين...")
+    await c.message.edit_text(
+        t(c.from_user.id, "random_waiting"),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(c.from_user.id, "btn_back"), callback_data="home")]
+        ])
+    )
+
 @router.callback_query(F.data == "menu_friends")
 async def menu_friends(c: types.CallbackQuery):
     uid = c.from_user.id
@@ -647,12 +669,6 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
 async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     uid = user_id or (message.from_user.id if hasattr(message, "from_user") else 0)
 
-    # تحديث القاعدة تلقائياً
-    try:
-        db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
-    except:
-        pass
-
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
@@ -678,17 +694,32 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
         except:
             pass
 
-    # CallbackQuery (ازرار شفافة)
     if isinstance(message, types.CallbackQuery):
+        # تنظيف
         await _cleanup_last_messages(message.message, limit=15)
-        await message.message.answer(msg_text, reply_markup=markup)
-        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+
+        # الأفضل هنا: نعدّل نفس رسالة الزر إذا نكدر حتى تبقى رسالة وحدة
+        try:
+            await message.message.edit_text(msg_text, reply_markup=markup)
+        except:
+            await message.message.answer(msg_text, reply_markup=markup)
+
+        # نرسل الـ persistent_kb مرة وحدة فقط (بدون رسالة اضافية)
+        try:
+            await message.message.answer(" ", reply_markup=persistent_kb)
+        except:
+            pass
         return
 
-    # Message عادية
+    # message عادية
     await _cleanup_last_messages(message, limit=15)
     await message.answer(msg_text, reply_markup=markup)
-    await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+
+    # إرسال الـ persistent_kb بدون ما “يسوي قائمة ثانية” (نرسل سطر فارغ)
+    try:
+        await message.answer(" ", reply_markup=persistent_kb)
+    except:
+        pass
     
     
     async def _cleanup_chat(msg_obj, limit: int = 15):
