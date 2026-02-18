@@ -2013,9 +2013,9 @@ async def show_following_list(c: types.CallbackQuery):
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-    @router.callback_query(F.data == "list_following")
+@router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
-    uid = c.from_user.id  # لاحظ الفراغ هنا (لازم 4 مسافات)
+    uid = c.from_user.id
     following = db_query("""
         SELECT u.user_id, u.player_name 
         FROM follows f 
@@ -2029,15 +2029,25 @@ async def show_following_list(c: types.CallbackQuery):
     text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
     kb = []
     for user in following:
+        # حل مشكلة النيون (None)
         display_name = user['player_name'] if user['player_name'] else "لاعب"
         kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
 
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-    @router.callback_query(F.data == "list_following")
+@router.callback_query(F.data.startswith("vp_"))
+async def handle_view_profile_callback(c: types.CallbackQuery):
+    try:
+        target_id = c.data.split("_")[1]
+        # استدعاء دالة البحث الموجودة بالأعلى
+        await process_user_search(c.message, None, manual_id=target_id)
+        await c.answer()
+    except Exception as e:
+        print(f"Error in vp: {e}")
+        await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
+
+@router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
     following = db_query("SELECT u.user_id, u.player_name FROM follows f JOIN users u ON f.following_id = u.user_id WHERE f.follower_id = %s", (uid,))
