@@ -1706,7 +1706,7 @@ async def send_game_invite(c: types.CallbackQuery):
 
 # --- 2. دالة قبول الطلب ---
 @router.callback_query(F.data.startswith("accept_inv_"))
-async def accept_invite(c: types.CallbackQuery):
+async def accept_game_invite(c: types.CallbackQuery):
     sender_id = int(c.data.split("_")[2])
     target_id = c.from_user.id
     
@@ -1722,7 +1722,7 @@ async def accept_invite(c: types.CallbackQuery):
 
 # --- 3. دالة رفض الطلب ---
 @router.callback_query(F.data.startswith("reject_inv_"))
-async def reject_invite(c: types.CallbackQuery):
+async def reject_game_invite(c: types.CallbackQuery):
     sender_id = int(c.data.split("_")[2])
     target_name = c.from_user.full_name
     
@@ -1782,66 +1782,6 @@ async def process_invites_timer(c: types.CallbackQuery):
     
     # العودة لبروفايل اللاعب باستخدام تعديل الرسالة
     await process_user_search_by_id(c, uid)
-
-# --- 1. دالة قبول الطلب (تنفذ عند ضغط الصديق على ✅ قبول) ---
-@router.callback_query(F.data.startswith("accept_inv_"))
-async def accept_game_invite(c: types.CallbackQuery):
-    # sender_id هو الشخص الذي أرسل الدعوة
-    sender_id = int(c.data.split("_")[2])
-    # target_id هو الشخص الذي ضغط "قبول" الآن
-    target_id = c.from_user.id
-    
-    # جلب أسماء اللاعبين للتنسيق
-    sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
-    target_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (target_id,))
-    
-    if not sender_data or not target_data:
-        return await c.answer("⚠️ حدث خطأ، أحد اللاعبين غير موجود.")
-
-    s_name = sender_data[0]['player_name']
-    t_name = target_data[0]['player_name']
-
-    # 1. إبلاغ المرسل بأن دعوته قُبلت
-    try:
-        # نرسل للمرسل زر "دخول الغرفة"
-        kb_sender = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎮 دخول الغرفة الآن", callback_data=f"join_private_{target_id}")]
-        ])
-        await c.bot.send_message(
-            sender_id, 
-            f"✅ وافق **{t_name}** على دعوتك!\nاضغط على الزر بالأسفل لبدء اللعب.",
-            reply_markup=kb_sender
-        )
-    except:
-        return await c.answer("⚠️ يبدو أن المرسل أغلق البوت.")
-
-    # 2. تعديل رسالة الطلب عند الشخص الذي قبل (النظافة)
-    kb_target = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎲 إنشاء الغرفة", callback_data="create_room")]
-    ])
-    
-    await c.message.edit_text(
-        f"🚀 **تم قبول الدعوة!**\n\nأنت الآن ستلعب مع **{s_name}**.\nقم بإنشاء غرفة وأرسل الكود له أو انتظر دخوله.",
-        reply_markup=kb_target
-    )
-
-# --- 2. دالة رفض الطلب (تنفذ عند ضغط الصديق على ❌ رفض) ---
-@router.callback_query(F.data.startswith("reject_inv_"))
-async def reject_game_invite(c: types.CallbackQuery):
-    sender_id = int(c.data.split("_")[2])
-    target_name = c.from_user.full_name
-    
-    # إبلاغ المرسل بالرفض
-    try:
-        await c.bot.send_message(sender_id, f"❌ اعتذر **{target_name}** عن اللعب حالياً.")
-    except: pass
-    
-    # تنظيف الشاشة عند الشخص الذي رفض
-    try:
-        await c.message.delete()
-        await c.answer("تم رفض الطلب بنجاح.")
-    except:
-        await c.message.edit_text("❌ تم رفض الطلب.")
 
 
 
