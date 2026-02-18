@@ -1542,13 +1542,61 @@ async def start_calculator(c: types.CallbackQuery):
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# --- دالة جديدة: عرض القوانين (إصلاح الزر) ---
-@router.callback_query(F.data == "rules")
-async def show_rules_handler(c: types.CallbackQuery):
+# 1. الأزرار السفلية (زر واحد يرسل نص /start)
+persistent_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="/start")] # يرسل كلمة ستارت كأنه المستخدم كتبها
+    ],
+    resize_keyboard=True,
+    persistent=True
+)
+
+# 2. تعديل قائمة المتابعين (حذف None وإصلاح الدخول للاعب)
+@router.callback_query(F.data == "list_following")
+async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
-    await c.message.edit_text(t(uid, "rules_full"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
-    ]))
+    following = db_query("""
+        SELECT u.user_id, u.player_name, u.last_seen 
+        FROM follows f 
+        JOIN users u ON f.following_id = u.user_id 
+        WHERE f.follower_id = %s
+    """, (uid,))
+
+    if not following:
+        return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
+
+    text = "📉 **قائمة المتابعة:**\n(اضغط على الاسم لفتح البروفايل)"
+    kb = []
+    from datetime import datetime, timedelta
+    
+    for user in following:
+        # فحص الاتصال
+        last_seen = user['last_seen'] if user['last_seen'] else datetime.min
+        is_online = (datetime.now() - last_seen < timedelta(minutes=5))
+        status_icon = "🟢" if is_online else "⚪"
+        
+        # الحل النهائي: عرض الاسم فقط بدون أي يوزر أو None
+        display_name = user['player_name'] if user['player_name'] else "لاعب"
+        
+        kb.append([InlineKeyboardButton(
+            text=f"{status_icon} {display_name}", 
+            callback_data=f"view_profile_{user['user_id']}" # تأكد من هذا الاسم
+        )])
+
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# 3. معالج الدخول للاعب (تأكد من وجوده في نهاية الملف)
+@router.callback_query(F.data.startswith("view_profile_"))
+async def handle_view_profile_btn(c: types.CallbackQuery):
+    try:
+        # استخراج الايدي من view_profile_12345
+        target_id = int(c.data.split("_")[2])
+        # استدعاء دالة البحث الموجودة بملفك
+        await process_user_search_by_id(c, target_id)
+    except Exception as e:
+        print(f"Error in view_profile: {e}")
+        await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
 
 # قائمة المتابعين - نسخة نظيفة بدون None وبدون يوزرنيم
 @router.callback_query(F.data == "list_following")
