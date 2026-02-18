@@ -83,17 +83,15 @@ async def show_main_menu(message, name, user_id=None):
         await message.answer(msg_text, reply_markup=markup)
         await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
 
-
-
 async def quick_start_button(message: types.Message):
+    # يمسح رسالة المستخدم حتى يصير الشات نظيف
     try:
-        await message.delete()  # يمسح رسالة المستخدم
+        await message.delete()
     except:
         pass
 
-    # ينزل منيو جديد + ينظف القديم
+    # يرسل منيو جديد + تنظيف السابق
     await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
-
 
 
 @router.message(RoomStates.upgrade_username)
@@ -684,7 +682,7 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     await (c.message, user[0]['player_name'] if user else "لاعب", uid)
     
 async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
-    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
+    uid = user_id or (message.from_user.id if hasattr(message, "from_user") else 0)
 
     # تحديث القاعدة تلقائياً
     try:
@@ -699,13 +697,43 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
         [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
          InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
         [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
-        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
+        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     msg_text = t(uid, "main_menu", name=name)
 
-# إصلاح زر اللعب العشوائي (ربطه بملف room_multi)
-@router.callback_query(F.data == "random_play")
+    async def cleanup_last_messages(msg_obj: types.Message, limit: int = 15):
+        if not cleanup:
+            return
+        try:
+            last_id = msg_obj.message_id
+            for mid in range(last_id, max(last_id - limit, 1), -1):
+                try:
+                    await msg_obj.bot.delete_message(msg_obj.chat.id, mid)
+                except:
+                    pass
+        except:
+            pass
+
+    # لو CallbackQuery (ضغط زر شفاف)
+    if isinstance(message, types.CallbackQuery):
+        try:
+            await cleanup_last_messages(message.message, limit=15)
+        except:
+            pass
+
+        await message.message.answer(msg_text, reply_markup=markup)
+        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+        return
+
+    # لو Message عادية (زر ستارت/نص)
+    try:
+        await cleanup_last_messages(message, limit=15)
+    except:
+        pass
+
+    await message.answer(msg_text, reply_markup=markup)
+    await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
 
 async def _cleanup_chat(msg_obj, limit: int = 15):
         if not cleanup:
