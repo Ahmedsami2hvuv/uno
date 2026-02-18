@@ -49,18 +49,10 @@ def generate_room_code():
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
-    # --- تحديث ذكي للقاعدة (يعمل في كل مرة يرى فيها المستخدم القائمة الرئيسية) ---
-    try:
-        # فحص وجود العمود أولاً قبل الإضافة لتجنب الأخطاء المتكررة في الـ Logs
-        db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
-    except:
-        pass # إذا كان العمود موجوداً مسبقاً، سيتجاهل الخطأ ويكمل بشكل طبيعي
-    # -------------------------------------------------------------------------
+    # تحديث القاعدة
+    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
+    except: pass
 
-    db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
-    
-    # بقية كود الدالة (الأزرار والرسالة)...
-    
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
@@ -73,14 +65,14 @@ async def show_main_menu(message, name, user_id=None):
     
     msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    
-    # استدعاء الكيبورد السفلي (تأكد أنك عرفت persistent_kb في بداية الملف)
     from handlers.common import persistent_kb 
 
+    # لتنظيف الشاشة ومنع تكرار "استخدم الأزرار"
     if isinstance(message, types.CallbackQuery):
-        try: await message.message.delete()
+        try:
+            # نحاول حذف الرسالة اللي تحت (استخدم الأزرار) والرسالة اللي فوقها
+            await message.message.delete()
         except: pass
-        # نرسل الرسالة ومعها الكيبورد السفلي (الستارت والمنيو)
         await message.message.answer(msg_text, reply_markup=markup)
         await message.message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
     else:
@@ -88,16 +80,6 @@ async def show_main_menu(message, name, user_id=None):
         except: pass
         await message.answer(msg_text, reply_markup=markup)
         await message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
-
-@router.message(F.text == "🚀 ابدأ")
-@router.message(Command("start")) # لتغطية أمر /start أيضاً بنفس الطريقة
-async def handle_start_and_btn(message: types.Message):
-    # جلب اسم اللاعب لإرساله للدالة
-    user_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
-    name = user_data[0]['player_name'] if user_data else message.from_user.full_name
-    
-    # استدعاء القائمة الرئيسية (التي ستقوم بالتنظيف تلقائياً)
-    await show_main_menu(message, name)
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
