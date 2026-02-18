@@ -46,16 +46,20 @@ persistent_kb = ReplyKeyboardMarkup(
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
-async def show_main_menu(message, name, user_id=None):
+aasync def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
-    # تحديث تلقائي للقاعدة (لحل مشكلة التيرمينال)
+    # --- تحديث ذكي للقاعدة (يعمل في كل مرة يرى فيها المستخدم القائمة الرئيسية) ---
     try:
-        db_query("ALTER TABLE follows ADD COLUMN notify_games BOOLEAN DEFAULT 0", commit=True)
-        db_query("ALTER TABLE users ADD COLUMN allow_invites BOOLEAN DEFAULT 1", commit=True)
-    except: pass
+        # فحص وجود العمود أولاً قبل الإضافة لتجنب الأخطاء المتكررة في الـ Logs
+        db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
+    except:
+        pass # إذا كان العمود موجوداً مسبقاً، سيتجاهل الخطأ ويكمل بشكل طبيعي
+    # -------------------------------------------------------------------------
 
     db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (uid,), commit=True)
+    
+    # بقية كود الدالة (الأزرار والرسالة)...
     
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
@@ -70,14 +74,14 @@ async def show_main_menu(message, name, user_id=None):
     msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # استدعاء الكيبورد السفلي اللي فيه (🏠 القائمة الرئيسية و 🚀 ابدأ)
+    # استدعاء الكيبورد السفلي (تأكد أنك عرفت persistent_kb في بداية الملف)
     from handlers.common import persistent_kb 
 
     if isinstance(message, types.CallbackQuery):
         try: await message.message.delete()
         except: pass
+        # نرسل الرسالة ومعها الكيبورد السفلي (الستارت والمنيو)
         await message.message.answer(msg_text, reply_markup=markup)
-        # هذا السطر يضمن ظهور الأزرار السفلية تحت لوحة الكتابة
         await message.message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
     else:
         try: await message.delete()
