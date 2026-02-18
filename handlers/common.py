@@ -83,6 +83,7 @@ async def show_main_menu(message, name, user_id=None):
         except: pass
         await message.answer(msg_text, reply_markup=markup)
 
+@router.message(F.text == "🚀 ابدأ")
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -97,11 +98,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
              InlineKeyboardButton(text="English 🇺🇸", callback_data="setlang_en")]
         ])
         await message.answer(TEXTS["choose_lang"]["ar"], reply_markup=kb)
+        # تسجيل الكيبورد الثابت
+        await message.answer("👇 استخدم الأزرار أدناه للتنقل", reply_markup=persistent_kb)
         return
 
     # 2. إذا كان مستخدم قديم بس ما عنده يوزر نيم (username_key)
     if not user[0].get('username_key'):
-        await message.answer(t(user_id, "reg_upgrade_notice"))
+        await message.answer(t(user_id, "reg_upgrade_notice"), reply_markup=persistent_kb)
         await message.answer(t(user_id, "ask_username_key"))
         await state.set_state(RoomStates.upgrade_username)
         return
@@ -110,6 +113,14 @@ async def cmd_start(message: types.Message, state: FSMContext):
     # نحدث وقت التواجد (Online Status)
     db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (user_id,), commit=True)
     await show_main_menu(message, user[0]['player_name'], user_id)
+
+@router.message(F.text == "🏠 القائمة الرئيسية")
+async def cmd_home_button(message: types.Message, state: FSMContext):
+    await state.clear()
+    user_id = message.from_user.id
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
+    name = user[0]['player_name'] if user else "لاعب"
+    await show_main_menu(message, name, user_id)
 
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
