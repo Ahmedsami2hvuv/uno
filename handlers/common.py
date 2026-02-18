@@ -56,10 +56,10 @@ persistent_kb = ReplyKeyboardMarkup(
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
-async def show_main_menu(message, name, user_id=None):
+aasync def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
-    # تحديث القاعدة (المؤقت)
+    # تحديث القاعدة تلقائياً
     try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
     except: pass
 
@@ -72,25 +72,29 @@ async def show_main_menu(message, name, user_id=None):
         [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
         [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
     ]
-    
-    msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    msg_text = t(uid, "main_menu", name=name)
 
+    # الإصلاح هنا: إرسال الـ markup (الأزرار الشفافة) فقط في الـ reply_markup
+    # والـ persistent_kb (الأزرار السفلية) تظهر تلقائياً بمجرد إرسالها مع أي رسالة نصية
     if isinstance(message, types.CallbackQuery):
-        # تعديل الرسالة الحالية لضمان النظافة
         try:
-            await message.message.edit_text(msg_text, reply_markup=markup)
+            await message.message.delete()
         except:
-            # إذا فشل التعديل، نحذف ونرسل جديدة مع الكيبورد السفلي
-            try: await message.message.delete()
-            except: pass
-            await message.message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
+            pass
+        # نرسل رسالة جديدة تحتوي على الأزرار الشفافة والكيبورد السفلي
+        await message.message.answer(msg_text, reply_markup=markup)
+        # لإظهار الكيبورد السفلي، نرسله في رسالة تأكيد بسيطة أو مع المنيو
+        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
     else:
-        # إذا جاء من أمر نصي (مثل ابدأ اللعب)، نحذف رسالته ونرسل المنيو مع الكيبورد السفلي
-        try: await message.delete()
-        except: pass
-        await message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
-@router.message(Command("start"))
+        try:
+            await message.delete()
+        except:
+            pass
+        await message.answer(msg_text, reply_markup=markup)
+        await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
+
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     name = message.from_user.full_name
