@@ -893,47 +893,30 @@ async def cancel_leave_multi(c: types.CallbackQuery):
     rid = c.data.split("_")[1]
     await refresh_ui_multi(rid, c.bot)
 
-# هذا الكود يرسل تنبيه لكل شخص مفعل زر الجرس (🔔) لهذا اللاعب
+# دالة إرسال التنبيهات المدمجة - (انضمام ومشاهدة)
 async def notify_followers_game_started(player_id, player_name, bot):
-    # جلب المتابعين الذين فعلوا التنبيه فقط
-    followers = db_query("""
-        SELECT follower_id FROM follows 
-        WHERE following_id = %s AND notify_games = 1
-    """, (player_id,))
-    
-    for f in followers:
-        try:
-            # زر يسمح للمتابع بالدخول لمشاهدة اللعبة أو الانضمام
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="👁 مشاهدة اللعبة", callback_data=f"spectate_{player_id}")]
-            ])
-            await bot.send_message(
-                f['follower_id'], 
-                f"🚀 صديقك {player_name} بدأ لعبة أونو الآن! هل تريد المشاهدة؟",
-                reply_markup=kb
-            )
-        except:
-            continue
-
-# دالة إرسال التنبيهات للمتابعين (كاملة ونظيفة)
-async def notify_followers_game_started(player_id, player_name, bot):
-    # جلب المتابعين اللي مفعلين الجرس (notify_games = 1) لهذا اللاعب
+    # جلب المتابعين الذين فعلوا الجرس لهذا اللاعب
     followers = db_query("""
         SELECT follower_id FROM follows 
         WHERE following_id = %s AND notify_games = 1
     """, (player_id,))
     
     if not followers:
-        return # إذا ماكو أحد مفعل الجرس نطلع
+        return
 
-    # رسالة التنبيه مع زر سريع للدخول
-    text = f"🚀 **تنبيه متابعة!**\n\nصديقك **{player_name}** يقوم بإنشاء غرفة لعب الآن. هل تريد الانضمام؟"
+    # نص التنبيه الموحد
+    text = f"🚀 **تنبيه متابعة!**\n\nصديقك **{player_name}** بدأ لعبة أونو الآن! ماذا تريد أن تفعل؟"
+    
+    # أزرار مزدوجة (انضمام ومشاهدة)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 دخول للعب معه", callback_data=f"view_profile_{player_id}")]
+        [
+            InlineKeyboardButton(text="🎮 انضمام للعب", callback_data=f"view_profile_{player_id}"),
+            InlineKeyboardButton(text="👁 مشاهدة فقط", callback_data=f"spectate_{player_id}")
+        ]
     ])
 
     for f in followers:
         try:
             await bot.send_message(f['follower_id'], text, reply_markup=kb)
         except Exception:
-            continue # إذا حظر البوت نتجاوزه ونكمل للباقين
+            continue
