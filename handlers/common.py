@@ -56,7 +56,7 @@ persistent_kb = ReplyKeyboardMarkup(
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
-aasync def show_main_menu(message, name, user_id=None):
+async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
     # تحديث القاعدة تلقائياً
