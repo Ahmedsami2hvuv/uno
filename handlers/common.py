@@ -91,32 +91,26 @@ async def show_main_menu(message, name, user_id=None):
         except: pass
         await message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
 @router.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    # فحص إذا كان المستخدم مسجل أصلاً
-    user = db_query("SELECT * FROM users WHERE user_id = %s", (user_id,))
-    
-    # 1. إذا كان مستخدم جديد كلياً
-    if not user:
-        # نبدأ بطلب اللغة أولاً (كودك القديم)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="العربية 🇮🇶", callback_data="setlang_ar"),
-             InlineKeyboardButton(text="English 🇺🇸", callback_data="setlang_en")]
-        ])
-        await message.answer(TEXTS["choose_lang"]["ar"], reply_markup=kb)
-        return
+@router.message(Command("start"))
+async def cmd_start(message: types.Message):
+    name = message.from_user.full_name
+    await show_main_menu(message, name)
 
-    # 2. إذا كان مستخدم قديم بس ما عنده يوزر نيم (username_key)
-    if not user[0].get('username_key'):
-        await message.answer(t(user_id, "reg_upgrade_notice"))
-        await message.answer(t(user_id, "ask_username_key"))
-        await state.set_state(RoomStates.upgrade_username)
-        return
+@router.callback_query(F.data == "home")
+async def cb_home(c: types.CallbackQuery):
+    name = c.from_user.full_name
+    await show_main_menu(c, name)
+@router.message(F.text == "🚀 ابدأ اللعب")
+@router.message(F.text == "🏠 القائمة الرئيسية")
 
-    # 3. إذا كان حسابه كامل (عنده يوزر نيم وباسورد)
-    # نحدث وقت التواجد (Online Status)
-    db_query("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE user_id = %s", (user_id,), commit=True)
-    await show_main_menu(message, user[0]['player_name'], user_id)
+
+async def quick_start_button(message: types.Message):
+    # مسح رسالة المستخدم ليبقى الشات نظيفاً
+    try: await message.delete()
+    except: pass
+    await (message, message.from_user.full_name)
+
+
 
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
@@ -704,6 +698,35 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
     await show_main_menu(c.message, user[0]['player_name'] if user else "لاعب", uid)
+async def show_main_menu(message, name, user_id=None):
+    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
+    
+    # تحديث قاعدة البيانات تلقائياً
+    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
+    except: pass
+
+    kb = [
+        [InlineKeyboardButton(text="🎮 لعب عشوائي", callback_data="random_play")],
+        [InlineKeyboardButton(text="👥 لعب مع الأصدقاء", callback_data="play_friends")],
+        [InlineKeyboardButton(text="🏆 المتابعين", callback_data="social_menu")], 
+        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_account"),
+         InlineKeyboardButton(text="🧮 الحاسبة", callback_data="calc_start")],
+        [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
+        [InlineKeyboardButton(text="🌐 اللغة", callback_data="change_lang")]
+    ]
+    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    msg_text = f"اهلا بك يا {name} في بوت اونو العراقي الأول 🇮🇶\nاستخدم الأزرار للبدء:"
+
+    if isinstance(message, types.CallbackQuery):
+        # تعديل الرسالة الحالية (أفضل للنظافة)
+        try:
+            await message.message.edit_text(msg_text, reply_markup=markup)
+        except:
+            await message.message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
+    else:
+        # رسالة نصية جديدة
+        await message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
+
 
 # إصلاح زر القوانين
 @router.callback_query(F.data == "rules")
