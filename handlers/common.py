@@ -49,10 +49,11 @@ def generate_room_code():
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
-    # تحديث القاعدة
+    # 1. تحديث القاعدة (المؤقت)
     try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
     except: pass
 
+    # 2. بناء الأزرار
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
@@ -65,24 +66,22 @@ async def show_main_menu(message, name, user_id=None):
     
     msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    from handlers.common import persistent_kb 
 
-    # لتنظيف الشاشة ومنع تكرار "استخدم الأزرار"
+    # 3. المنطق الجديد: رسالة واحدة فقط!
     if isinstance(message, types.CallbackQuery):
-        # حذف كل الرسائل السابقة عشان ما تتراكم "استخدم الأزرار"
+        # إذا جاء من ضغطة زر، نعدل نفس الرسالة
         try:
-            await message.message.delete() 
-            # إذا كان فيه رسالة ثانية تحتها (استخدم الأزرار) بنحاول نحذفها
-            # بس الأفضل نرسل المنيو ونكتفي
-        except: pass
-        
-        await message.message.answer(msg_text, reply_markup=markup)
-        await message.message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
+            await message.message.edit_text(msg_text, reply_markup=markup)
+        except:
+            # إذا فشل التعديل (مثلاً الرسالة قديمة جداً)، نحذف ونرسل جديدة
+            try: await message.message.delete()
+            except: pass
+            await message.message.answer(msg_text, reply_markup=markup)
     else:
+        # إذا أرسل /start أو نص، نحذف رسالته ونرسل المنيو
         try: await message.delete()
         except: pass
         await message.answer(msg_text, reply_markup=markup)
-        await message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
