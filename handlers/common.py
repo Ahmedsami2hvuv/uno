@@ -1525,7 +1525,7 @@ async def show_rules_handler(c: types.CallbackQuery):
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]))
 
-# --- دالة جديدة: عرض قائمة "الذين أتابعهم" ---
+# قائمة المتابعين - إخفاء اليوزر و None نهائياً
 @router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
@@ -1545,6 +1545,7 @@ async def show_following_list(c: types.CallbackQuery):
     for user in following:
         is_online = (datetime.now() - user['last_seen'] < timedelta(minutes=5))
         status_icon = "🟢" if is_online else "⚪"
+        # عرض الاسم فقط بدون أي يوزر أو كلمة None
         kb.append([InlineKeyboardButton(text=f"{status_icon} {user['player_name']}", callback_data=f"view_profile_{user['user_id']}")])
 
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
