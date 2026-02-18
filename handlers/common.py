@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from database import db_query
 from i18n import t, get_lang, set_lang, TEXTS
 import random, string, json, asyncio
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 router = Router()
 
@@ -43,17 +44,25 @@ persistent_kb = ReplyKeyboardMarkup(
     is_persistent=True
 )
 
+persistent_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🚀 ابدأ اللعب")],
+        [KeyboardButton(text="🏠 القائمة الرئيسية")]
+    ],
+    resize_keyboard=True, # ليصغر حجم الأزرار وتكون أنيقة
+    persistent=True       # لتبقى ظاهرة دائماً ولا تختفي
+)
+
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
 async def show_main_menu(message, name, user_id=None):
     uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
     
-    # 1. تحديث القاعدة (المؤقت)
+    # تحديث القاعدة (المؤقت)
     try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
     except: pass
 
-    # 2. بناء الأزرار
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
@@ -67,22 +76,20 @@ async def show_main_menu(message, name, user_id=None):
     msg_text = t(uid, "main_menu", name=name)
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
 
-    # 3. المنطق الجديد: رسالة واحدة فقط!
     if isinstance(message, types.CallbackQuery):
-        # إذا جاء من ضغطة زر، نعدل نفس الرسالة
+        # تعديل الرسالة الحالية لضمان النظافة
         try:
             await message.message.edit_text(msg_text, reply_markup=markup)
         except:
-            # إذا فشل التعديل (مثلاً الرسالة قديمة جداً)، نحذف ونرسل جديدة
+            # إذا فشل التعديل، نحذف ونرسل جديدة مع الكيبورد السفلي
             try: await message.message.delete()
             except: pass
-            await message.message.answer(msg_text, reply_markup=markup)
+            await message.message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
     else:
-        # إذا أرسل /start أو نص، نحذف رسالته ونرسل المنيو
+        # إذا جاء من أمر نصي (مثل ابدأ اللعب)، نحذف رسالته ونرسل المنيو مع الكيبورد السفلي
         try: await message.delete()
         except: pass
-        await message.answer(msg_text, reply_markup=markup)
-
+        await message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1892,3 +1899,12 @@ async def my_account_btn(c: types.CallbackQuery):
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.message(F.text == "🚀 ابدأ اللعب")
+@router.message(F.text == "🏠 القائمة الرئيسية")
+async def handle_bottom_buttons(message: types.Message):
+    # نقوم باستدعاء دالة الستارت نفسها
+    name = message.from_user.full_name
+    await show_main_menu(message, name)
+
+
