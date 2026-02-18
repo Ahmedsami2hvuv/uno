@@ -69,10 +69,13 @@ async def show_main_menu(message, name, user_id=None):
 
     # لتنظيف الشاشة ومنع تكرار "استخدم الأزرار"
     if isinstance(message, types.CallbackQuery):
+        # حذف كل الرسائل السابقة عشان ما تتراكم "استخدم الأزرار"
         try:
-            # نحاول حذف الرسالة اللي تحت (استخدم الأزرار) والرسالة اللي فوقها
-            await message.message.delete()
+            await message.message.delete() 
+            # إذا كان فيه رسالة ثانية تحتها (استخدم الأزرار) بنحاول نحذفها
+            # بس الأفضل نرسل المنيو ونكتفي
         except: pass
+        
         await message.message.answer(msg_text, reply_markup=markup)
         await message.message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
     else:
@@ -1507,10 +1510,11 @@ async def show_rules_handler(c: types.CallbackQuery):
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]))
 
-# قائمة المتابعين - إخفاء اليوزر و None نهائياً
+# قائمة المتابعين - نسخة نظيفة بدون None وبدون يوزرنيم
 @router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
+    # جلب البيانات من القاعدة
     following = db_query("""
         SELECT u.user_id, u.player_name, u.last_seen 
         FROM follows f 
@@ -1521,18 +1525,31 @@ async def show_following_list(c: types.CallbackQuery):
     if not following:
         return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
 
-    text = "📉 **قائمة الذين تتابعهم:**"
+    text = "📉 **قائمة الذين تتابعهم:**\nاضغط على اسم اللاعب للدخول إلى ملفه."
     kb = []
+    
     from datetime import datetime, timedelta
+    
     for user in following:
-        is_online = (datetime.now() - user['last_seen'] < timedelta(minutes=5))
+        # فحص حالة المتصل
+        last_seen = user['last_seen'] if user['last_seen'] else datetime.min
+        is_online = (datetime.now() - last_seen < timedelta(minutes=5))
         status_icon = "🟢" if is_online else "⚪"
-        # عرض الاسم فقط بدون أي يوزر أو كلمة None
-        kb.append([InlineKeyboardButton(text=f"{status_icon} {user['player_name']}", callback_data=f"view_profile_{user['user_id']}")])
+        
+        # هنا الحل: نأخذ الاسم فقط ونضعه في زر
+        # الـ callback_data لازم يكون view_profile_ وبعده الايدي
+        kb.append([
+            InlineKeyboardButton(
+                text=f"{status_icon} {user['player_name']}", 
+                callback_data=f"view_profile_{user['user_id']}"
+            )
+        ])
 
+    # زر الرجوع
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    
+    # تعديل الرسالة الحالية
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
 # --- دالة جديدة: عرض قائمة "المتابعون" ---
 @router.callback_query(F.data == "list_followers")
 async def show_followers_list(c: types.CallbackQuery):
@@ -1841,3 +1858,38 @@ async def reject_game_invite(c: types.CallbackQuery):
     except:
         await c.message.edit_text("❌ تم رفض الطلب.")
 
+
+@router.callback_query(F.data.startswith("view_profile_"))
+async def handle_view_profile_from_list(c: types.CallbackQuery):
+    try:
+        # تقسيم النص للحصول على الرقم: view_profile_12345 -> 12345
+        target_id = int(c.data.split("_")[2])
+        # استدعاء دالة عرض البروفايل الموجودة بملفك
+        await process_user_search_by_id(c, target_id)
+    except Exception as e:
+        await c.answer("❌ تعذر العثور على اللاعب.")
+
+# معالج زر اللعب مع الأصدقاء
+@router.callback_query(F.data == "play_friends")
+async def play_friends_btn(c: types.CallbackQuery):
+    uid = c.from_user.id
+    text = "🎮 **اللعب مع الأصدقاء**\n\nأنشئ غرفة جديدة أو انضم لصديقك عبر الكود."
+    kb = [
+        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
+        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# معالج زر تعديل الحساب
+@router.callback_query(F.data == "my_account")
+async def my_account_btn(c: types.CallbackQuery):
+    uid = c.from_user.id
+    user = db_query("SELECT player_name, online_points FROM users WHERE user_id = %s", (uid,))[0]
+    text = f"👤 **إعدادات حسابك**\n\n📦 الاسم: {user['player_name']}\n🏆 النقاط: {user['online_points']}"
+    kb = [
+        [InlineKeyboardButton(text="✏️ تغيير الاسم", callback_data="edit_name")],
+        [InlineKeyboardButton(text="⚙️ استقبال الدعوات", callback_data=f"allow_invites_{uid}")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
