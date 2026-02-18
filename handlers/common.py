@@ -524,7 +524,29 @@ async def handle_view_profile_fix(c: types.CallbackQuery):
 
     await process_user_search_by_id(c, target_id)
 
+@router.callback_query(F.data == "list_following")
+async def show_following_list(c: types.CallbackQuery):
+    uid = c.from_user.id
+    following = db_query("""
+        SELECT u.user_id, u.player_name, u.last_seen 
+        FROM follows f 
+        JOIN users u ON f.following_id = u.user_id 
+        WHERE f.follower_id = %s
+    """, (uid,))
 
+    if not following:
+        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
+
+    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
+    kb = []
+    for user in following:
+        # هنا سحب الاسم فقط بدون None
+        display_name = user['player_name'] if user['player_name'] else "لاعب"
+        kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
+
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    
 
 async def process_user_search_by_id(c, target_id):
     # جلب بيانات اللاعب من القاعدة باستخدام الآيدي
@@ -2039,4 +2061,25 @@ async def handle_view_profile_callback(c: types.CallbackQuery):
         print(f"Error: {e}")
         await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
 
+@router.callback_query(F.data == "list_following")
+async def show_following_list(c: types.CallbackQuery):
+    uid = c.from_user.id
+    following = db_query("""
+        SELECT u.user_id, u.player_name, u.last_seen 
+        FROM follows f 
+        JOIN users u ON f.following_id = u.user_id 
+        WHERE f.follower_id = %s
+    """, (uid,))
 
+    if not following:
+        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
+
+    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
+    kb = []
+    for user in following:
+        # هنا سحب الاسم فقط بدون None
+        display_name = user['player_name'] if user['player_name'] else "لاعب"
+        kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
+
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
