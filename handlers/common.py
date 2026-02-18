@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from database import db_query
 from i18n import t, get_lang, set_lang, TEXTS
 import random, string, json, asyncio
+from datetime import datetime, timedelta
 
 router = Router()
 
@@ -80,14 +81,22 @@ async def show_main_menu(message, name, user_id=None):
     if isinstance(message, types.CallbackQuery):
         try: await message.message.delete()
         except: pass
-        # نرسل الرسالة ومعها الكيبورد السفلي (الستارت والمنيو)
-        await message.message.answer(msg_text, reply_markup=markup)
-        await message.message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
+        # نرسل الرسالة مع الكيبورد السفلي مرة واحدة فقط
+        sent = await message.message.answer(msg_text, reply_markup=markup)
+        # تحديث الكيبورد السفلي بدون رسالة إضافية
+        try:
+            await message.bot.send_message(message.from_user.id, ".", reply_markup=persistent_kb)
+        except:
+            pass
     else:
         try: await message.delete()
         except: pass
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("استخدم الأزرار بالأسفل للتنقل السريع 👇", reply_markup=persistent_kb)
+        sent = await message.answer(msg_text, reply_markup=markup)
+        # تحديث الكيبورد السفلي بدون رسالة إضافية
+        try:
+            await message.bot.send_message(message.from_user.id, ".", reply_markup=persistent_kb)
+        except:
+            pass
 
 @router.message(F.text == "🚀 ابدأ")
 @router.message(Command("start")) # لتغطية أمر /start أيضاً بنفس الطريقة
@@ -1155,7 +1164,7 @@ async def process_my_account_callback(c: types.CallbackQuery):
     
     # الأزرار (تعديل الحساب ورجوع)
     kb = [
-        [InlineKeyboardButton(text=t(uid, "تعديل الحساب"), callback_data="edit_acc")],
+        [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]
     
@@ -1576,6 +1585,41 @@ async def show_followers_list(c: types.CallbackQuery):
     kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
 
+# --- دالة مساعدة: عرض ملف اللاعب بواسطة الـ ID ---
+async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
+    uid = c.from_user.id
+    
+    target = db_query("SELECT * FROM users WHERE user_id = %s", (target_id,))
+    if not target:
+        return await c.answer("❌ اللاعب غير موجود.", show_alert=True)
+    
+    t_user = target[0]
+    
+    # فحص إذا كنت تتابعه حالياً
+    is_following = db_query("SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s", (uid, target_id))
+    
+    # بناء حالة الأونلاين
+    status = t(uid, "status_online") if (datetime.now() - t_user['last_seen'] < timedelta(minutes=5)) else t(uid, "status_offline", time=t_user['last_seen'].strftime("%H:%M"))
+    
+    username_display = t_user.get('username_key') or "غير محدد"
+    points = t_user.get('online_points', 0)
+    
+    text = t(uid, "profile_title", name=t_user['player_name'], username=username_display, points=points, status=status)
+    
+    kb = []
+    # زر المتابعة أو الإلغاء
+    follow_btn_text = t(uid, "btn_unfollow") if is_following else t(uid, "btn_follow")
+    follow_callback = f"unfollow_{target_id}" if is_following else f"follow_{target_id}"
+    
+    kb.append([InlineKeyboardButton(text=follow_btn_text, callback_data=follow_callback)])
+    kb.append([InlineKeyboardButton(text=t(uid, "btn_invite_play"), callback_data=f"invite_{target_id}")])
+    kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
+    
+    try:
+        await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    except:
+        await c.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
 # --- دالة جديدة: عرض بروفايل أي لاعب بالضغط عليه من القائمة ---
 @router.callback_query(F.data.startswith("view_profile_"))
 async def view_target_profile(c: types.CallbackQuery):
@@ -1644,8 +1688,8 @@ async def play_friends_menu(c: types.CallbackQuery):
     uid = c.from_user.id
     text = "🎮 **اللعب مع الأصدقاء**\n\nيمكنك إنشاء غرفة جديدة أو الانضمام لغرفة صديق بواسطة الكود."
     kb = [
-        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="create_room")],
-        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="join_room")],
+        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")],
+        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="room_join_input")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
