@@ -527,8 +527,8 @@ async def menu_random(c: types.CallbackQuery):
 
 @router.callback_query(F.data == "list_following")
 
-async def (c: types.CallbackQuery):
-
+@router.callback_query(F.data == "back_to_main") # أو حسب الـ callback_data الموجود فوقه
+async def handle_back_to_main(c: types.CallbackQuery):
     uid = c.from_user.id
 
     following = db_query("""
