@@ -2014,7 +2014,7 @@ async def show_following_list(c: types.CallbackQuery):
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
     @router.callback_query(F.data == "list_following")
-async def show_following_list(c: types.CallbackQuery):
+    async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
     following = db_query("""
         SELECT u.user_id, u.player_name 
