@@ -2014,8 +2014,8 @@ async def show_following_list(c: types.CallbackQuery):
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
     @router.callback_query(F.data == "list_following")
-    async def show_following_list(c: types.CallbackQuery):
-    uid = c.from_user.id
+async def show_following_list(c: types.CallbackQuery):
+    uid = c.from_user.id  # لاحظ الفراغ هنا (لازم 4 مسافات)
     following = db_query("""
         SELECT u.user_id, u.player_name 
         FROM follows f 
@@ -2026,13 +2026,14 @@ async def show_following_list(c: types.CallbackQuery):
     if not following:
         return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
 
-    text = "📉 **قائمة الذين تتابعهم:**\nاضغط على الاسم لعرض الملف"
+    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
     kb = []
     for user in following:
-        # هنا حلينا مشكلة النيون (None)
-        name = user['player_name'] if user['player_name'] else "لاعب"
-        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"vp_{user['user_id']}")])
+        display_name = user['player_name'] if user['player_name'] else "لاعب"
+        kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
 
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
