@@ -1557,6 +1557,16 @@ persistent_kb = ReplyKeyboardMarkup(
     persistent=True
 )
 
+
+@router.callback_query(F.data.startswith("calc_players_"))
+async def calc_choose_players(c: types.CallbackQuery, state: FSMContext):
+    n = int(c.data.split("_")[-1])
+    await state.update_data(calc_players=n)
+    kb = [[InlineKeyboardButton(text="🔙 رجوع", callback_data="calc_start")],
+          [InlineKeyboardButton(text="🏠 الرئيسية", callback_data="home")]]
+    await c.message.edit_text(f"✅ تم اختيار عدد اللاعبين: {n}\n\n(هنا نكمل خطوات الحاسبة بعدين)", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
 # 2. تعديل قائمة المتابعين (حذف None وإصلاح الدخول للاعب)
 @router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
@@ -1732,6 +1742,22 @@ async def notify_followers_game_started(player_id, player_name, bot):
             )
         except:
             continue
+@router.callback_query(F.data == "rules")
+async def show_rules(c: types.CallbackQuery):
+    uid = c.from_user.id
+    text = (
+        "📜 **قوانين أونو (مختصر)**\n\n"
+        "• لازم تلعب نفس اللون أو نفس الرقم.\n"
+        "• +2: اللي بعدك يسحب ورقتين ويتجاوز دوره.\n"
+        "• 🔄: ينعكس/يتغير اتجاه اللعب (حسب نظام لعبتكم).\n"
+        "• 🚫: يتجاوز دور اللاعب التالي.\n"
+        "• 🌈 جوكر: تختار لون.\n"
+        "• 🔥 +4: تختار لون والخصم يسحب 4.\n\n"
+        "إذا تحب أكتب القوانين كاملة وبصيغة لعبتك بالضبط قلّي."
+    )
+    kb = [[InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+
 
 @router.callback_query(F.data == "play_friends")
 async def play_friends_menu(c: types.CallbackQuery):
