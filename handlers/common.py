@@ -525,69 +525,19 @@ async def menu_random(c: types.CallbackQuery):
         ])
         await c.message.edit_text(t(uid, "random_waiting"), reply_markup=kb)
 
-@router.callback_query(F.data == "list_following")
 
-@router.callback_query(F.data == "back_to_main") # أو حسب الـ callback_data الموجود فوقه
+# 1. دالة الرجوع الحقيقية للمنيو الرئيسي
+@router.callback_query(F.data == "back_to_main")
 async def handle_back_to_main(c: types.CallbackQuery):
-    uid = c.from_user.id
+    name = c.from_user.full_name
+    await show_main_menu(c, name)
 
-    following = db_query("""
-
-        SELECT u.user_id, u.player_name, u.last_seen 
-
-        FROM follows f 
-
-        JOIN users u ON f.following_id = u.user_id 
-
-        WHERE f.follower_id = %s
-
-    """, (uid,))
-
-
-
-    if not following:
-
-        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
-
-
-
-    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
-
-    kb = []
-
-    for user in following:
-
-        # هنا سحب الاسم فقط بدون None
-
-        display_name = user['player_name'] if user['player_name'] else "لاعب"
-
-        kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
-
-
-
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
-
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-
-
-# أضف هذا المعالج تحتها مباشرة
-
-@router.callback_query(F.data.startswith("vp_"))
-
-async def handle_view_profile_fix(c: types.CallbackQuery):
-
-    target_id = int(c.data.split("_")[1])
-
-    # استدعاء الدالة اللي أصلاً موجودة بملفك
-
-    await process_user_search_by_id(c, target_id)
-
+# 2. دالة عرض قائمة المتابعين (مرة واحدة فقط وباسم صحيح)
 @router.callback_query(F.data == "list_following")
 async def show_following_list(c: types.CallbackQuery):
     uid = c.from_user.id
     following = db_query("""
-        SELECT u.user_id, u.player_name, u.last_seen 
+        SELECT u.user_id, u.player_name 
         FROM follows f 
         JOIN users u ON f.following_id = u.user_id 
         WHERE f.follower_id = %s
@@ -599,39 +549,23 @@ async def show_following_list(c: types.CallbackQuery):
     text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
     kb = []
     for user in following:
-        # هنا سحب الاسم فقط بدون None
         display_name = user['player_name'] if user['player_name'] else "لاعب"
         kb.append([InlineKeyboardButton(text=f"👤 {display_name}", callback_data=f"vp_{user['user_id']}")])
 
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    
 
-
-@router.callback_query(F.data == "list_following")
-async def (c: types.CallbackQuery):
-    uid = c.from_user.id
-    following = db_query("""
-        SELECT u.user_id, u.player_name, u.last_seen 
-        FROM follows f 
-        JOIN users u ON f.following_id = u.user_id 
-        WHERE f.follower_id = %s
-    """, (uid,))
-
-    if not following:
-        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
-
-    text = "📉 **قائمة المتابعة:**\nاضغط على الاسم للملف الشخصي"
-    kb = []
-    for user in following:
-        # هنا الحل لـ "نيون" (None): نأخذ player_name فقط
-        name = user['player_name'] if user['player_name'] else "لاعب"
-        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"vp_{user['user_id']}")])
-
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-
+# 3. دالة الدخول لبروفايل اللاعب عند الضغط على اسمه
+@router.callback_query(F.data.startswith("vp_"))
+async def handle_view_profile_callback(c: types.CallbackQuery):
+    try:
+        target_id = c.data.split("_")[1]
+        # استدعاء دالة البحث الموجودة أصلاً في ملفك (النسخة الجوكر)
+        await process_user_search(c.message, None, manual_id=target_id)
+        await c.answer()
+    except Exception as e:
+        print(f"Error: {e}")
+        await c.answer("⚠️ فشل الدخول لبروفايل اللاعب.")
 
 @router.callback_query(F.data == "menu_friends")
 async def menu_friends(c: types.CallbackQuery):
@@ -2078,3 +2012,39 @@ async def show_following_list(c: types.CallbackQuery):
 
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+    @router.callback_query(F.data == "list_following")
+async def show_following_list(c: types.CallbackQuery):
+    uid = c.from_user.id
+    following = db_query("""
+        SELECT u.user_id, u.player_name 
+        FROM follows f 
+        JOIN users u ON f.following_id = u.user_id 
+        WHERE f.follower_id = %s
+    """, (uid,))
+
+    if not following:
+        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
+
+    text = "📉 **قائمة الذين تتابعهم:**\nاضغط على الاسم لعرض الملف"
+    kb = []
+    for user in following:
+        # هنا حلينا مشكلة النيون (None)
+        name = user['player_name'] if user['player_name'] else "لاعب"
+        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"vp_{user['user_id']}")])
+
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+    @router.callback_query(F.data == "list_following")
+async def show_following_list(c: types.CallbackQuery):
+    uid = c.from_user.id
+    following = db_query("SELECT u.user_id, u.player_name FROM follows f JOIN users u ON f.following_id = u.user_id WHERE f.follower_id = %s", (uid,))
+    if not following:
+        return await c.answer("📉 قائمة المتابعة فارغة.", show_alert=True)
+    kb = []
+    for user in following:
+        name = user['player_name'] or "لاعب"
+        kb.append([InlineKeyboardButton(text=f"👤 {name}", callback_data=f"vp_{user['user_id']}")])
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")])
+    await c.message.edit_text("📉 **قائمة المتابعة:**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
