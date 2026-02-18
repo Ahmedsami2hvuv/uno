@@ -251,7 +251,113 @@ async def complete_profile_password_handler(message: types.Message, state: FSMCo
             await _join_room_by_code(message, pending_join, user_data[0])
             return
     await show_main_menu(message, name, uid)
-https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+
+
+Starting Container
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+  File "/app/handlers/common.py", line 254
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+SyntaxError: invalid syntax
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+          ^^
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+  File "/app/handlers/common.py", line 254
+    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
+          ^^
+SyntaxError: invalid syntax
+Traceback (most recent call last):
+  File "/app/bot.py", line 8, in <module>
+    from handlers import calc, common, stats, admin, room_2p, room_multi
+  File "/app/handlers/__init__.py", line 3, in <module>
+    from . import calc, common, online, stats, admin, room_2p, room_multi
+You reached the end of the range
+Feb 18, 2026, 3:32 PM
+
+
+
 
 
 async def _join_room_by_code(message, code, user_data):
