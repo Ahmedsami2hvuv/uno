@@ -253,108 +253,59 @@ async def complete_profile_password_handler(message: types.Message, state: FSMCo
     await show_main_menu(message, name, uid)
 
 
-Starting Container
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-  File "/app/handlers/common.py", line 254
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-SyntaxError: invalid syntax
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-          ^^
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-  File "/app/handlers/common.py", line 254
-    https://github.com/Ahmedsami2hvuv/uno/edit/main/handlers/common.py
-          ^^
-SyntaxError: invalid syntax
-Traceback (most recent call last):
-  File "/app/bot.py", line 8, in <module>
-    from handlers import calc, common, stats, admin, room_2p, room_multi
-  File "/app/handlers/__init__.py", line 3, in <module>
-    from . import calc, common, online, stats, admin, room_2p, room_multi
-You reached the end of the range
-Feb 18, 2026, 3:32 PM
+@router.message(RoomStates.search_user)
+async def process_user_search(message: types.Message, state: FSMContext = None, manual_id=None):
+    # إذا جايه من زر المتابعين نستخدم manual_id، إذا كتابة نأخذ النص
+    search_query = manual_id if manual_id else message.text
+    uid = message.from_user.id
+    
+    if state:
+        await state.clear()
+
+    # جلب بيانات اللاعب (تأكدنا من تحويل الآيدي لنص ليتطابق مع قاعدة البيانات)
+    user_data = db_query("""
+        SELECT user_id, player_name, online_points, level, total_games, wins 
+        FROM users 
+        WHERE user_id::text = %s OR player_name = %s 
+        LIMIT 1
+    """, (str(search_query), str(search_query)))
+    
+    if not user_data:
+        if manual_id:
+            return await message.answer("❌ تعذر جلب بيانات هذا اللاعب حالياً.")
+        return await message.answer("❌ لم يتم العثور على لاعب بهذا الاسم أو الآيدي.")
+
+    target = user_data[0]
+    
+    # فحص المتابعة
+    is_following = db_query("SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s", (uid, target['user_id']))
+    
+    follow_text = "✅ تتابعه" if is_following else "➕ متابعة"
+    follow_callback = f"unfollow_{target['user_id']}" if is_following else f"follow_{target['user_id']}"
+
+    # هنا حل مشكلة النيون (None): إذا الاسم فارغ نكتب "لاعب اونو"
+    p_name = target['player_name'] if target['player_name'] else "لاعب اونو"
+
+    text = (f"👤 **ملف اللاعب الشخصي**\n\n"
+            f"📦 الاسم: {p_name}\n"
+            f"🆔 الآيدي: `{target['user_id']}`\n"
+            f"🏆 النقاط: {target['online_points']}\n"
+            f"📊 المستوى: {target['level']}\n"
+            f"🎮 الألعاب: {target['total_games']} | 🥇 الفوز: {target['wins']}")
+
+    kb = [
+        [InlineKeyboardButton(text=follow_text, callback_data=follow_callback)],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="social_menu")]
+    ]
+    
+    # إذا كان الضغط من زر، نعدل الرسالة (نظافة). إذا كان كتابة، نرسل جديدة.
+    if manual_id:
+        try:
+            await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        except:
+            await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
 
