@@ -722,14 +722,21 @@ async def show_main_menu(message, name, user_id=None):
     msg_text = f"اهلا بك يا {name} في بوت اونو العراقي الأول 🇮🇶\nاستخدم الأزرار للبدء:"
 
     if isinstance(message, types.CallbackQuery):
-        # تعديل الرسالة الحالية (أفضل للنظافة)
         try:
-            await message.message.edit_text(msg_text, reply_markup=markup)
+            await message.message.delete()
         except:
-            await message.message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
+            pass
+        # نرسل المنيو بالأزرار الشفافة (markup)
+        await message.message.answer(msg_text, reply_markup=markup)
+        # نرسل الكيبورد السفلي (persistent_kb) في رسالة منفصلة
+        await message.message.answer("استخدم الأزرار للتنقل 👇", reply_markup=persistent_kb)
     else:
-        # رسالة نصية جديدة
-        await message.answer(msg_text, reply_markup=markup, reply_markup=persistent_kb)
+        try:
+            await message.delete()
+        except:
+            pass
+        await message.answer(msg_text, reply_markup=markup)
+        await message.answer("استخدم الأزرار للتنقل 👇", reply_markup=persistent_kb)
 
 
 # إصلاح زر القوانين
