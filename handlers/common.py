@@ -429,10 +429,10 @@ async def menu_random(c: types.CallbackQuery):
 async def menu_friends(c: types.CallbackQuery):
     uid = c.from_user.id
     kb = [
-        [InlineKeyboardButton(text=t(uid, "btn_create_room"), callback_data="room_create_start")],
-        [InlineKeyboardButton(text=t(uid, "btn_join_room"), callback_data="room_join_input")],
-        [InlineKeyboardButton(text=t(uid, "btn_my_rooms"), callback_data="my_open_rooms")],
-        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
+        [InlineKeyboardButton(text=t(uid, "➕ إنشاء غرفة"), callback_data="room_create_start")],
+        [InlineKeyboardButton(text=t(uid, "🚪 انضمام لغرفة"), callback_data="room_join_input")],
+        [InlineKeyboardButton(text=t(uid, "الغرف المفتوحة"), callback_data="my_open_rooms")],
+        [InlineKeyboardButton(text=t(uid, "الرجوع"), callback_data="home")]
     ]
     await c.message.edit_text(t(uid, "friends_menu"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -651,11 +651,58 @@ async def process_join(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("view_profile_"))
 async def view_profile_handler(c: types.CallbackQuery):
     try:
-        target_id = int(c.data.split("_")[-1])  # ياخذ الرقم الأخير
+        target_id = int(c.data.split("_")[-1])
         await process_user_search_by_id(c, target_id)
     except Exception as e:
         print(f"view_profile_handler error: {e}")
         await c.answer("⚠️ فشل فتح بروفايل اللاعب.", show_alert=True)
+
+
+async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
+    uid = c.from_user.id
+
+    # جلب اللاعب المطلوب
+    target = db_query("SELECT * FROM users WHERE user_id = %s", (target_id,))
+    if not target:
+        return await c.answer("❌ اللاعب غير موجود.", show_alert=True)
+
+    t_user = target[0]
+
+    # هل أنت متابعه؟
+    is_following = db_query(
+        "SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s",
+        (uid, target_id)
+    )
+
+    # حالة الأونلاين
+    from datetime import datetime, timedelta
+    last_seen = t_user.get("last_seen")
+    if last_seen:
+        online = (datetime.now() - last_seen < timedelta(minutes=5))
+        status = t(uid, "status_online") if online else t(uid, "status_offline", time=last_seen.strftime("%H:%M"))
+    else:
+        status = t(uid, "status_offline", time="--:--")
+
+    # نص البروفايل (يعتمد على مفاتيح i18n عندك)
+    text = t(
+        uid,
+        "profile_title",
+        name=t_user.get("player_name", "لاعب"),
+        username=t_user.get("username_key", "---"),
+        points=t_user.get("online_points", 0),
+        status=status
+    )
+
+    follow_btn_text = t(uid, "btn_unfollow") if is_following else t(uid, "btn_follow")
+    follow_callback = f"unfollow_{target_id}" if is_following else f"follow_{target_id}"
+
+    kb = [
+        [InlineKeyboardButton(text=follow_btn_text, callback_data=follow_callback)],
+        [InlineKeyboardButton(text=t(uid, "btn_invite_play"), callback_data=f"invite_{target_id}")],
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")]
+    ]
+
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                        
 
 @router.callback_query(F.data == "home")
@@ -1850,7 +1897,7 @@ async def accept_invite(c: types.CallbackQuery):
     
     try:
         await c.bot.send_message(sender_id, f"✅ وافق **{target_name}** على دعوتك! جاري تحويلكما للغرفة...")
-        # هنا يمكنك توجيههم لإنشاء غرفة في room_multi
+        # هنا يمكنك توجيههم ل في room_multi
         await c.message.edit_text(f"🚀 تم قبول الدعوة. جاري بدء اللعب مع {sender_id}...")
     except:
         pass
@@ -1956,7 +2003,7 @@ async def accept_game_invite(c: types.CallbackQuery):
     ])
     
     await c.message.edit_text(
-        f"🚀 **تم قبول الدعوة!**\n\nأنت الآن ستلعب مع **{s_name}**.\nقم بإنشاء غرفة وأرسل الكود له أو انتظر دخوله.",
+        f"🚀 **تم قبول الدعوة!**\n\nأنت الآن ستلعب مع **{s_name}**.\nقم ب وأرسل الكود له أو انتظر دخوله.",
         reply_markup=kb_target
     )
 
