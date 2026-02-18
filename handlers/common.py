@@ -45,54 +45,17 @@ persistent_kb = ReplyKeyboardMarkup(
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
-async def show_main_menu(message, name, user_id=None):
-    uid = user_id or (message.from_user.id if hasattr(message, 'from_user') else 0)
-    
-    # تحديث القاعدة تلقائياً
-    try: db_query("ALTER TABLE users ADD COLUMN invite_expiry DATETIME DEFAULT NULL", commit=True)
-    except: pass
 
-    kb = [
-        [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
-        [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
-        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")], 
-        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
-         InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
-        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
-        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")]
-    ]
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    msg_text = t(uid, "main_menu", name=name)
-
-    # الإصلاح هنا: إرسال الـ markup (الأزرار الشفافة) فقط في الـ reply_markup
-    # والـ persistent_kb (الأزرار السفلية) تظهر تلقائياً بمجرد إرسالها مع أي رسالة نصية
-    if isinstance(message, types.CallbackQuery):
-        try:
-            await message.message.delete()
-        except:
-            pass
-        # نرسل رسالة جديدة تحتوي على الأزرار الشفافة والكيبورد السفلي
-        await message.message.answer(msg_text, reply_markup=markup)
-        # لإظهار الكيبورد السفلي، نرسله في رسالة تأكيد بسيطة أو مع المنيو
-        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
-    else:
-        try:
-            await message.delete()
-        except:
-            pass
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
-
+@router.message(F.text.in_(["ستارت", "/start"]))
 async def quick_start_button(message: types.Message):
-    # يمسح رسالة المستخدم حتى يصير الشات نظيف
+    # يمسح رسالة المستخدم
     try:
         await message.delete()
     except:
         pass
 
-    # يرسل منيو جديد + تنظيف السابق
+    # تنظيف + منيو جديد
     await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
-
 
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
@@ -235,7 +198,7 @@ async def complete_profile_password_handler(message: types.Message, state: FSMCo
         if user_data:
             await _join_room_by_code(message, pending_join, user_data[0])
             return
-    await (message, name, uid)
+    
 
 async def _join_room_by_code(message, code, user_data):
     uid = message.from_user.id
@@ -350,7 +313,7 @@ async def register_password(message: types.Message, state: FSMContext):
         if user_data:
             await _join_room_by_code(message, pending_join, user_data[0])
             return
-    await (message, name, uid)
+    
 
 @router.callback_query(F.data == "auth_login")
 async def auth_login(c: types.CallbackQuery, state: FSMContext):
@@ -398,7 +361,7 @@ async def login_password(message: types.Message, state: FSMContext):
         if user_data:
             await _join_room_by_code(message, pending_join, user_data[0])
             return
-    await (message, name, uid)
+    await show_main_menu(message, name, user_id=uid)
 
 @router.callback_query(F.data == "menu_random")
 async def menu_random(c: types.CallbackQuery):
@@ -702,7 +665,7 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     msg_text = t(uid, "main_menu", name=name)
 
-    async def cleanup_last_messages(msg_obj: types.Message, limit: int = 15):
+    async def _cleanup_last_messages(msg_obj: types.Message, limit: int = 15):
         if not cleanup:
             return
         try:
@@ -715,27 +678,20 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
         except:
             pass
 
-    # لو CallbackQuery (ضغط زر شفاف)
+    # CallbackQuery (ازرار شفافة)
     if isinstance(message, types.CallbackQuery):
-        try:
-            await cleanup_last_messages(message.message, limit=15)
-        except:
-            pass
-
+        await _cleanup_last_messages(message.message, limit=15)
         await message.message.answer(msg_text, reply_markup=markup)
         await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
         return
 
-    # لو Message عادية (زر ستارت/نص)
-    try:
-        await cleanup_last_messages(message, limit=15)
-    except:
-        pass
-
+    # Message عادية
+    await _cleanup_last_messages(message, limit=15)
     await message.answer(msg_text, reply_markup=markup)
     await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
-
-async def _cleanup_chat(msg_obj, limit: int = 15):
+    
+    
+    async def _cleanup_chat(msg_obj, limit: int = 15):
         if not cleanup:
             return
         try:
