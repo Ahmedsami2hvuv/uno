@@ -119,7 +119,7 @@ async def cmd_home_button(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
-    name = user[0]['player_name'] if user else "لاعب"
+    name = user[0]['player_name'] if user and len(user) > 0 else "لاعب"
     await show_main_menu(message, name, user_id)
 
 @router.message(RoomStates.upgrade_username)
