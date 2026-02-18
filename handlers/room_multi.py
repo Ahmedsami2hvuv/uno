@@ -920,3 +920,17 @@ async def notify_followers_game_started(player_id, player_name, bot):
             await bot.send_message(f['follower_id'], text, reply_markup=kb)
         except Exception:
             continue
+
+# زر إنشاء غرفة
+@router.callback_query(F.data == "create_room")
+async def process_create_room(c: types.CallbackQuery, state: FSMContext):
+    # كود إنشاء الغرفة الخاص بك هنا
+    await c.answer("جاري إنشاء الغرفة...", show_alert=True)
+    # استدعاء دالة تنبيه المتابعين
+    await notify_followers_game_started(c.from_user.id, c.from_user.full_name, c.bot)
+
+# زر دخول بكود
+@router.callback_query(F.data == "join_room")
+async def process_join_room(c: types.CallbackQuery, state: FSMContext):
+    await c.message.edit_text("🔢 من فضلك أرسل كود الغرفة المكون من 6 أرقام:")
+    await state.set_state(MultiGameStates.choosing_color) # أو الستيت المخصصة للكود عندك
