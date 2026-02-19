@@ -1188,7 +1188,7 @@ async def process_my_account_callback(c: types.CallbackQuery):
     
     # الأزرار (تعديل الحساب ورجوع)
     kb = [
-        [InlineKeyboardButton(text=t(uid, "تعديل الحساب"), callback_data="edit_acc")],
+        [InlineKeyboardButton(text=t(uid, "تعديل الحساب"), callback_data="edit_account")],
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]
     
