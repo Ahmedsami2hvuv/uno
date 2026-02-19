@@ -571,17 +571,19 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
 
-        # --- المنطق المحدث: سحب ورقة واحدة فقط عند عدم وجود لعب ---
-        if not any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand):
+        # --- التعديل لمنع السحب المتكرر (سحب ورقة واحدة فقط) ---
+        is_playable_now = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
+        
+        if not is_playable_now:
             p_id = curr_p['user_id']
             opp_id = players[(curr_idx+1)%2]['user_id']
             p_name = curr_p.get('player_name') or "لاعب"
-
-            # 1. تنبيه بالانتظار قبل السحب
+            
+            # تنبيه بالانتظار قبل السحب
             await bot.send_message(p_id, "⚠️ ما عندك ورقة مناسبة.. سأقوم بسحب ورقة واحدة لك خلال 5 ثوانٍ ⏱")
             await asyncio.sleep(5)
-
-            # 2. سحب ورقة واحدة فقط
+            
+            # سحب ورقة واحدة فقط من السطحة
             deck = safe_load(room['deck'])
             if not deck:
                 discard = safe_load(room.get('discard_pile', '[]'))
@@ -591,38 +593,30 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             
             new_card = deck.pop(0)
             curr_hand.append(new_card)
-            is_playable = check_validity(new_card, room['top_card'], room['current_color'])
-
-            # تحديث البيانات بعد سحب ورقة واحدة
+            
+            # تحديث قاعدة البيانات فوراً بعد سحب الورقة الواحدة
             db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-
-            if is_playable:
-                # الورقة المسحوبة تشتغل - يبقى الدور عنده ليلعبها
-                msgs = {
-                    p_id: f"📥 سحبت ({new_card}) وتگدر تلعبها 👍",
-                    opp_id: f"📥 {p_name} سحب ورقة وطلعت تشتغل 🔄"
-                }
-                # نحدث الواجهة بدون تمرير الدور
-                return await refresh_ui_2p(room_id, bot, msgs)
+            
+            # فحص: هل الورقة الجديدة تشتغل؟
+            if check_validity(new_card, room['top_card'], room['current_color']):
+                # إذا تشتغل، نرسل الرسائل ونعرض الواجهة (بدون ما نسحب مرة ثانية)
+                alert_msgs = {p_id: f"📥 سحبت ({new_card}) وتگدر تلعبها 👍", opp_id: f"📥 {p_name} سحب ورقة وتشتغل"}
+                # ننهي التنفيذ هنا ونعرض الواجهة فقط
             else:
-                # الورقة المسحوبة ما تشتغل - نجهز زر "مرر الدور"
-                msgs = {
-                    p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌\nراح يعبر الدور خلال 12 ثانية أو دوس 'مرر' هسة ⚡️",
-                    opp_id: f"📥 {p_name} سحب ورقة وما اشتغلت.. بانتظار تمرير الدور ✅"
-                }
-                # نرسل الواجهة مع زر "مرر" ونشغل تايمر قصير للتمرير التلقائي
-                await refresh_ui_2p(room_id, bot, msgs)
+                # إذا ما تشتغل، نبلغ اللاعب ونعطيه مهلة 12 ثانية قبل التمرير التلقائي
+                alert_msgs = {p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌.. مرر الدور أو انتظر 12 ثانية", opp_id: f"📥 {p_name} سحب ورقة وما اشتغلت"}
                 
-                # تايمر التمرير التلقائي (12 ثانية)
+                # إظهار الواجهة مع زر مرر (الذي سيظهر بسبب شرط عدم وجود ورقة قابلة للعب)
+                await refresh_ui_2p_final_view(room_id, bot, alert_msgs) # دالة مساعدة لعرض الواجهة فقط
+                
                 await asyncio.sleep(12)
-                # فحص أخير للتأكد أن الدور لم يتغير (ربما ضغط مرر يدوياً)
-                room_check = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
-                if room_check and room_check[0]['turn_index'] == curr_idx:
-                    next_turn = (curr_idx + 1) % 2
-                    db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
-                    await refresh_ui_2p(room_id, bot, {p_id: "⏰ انتهى الوقت وتم تمرير الدور تلقائياً."})
-                return 
+                # فحص أخير للتمرير التلقائي
+                r_check = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
+                if r_check and r_check[0]['turn_index'] == curr_idx:
+                    db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", ((curr_idx+1)%2, room_id), commit=True)
+                    return await refresh_ui_2p(room_id, bot, {p_id: "⏰ انتهى الوقت وتم التمرير تلقائياً"})
+                return
 
         # --- واجهة اللاعبين (نفس نظامك القديم بالملي) ---
         for i, p in enumerate(players):
