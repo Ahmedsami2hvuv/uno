@@ -780,17 +780,6 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
             await message.answer("​", reply_markup=persistent_kb)
         except:
             pass
-        
-@router.callback_query(F.data == "change_lang")
-async def change_lang_menu(c: types.CallbackQuery):
-    uid = c.from_user.id
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇸🇦 عربي", callback_data="switch_lang_ar"),
-         InlineKeyboardButton(text="🇬🇧 English", callback_data="switch_lang_en")],
-        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-    ])
-    await c.message.edit_text(t(uid, "choose_lang"), reply_markup=kb)
-
 @router.callback_query(F.data.startswith("switch_lang_"))
 async def switch_lang(c: types.CallbackQuery):
     uid = c.from_user.id
