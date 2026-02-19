@@ -764,22 +764,19 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     if isinstance(message, types.CallbackQuery):
         await _cleanup_last_messages(message.message, limit=15)
         try:
+            # نرسل الأزرار السفلية مع تعديل النص
             await message.message.edit_text(msg_text, reply_markup=markup)
+            # إرسال رسالة بسيطة لتفعيل الأزرار السفلية
+            await message.message.answer("تم تحديث القائمة 🎮", reply_markup=persistent_kb)
         except:
             await message.message.answer(msg_text, reply_markup=markup)
-        # نرسل الأزرار السفلية (بدون نص إضافي)
-        try:
-            await message.message.answer("​", reply_markup=persistent_kb)
-        except:
-            pass
+            await message.message.answer("تم تحديث القائمة 🎮", reply_markup=persistent_kb)
     else:
         await _cleanup_last_messages(message, limit=15)
-        await message.answer(msg_text, reply_markup=markup)
-        # نرسل الأزرار السفلية (بدون نص إضافي)
-        try:
-            await message.answer("​", reply_markup=persistent_kb)
-        except:
-            pass
+        # هنا نرسل الـ persistent_kb مع رسالة المنيو الأساسية مباشرة
+        await message.answer(msg_text, reply_markup=persistent_kb) # أضفناها هنا
+        # ونرسل أزرار الـ Inline (القائمة) في رسالة منفصلة أو نفس الرسالة
+        await message.answer("اختر من القائمة أدناه:", reply_markup=markup)
 @router.callback_query(F.data.startswith("switch_lang_"))
 async def switch_lang(c: types.CallbackQuery):
     uid = c.from_user.id
