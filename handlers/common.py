@@ -767,9 +767,19 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
             await message.message.edit_text(msg_text, reply_markup=markup)
         except:
             await message.message.answer(msg_text, reply_markup=markup)
+        # نرسل الأزرار السفلية (بدون نص إضافي)
+        try:
+            await message.message.answer("​", reply_markup=persistent_kb)
+        except:
+            pass
     else:
         await _cleanup_last_messages(message, limit=15)
         await message.answer(msg_text, reply_markup=markup)
+        # نرسل الأزرار السفلية (بدون نص إضافي)
+        try:
+            await message.answer("​", reply_markup=persistent_kb)
+        except:
+            pass
         
 @router.callback_query(F.data == "change_lang")
 async def change_lang_menu(c: types.CallbackQuery):
