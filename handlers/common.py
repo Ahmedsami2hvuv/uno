@@ -37,7 +37,7 @@ class RoomStates(StatesGroup):
     complete_profile_password = State()
 
 persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="/start")]],
+    keyboard=[[KeyboardButton(text="/start"), KeyboardButton(text="🧹 تنظيف الرسائل")]],
     resize_keyboard=True,
     persistent=True
 )
@@ -56,6 +56,29 @@ async def quick_start_button(message: types.Message):
 
     # تنظيف + منيو جديد
     await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
+
+@router.message(F.text == "🧹 تنظيف الرسائل")
+async def clean_chat_messages(message: types.Message):
+    """يمسح جميع رسائل البوت في المحادثة (تنظيف سجل الرسائل)"""
+    chat_id = message.chat.id
+    current_msg_id = message.message_id
+    deleted_count = 0
+    
+    # نحاول مسح الرسائل من الرسالة الحالية ورجوعاً لعدد كبير (200 رسالة)
+    for mid in range(current_msg_id, max(current_msg_id - 200, 0), -1):
+        try:
+            await message.bot.delete_message(chat_id, mid)
+            deleted_count += 1
+        except:
+            pass
+    
+    # نرسل رسالة تأكيد ثم نعرض القائمة الرئيسية
+    name = message.from_user.full_name
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
+    if user:
+        name = user[0]['player_name']
+    
+    await show_main_menu(message, name, user_id=message.from_user.id, cleanup=False)
 
 @router.callback_query(F.data == "play_friends")
 async def on_play_friends(c: types.CallbackQuery):
@@ -1594,16 +1617,6 @@ async def start_calculator(c: types.CallbackQuery):
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-# 1. الأزرار السفلية (زر واحد يرسل نص /start)
-persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="/start")] # يرسل كلمة ستارت كأنه المستخدم كتبها
-    ],
-    resize_keyboard=True,
-    persistent=True
-)
-
 
 @router.callback_query(F.data.startswith("calc_players_"))
 async def calc_choose_players(c: types.CallbackQuery, state: FSMContext):
