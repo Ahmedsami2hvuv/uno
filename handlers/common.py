@@ -736,7 +736,6 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
     
 async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     uid = user_id or (message.from_user.id if hasattr(message, "from_user") else 0)
-
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
