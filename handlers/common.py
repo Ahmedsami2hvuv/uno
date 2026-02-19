@@ -763,31 +763,14 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
             pass
 
     if isinstance(message, types.CallbackQuery):
-        # تنظيف
         await _cleanup_last_messages(message.message, limit=15)
-
-        # الأفضل هنا: نعدّل نفس رسالة الزر إذا نكدر حتى تبقى رسالة وحدة
         try:
             await message.message.edit_text(msg_text, reply_markup=markup)
         except:
             await message.message.answer(msg_text, reply_markup=markup)
-
-        # نرسل الـ persistent_kb مرة وحدة فقط (بدون رسالة اضافية)
-        try:
-            await message.message.answer(" ", reply_markup=persistent_kb)
-        except:
-            pass
-        return
-
-    # message عادية
-    await _cleanup_last_messages(message, limit=15)
-    await message.answer(msg_text, reply_markup=markup)
-
-    # إرسال الـ persistent_kb بدون ما “يسوي قائمة ثانية” (نرسل سطر فارغ)
-    try:
-        await message.answer(" ", reply_markup=persistent_kb)
-    except:
-        pass
+    else:
+        await _cleanup_last_messages(message, limit=15)
+        await message.answer(msg_text, reply_markup=markup)
     
     
     async def _cleanup_chat(msg_obj, limit: int = 15):
