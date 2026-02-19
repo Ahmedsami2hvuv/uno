@@ -37,7 +37,7 @@ class RoomStates(StatesGroup):
     complete_profile_password = State()
 
 persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="/start")]],
+    keyboard=[[KeyboardButton(text="/start"), KeyboardButton(text="تنظيف الرسائل")]],
     resize_keyboard=True,
     persistent=True
 )
@@ -56,6 +56,38 @@ async def quick_start_button(message: types.Message):
 
     # تنظيف + منيو جديد
     await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
+
+@router.message(F.text == "تنظيف الرسائل")
+async def cleanup_messages_button(message: types.Message):
+    """Handler for clean messages button - deletes all bot messages"""
+    try:
+        # Delete user's message first
+        await message.delete()
+    except:
+        pass
+    
+    try:
+        # Delete last 50 messages (including bot messages)
+        last_id = message.message_id
+        deleted_count = 0
+        for mid in range(last_id, max(last_id - 50, 1), -1):
+            try:
+                await message.bot.delete_message(message.chat.id, mid)
+                deleted_count += 1
+            except:
+                pass
+        
+        # Send a confirmation message that will auto-delete
+        if deleted_count > 0:
+            confirm_msg = await message.answer(f"🧹 تم تنظيف {deleted_count} رسالة", reply_markup=persistent_kb)
+            # Auto-delete confirmation after 2 seconds
+            await asyncio.sleep(2)
+            try:
+                await confirm_msg.delete()
+            except:
+                pass
+    except Exception as e:
+        print(f"Error cleaning messages: {e}")
 
 @router.callback_query(F.data == "play_friends")
 async def on_play_friends(c: types.CallbackQuery):
