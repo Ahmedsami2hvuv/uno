@@ -491,6 +491,20 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_hand = safe_load(curr_p['hand'])
 
         if not any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand):
+            # Step 1: Notify player - no suitable card, will draw in 5 seconds
+            p_name = curr_p.get('player_name') or "لاعب"
+            opp_id = players[(curr_idx+1)%2]['user_id']
+            
+            try:
+                await bot.send_message(curr_p['user_id'], "❌ ماعندك ورقة مناسبة! راح اسحبلك ورقة خلال 5 ثواني...")
+                await bot.send_message(opp_id, f"⏳ {p_name} ماعنده ورقة مناسبة، البوت راح يسحبله ورقة...")
+            except:
+                pass
+            
+            # Step 2: Wait 5 seconds
+            await asyncio.sleep(5)
+            
+            # Step 3: Draw card
             deck = safe_load(room['deck'])
             if not deck:
                 discard = safe_load(room['discard_pile'])
@@ -503,19 +517,43 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             new_card = deck.pop(0)
             curr_hand.append(new_card)
             is_playable = check_validity(new_card, room['top_card'], room['current_color'])
-            next_turn = curr_idx if is_playable else (curr_idx + 1) % 2
+            
             db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
-            db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", (json.dumps(deck), next_turn, room_id), commit=True)
-            p_name = curr_p.get('player_name') or "لاعب"
+            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+            
             msgs = {}
-            opp_id = players[(curr_idx+1)%2]['user_id']
             if is_playable:
-                msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وتگدر تلعبها 👍"
-                msgs[opp_id] = f"📥 {p_name} سحب ورقة والورقة تشتغل وسيلعبها 🔄"
+                # Card is playable - keep turn with player
+                msgs[curr_p['user_id']] = f"✅ سحبتلك ({new_card}) ومناسبة للعب! العبها 👍"
+                msgs[opp_id] = f"📥 {p_name} سحب ورقة ({new_card}) والورقة مناسبة وسيلعبها 🔄"
+                return await refresh_ui_2p(room_id, bot, msgs)
             else:
-                msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وما تشتغل ❌ والدور عبر"
-                msgs[opp_id] = f"📥 {p_name} ما عنده ورقة مناسبة وسحب ورقة وما اشتغلت، الدور رجع لك ✅"
-            return await refresh_ui_2p(room_id, bot, msgs)
+                # Card is NOT playable - need to show skip button
+                # Mark this state in the database so we know skip is available
+                db_query("UPDATE room_players SET can_skip = 1 WHERE user_id = %s", (curr_p['user_id'],), commit=True)
+                msgs[curr_p['user_id']] = f"❌ الورقة الي سحبتها ({new_card}) غير مناسبة للعب. راح يعبر دورك خلال 12 ثانية او دوس على زر مرر ⏭"
+                msgs[opp_id] = f"📥 {p_name} سحب ورقة ({new_card}) وماهي مناسبة، راح يعبر دوره قريب..."
+                
+                # Refresh UI with skip button
+                await refresh_ui_2p(room_id, bot, msgs)
+                
+                # Step 4: Wait 12 seconds for skip or auto-pass
+                await asyncio.sleep(12)
+                
+                # Check if player already skipped manually
+                check_skip = db_query("SELECT can_skip FROM room_players WHERE user_id = %s", (curr_p['user_id'],))
+                if check_skip and check_skip[0].get('can_skip') == 1:
+                    # Auto-pass turn
+                    next_turn = (curr_idx + 1) % 2
+                    db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+                    db_query("UPDATE room_players SET can_skip = 0 WHERE user_id = %s", (curr_p['user_id'],), commit=True)
+                    
+                    auto_msgs = {}
+                    auto_msgs[curr_p['user_id']] = "⏭ تم تمرير دورك تلقائياً"
+                    auto_msgs[opp_id] = f"✅ {p_name} عبر دوره، الدور الحين لك!"
+                    return await refresh_ui_2p(room_id, bot, auto_msgs)
+                
+                return
 
         # 🔥 هنا التعديل الرئيسي: نرسل الواجهة للاعبين الاثنين
         for i, p in enumerate(players):
@@ -565,7 +603,11 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
                 controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
             if controls: kb.append(controls)
+            
             exit_row = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
+            # Add skip button if player can skip (when they drew a non-playable card)
+            if p.get('can_skip') == 1 and i == room['turn_index']:
+                exit_row.insert(0, InlineKeyboardButton(text="⏭ مرر", callback_data=f"sk_{room_id}"))
             if p['user_id'] == room.get('creator_id'):
                 exit_row.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(exit_row)
@@ -856,6 +898,48 @@ async def handle_catch(c: types.CallbackQuery):
         else:
             await c.answer("❌ ما تگدر تصيده حالياً!")
     except Exception as e: print(f"Catch Error: {e}")
+
+@router.callback_query(F.data.startswith("sk_"))
+async def skip_turn(c: types.CallbackQuery):
+    """Handler for skip button - immediately pass turn when player has non-playable drawn card"""
+    try:
+        room_id = c.data.split("_")[1]
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data:
+            return await c.answer("❌ الغرفة غير موجودة!", show_alert=True)
+        
+        room = room_data[0]
+        players = get_ordered_players(room_id)
+        
+        # Verify it's the player's turn
+        curr_idx = room['turn_index']
+        curr_p = players[curr_idx]
+        
+        if curr_p['user_id'] != c.from_user.id:
+            return await c.answer("❌ مو دورك!", show_alert=True)
+        
+        # Check if player can skip
+        if curr_p.get('can_skip') != 1:
+            return await c.answer("❌ ما تقدر تمرر الحين!", show_alert=True)
+        
+        # Pass turn to next player
+        next_turn = (curr_idx + 1) % 2
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+        db_query("UPDATE room_players SET can_skip = 0 WHERE user_id = %s", (curr_p['user_id'],), commit=True)
+        
+        p_name = curr_p.get('player_name') or "لاعب"
+        opp_id = players[next_turn]['user_id']
+        
+        msgs = {}
+        msgs[curr_p['user_id']] = "⏭ تم تمرير دورك"
+        msgs[opp_id] = f"✅ {p_name} مرر دوره، الدور الحين لك!"
+        
+        await refresh_ui_2p(room_id, c.bot, msgs)
+        await c.answer("✅ تم تمرير الدور")
+        
+    except Exception as e:
+        print(f"Skip Error: {e}")
+        await c.answer("❌ حدث خطأ", show_alert=True)
 
 @router.callback_query(F.data.startswith("ex_"))
 async def ask_exit(c: types.CallbackQuery):

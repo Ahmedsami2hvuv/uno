@@ -118,7 +118,8 @@ def init_db():
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discard_pile TEXT;",
         "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT FALSE;",
         "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS points INT DEFAULT 0;",
-        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS said_uno BOOLEAN DEFAULT FALSE;"
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS said_uno BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS can_skip INT DEFAULT 0;" # For skip turn functionality
     ]
 
     for query in alter_queries:
