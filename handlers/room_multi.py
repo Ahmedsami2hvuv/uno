@@ -151,56 +151,6 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
         asyncio.create_task(_del())
     except: pass
 
-async def _delayed_draw_card(room_id, bot, delay_seconds):
-    """Wait for specified seconds then trigger card draw"""
-    try:
-        await asyncio.sleep(delay_seconds)
-        # Trigger a refresh which will execute the draw
-        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if room:
-            await refresh_ui_multi(room_id, bot)
-    except:
-        pass
-
-async def _auto_skip_turn(room_id, bot, delay_seconds):
-    """Wait for specified seconds then automatically skip turn"""
-    try:
-        await asyncio.sleep(delay_seconds)
-        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room:
-            return
-        room = room[0]
-        players = get_ordered_players(room_id)
-        if not players:
-            return
-        
-        direction = room.get('direction', 1)
-        curr_idx = room['turn_index']
-        next_turn = (curr_idx + direction) % len(players)
-        
-        # Pass turn
-        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
-        
-        # Notify players
-        curr_p = players[curr_idx]
-        next_p = players[next_turn]
-        p_name = curr_p.get('player_name') or "لاعب"
-        next_name = next_p.get('player_name') or "لاعب"
-        
-        msgs = {
-            curr_p['user_id']: f"⏰ انتهى الوقت! عبر الدور تلقائياً ✅"
-        }
-        for op in players:
-            if op['user_id'] != curr_p['user_id']:
-                msgs[op['user_id']] = f"⏰ {p_name} ما لعب والدور عبر لـ {next_name} ✅"
-        
-        # Clear skip timer
-        skip_timers.pop(room_id, None)
-        
-        await refresh_ui_multi(room_id, bot, msgs)
-    except Exception as e:
-        pass
-
 async def turn_timeout_multi(room_id, bot, expected_turn):
     try:
         cd_info = countdown_msgs.get(room_id)
@@ -638,6 +588,56 @@ async def refresh_ui_multi(room_id, bot, alert_msg_dict=None):
 
         turn_timers[room_id] = asyncio.create_task(turn_timeout_multi(room_id, bot, room['turn_index']))
     except Exception as e: print(f"Multi UI Error: {e}")
+
+async def _delayed_draw_card(room_id, bot, delay_seconds):
+    """Wait for specified seconds then trigger card draw"""
+    try:
+        await asyncio.sleep(delay_seconds)
+        # Trigger a refresh which will execute the draw
+        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if room:
+            await refresh_ui_multi(room_id, bot)
+    except:
+        pass
+
+async def _auto_skip_turn(room_id, bot, delay_seconds):
+    """Wait for specified seconds then automatically skip turn"""
+    try:
+        await asyncio.sleep(delay_seconds)
+        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room:
+            return
+        room = room[0]
+        players = get_ordered_players(room_id)
+        if not players:
+            return
+        
+        direction = room.get('direction', 1)
+        curr_idx = room['turn_index']
+        next_turn = (curr_idx + direction) % len(players)
+        
+        # Pass turn
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+        
+        # Notify players
+        curr_p = players[curr_idx]
+        next_p = players[next_turn]
+        p_name = curr_p.get('player_name') or "لاعب"
+        next_name = next_p.get('player_name') or "لاعب"
+        
+        msgs = {
+            curr_p['user_id']: f"⏰ انتهى الوقت! عبر الدور تلقائياً ✅"
+        }
+        for op in players:
+            if op['user_id'] != curr_p['user_id']:
+                msgs[op['user_id']] = f"⏰ {p_name} ما لعب والدور عبر لـ {next_name} ✅"
+        
+        # Clear skip timer
+        skip_timers.pop(room_id, None)
+        
+        await refresh_ui_multi(room_id, bot, msgs)
+    except Exception as e:
+        pass
 
 @router.callback_query(F.data.startswith("mul_"))
 async def handle_play_multi(c: types.CallbackQuery, state: FSMContext):
