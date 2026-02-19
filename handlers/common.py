@@ -770,41 +770,7 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     else:
         await _cleanup_last_messages(message, limit=15)
         await message.answer(msg_text, reply_markup=markup)
-    
-    
-    async def _cleanup_chat(msg_obj, limit: int = 15):
-        if not cleanup:
-            return
-        try:
-            last_id = msg_obj.message_id
-            for mid in range(last_id, max(last_id - limit, 1), -1):
-                try:
-                    await msg_obj.bot.delete_message(msg_obj.chat.id, mid)
-                except:
-                    pass
-        except:
-            pass
-
-    if isinstance(message, types.CallbackQuery):
-        # اذا جاينا من زر شفاف (Callback)
-        try:
-            await _cleanup_chat(message.message, limit=15)
-        except:
-            pass
-
-        # نرسل منيو جديد
-        await message.message.answer(msg_text, reply_markup=markup)
-        await message.message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
-    else:
-        # اذا جاينا من رسالة نصية (مثل زر ستارت)
-        try:
-            await _cleanup_chat(message, limit=15)
-        except:
-            pass
-
-        await message.answer(msg_text, reply_markup=markup)
-        await message.answer("تم تحديث القائمة ⚙️", reply_markup=persistent_kb)
-
+        
 @router.callback_query(F.data == "change_lang")
 async def change_lang_menu(c: types.CallbackQuery):
     uid = c.from_user.id
