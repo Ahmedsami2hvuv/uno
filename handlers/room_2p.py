@@ -10,6 +10,7 @@ from collections import Counter
 router = Router()
 turn_timers = {}
 TURN_TIMEOUT = 20
+countdown_msgs = {}
 
 class GameStates(StatesGroup):
     choosing_color = State()
@@ -151,20 +152,19 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
 async def turn_timeout_2p(room_id, bot, expected_turn):
     try:
         cd_info = countdown_msgs.get(room_id)
+        # العداد الأصلي (20 ثانية)
         for step in range(10, 0, -1):
             remaining = step * 2
             bar = "🟢" * step + "⚫" * (10 - step)
             
             if cd_info:
                 try:
-                    # التعديل هنا: نستخدم edit_message_text بدلاً من الحذف والإرسال
                     await bot.edit_message_text(
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id'],
                         text=f"⏳ باقي {remaining} ثانية\n{bar}"
                     )
                 except Exception as e:
-                    # إذا انمسحت الرسالة بالخطأ، نرسل وحدة جديدة ونحدث الـ ID
                     if "message to edit not found" in str(e).lower():
                         try:
                             new_msg = await bot.send_message(
@@ -173,7 +173,6 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                             )
                             cd_info['msg_id'] = new_msg.message_id
                         except: pass
-                    # تجاهل خطأ "لم يتم تعديل الرسالة"
                     elif "message is not modified" in str(e).lower():
                         pass
                     else:
@@ -181,7 +180,7 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             
             await asyncio.sleep(2)
             
-        # --- بقية المنطق الخاص بسحب الورقة عند انتهاء الوقت يبقى كما هو ---
+        # --- التحقق من صحة الغرفة والدور قبل التنفيذ ---
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
@@ -191,45 +190,126 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
         if curr_idx != expected_turn: return
         
         curr_p = players[curr_idx]
-        p_name = curr_p.get('player_name') or "لاعب"
+        p_id = curr_p['user_id']
         curr_hand = safe_load(curr_p['hand'])
+
+        # --- المنطق الجديد: السحب التلقائي عند انتهاء الوقت ---
+        # بدلاً من تمرير الدور فوراً، نسحب له ورقة أولاً
         deck = safe_load(room['deck'])
-        
         if not deck:
-            discard = safe_load(room['discard_pile'])
-            if discard:
-                deck = discard
-                random.shuffle(deck)
-                db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
-            else:
-                deck = generate_h2o_deck()
-                
+            discard = safe_load(room.get('discard_pile', '[]'))
+            deck = discard if discard else generate_h2o_deck()
+            random.shuffle(deck)
+            db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
+        
         new_card = deck.pop(0)
         curr_hand.append(new_card)
-        next_turn = (curr_idx + 1) % 2
+        is_playable = check_validity(new_card, room['top_card'], room['current_color'])
         
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
-        db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", (json.dumps(deck), next_turn, room_id), commit=True)
-        
-        opp_id = players[(curr_idx + 1) % 2]['user_id']
-        msgs = {
-            curr_p['user_id']: f"⏰ انتهى وقتك! سحبت ورقة ({new_card}) وعبر الدور",
-            opp_id: f"⏰ {p_name} ما لعب بالوقت! سحب ورقة والدور رجع لك ✅"
-        }
-        
+        # تحديث اليد والسطحة في قاعدة البيانات
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+
         turn_timers.pop(room_id, None)
         cd_del = countdown_msgs.pop(room_id, None)
-        # عند النهاية فقط نحذف رسالة العداد
         if cd_del:
             try: await bot.delete_message(cd_del['chat_id'], cd_del['msg_id'])
             except: pass
+
+        opp_id = players[(curr_idx + 1) % 2]['user_id']
+        p_name = curr_p.get('player_name') or "لاعب"
+
+        if is_playable:
+            # إذا الورقة المسحوبة قابلة للعب، نعطيه فرصة أخيرة أو نحدث الواجهة ليلعبها
+            msgs = {
+                p_id: f"⏰ انتهى وقتك! سحبت ({new_card}) وطلعت تشتغل.. العبها بسرعة! 🃏",
+                opp_id: f"⏰ انتهى وقت {p_name} وسحب ورقة وطلعت تشتغل.. ننتظر يلعبها 🔄"
+            }
+            await refresh_ui_2p(room_id, bot, msgs)
+        else:
+            # إذا ما تشتتغل، يمر الدور تلقائياً بعد السحب
+            next_turn = (curr_idx + 1) % 2
+            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+            msgs = {
+                p_id: f"⏰ انتهى وقتك! سحبت ({new_card}) وما تشتغل.. عبر الدور ❌",
+                opp_id: f"⏰ انتهى وقت {p_name} وسحب ورقة وما اشتغلت.. الدور لك الآن ✅"
+            }
+            await refresh_ui_2p(room_id, bot, msgs)
             
-        await refresh_ui_2p(room_id, bot, msgs)
-        
     except asyncio.CancelledError:
         pass
     except Exception as e:
         print(f"Timer error 2p: {e}")
+
+async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color, challenge_msg_id):
+    try:
+        cd_info = challenge_countdown_msgs.get(room_id)
+        # العداد يبقى كما هو (حذف وإرسال لضمان انتباه الخصم)
+        for step in range(9, -1, -1):
+            await asyncio.sleep(2)
+            remaining = step * 2
+            bar = "🟢" * step + "⚫" * (10 - step)
+            
+            if cd_info:
+                try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+                except: pass
+                
+                try:
+                    new_msg = await bot.send_message(
+                        cd_info['chat_id'],
+                        f"⏳ باقي {remaining} ثانية للرد\n{bar}"
+                    )
+                    cd_info['msg_id'] = new_msg.message_id
+                except Exception as e:
+                    print(f"Challenge countdown send error: {e}")
+                    
+        ch_cd = challenge_countdown_msgs.pop(room_id, None)
+        if ch_cd:
+            try: await bot.delete_message(ch_cd['chat_id'], ch_cd['msg_id'])
+            except: pass
+
+        challenge_timers.pop(room_id, None)
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data: return
+        room = room_data[0]
+        if room['status'] != 'playing': return
+        
+        players = get_ordered_players(room_id)
+        p_idx = room['turn_index']
+        opp_idx = (p_idx + 1) % 2
+        
+        deck = safe_load(room['deck'])
+        if not deck:
+            discard = safe_load(room.get('discard_pile', '[]'))
+            deck = discard if discard else generate_h2o_deck()
+            random.shuffle(deck)
+            db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
+            
+        opp_h = safe_load(players[opp_idx]['hand'])
+        for _ in range(4):
+            if deck: opp_h.append(deck.pop(0))
+            
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_h), players[opp_idx]['user_id']), commit=True)
+        db_query("UPDATE rooms SET deck = %s, turn_index = %s, current_color = %s, top_card = %s WHERE room_id = %s", (json.dumps(deck), p_idx, chosen_color, f"🔥 جوكر+4 {chosen_color}", room_id), commit=True)
+        
+        try: await bot.delete_message(opp_id, challenge_msg_id)
+        except: pass
+
+        alerts = {
+            players[p_idx]['user_id']: "⏰ الخصم ما رد بالوقت! قبل السحب تلقائياً والدور رجع لك!",
+            players[opp_idx]['user_id']: "⏰ انتهى الوقت! قبلت السحب تلقائياً وسحبت 4 ورقات."
+        }
+        
+        # تنظيف التايمرات قبل التحديث النهائي
+        turn_timers.pop(room_id, None)
+        countdown_msgs.pop(room_id, None)
+        
+        await refresh_ui_2p(room_id, bot, alerts)
+        
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Challenge timer error 2p: {e}")
 
 async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color, challenge_msg_id):
     try:
@@ -429,6 +509,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         score_limit = room.get('score_limit')
         if score_limit is None: score_limit = 500
 
+        # --- فحص نهاية الجولة أو اللعبة (كامل كما هو) ---
         for p_idx, p_check in enumerate(players):
             p_hand = safe_load(p_check['hand'])
             if len(p_hand) == 0:
@@ -490,37 +571,49 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
 
+        # --- 🔥 منطق السحب التلقائي الجديد (تم دمجه بدلاً من السحب القديم) ---
         if not any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand):
+            p_id = curr_p['user_id']
+            p_name = curr_p.get('player_name') or "لاعب"
+            opp_id = players[(curr_idx+1)%2]['user_id']
+            
+            # 1. تنبيه اللاعب بالسحب خلال 5 ثواني
+            await bot.send_message(p_id, "⚠️ ما عندك ورقة مناسبة.. سأقوم بسحب ورقة لك خلال 5 ثوانٍ ⏱")
+            await asyncio.sleep(5)
+            
             deck = safe_load(room['deck'])
             if not deck:
-                discard = safe_load(room['discard_pile'])
+                discard = safe_load(room.get('discard_pile', '[]'))
                 if discard:
                     deck = discard
                     random.shuffle(deck)
                     db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
                 else:
                     deck = generate_h2o_deck()
+            
             new_card = deck.pop(0)
             curr_hand.append(new_card)
             is_playable = check_validity(new_card, room['top_card'], room['current_color'])
-            next_turn = curr_idx if is_playable else (curr_idx + 1) % 2
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
-            db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", (json.dumps(deck), next_turn, room_id), commit=True)
-            p_name = curr_p.get('player_name') or "لاعب"
-            msgs = {}
-            opp_id = players[(curr_idx+1)%2]['user_id']
-            if is_playable:
-                msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وتگدر تلعبها 👍"
-                msgs[opp_id] = f"📥 {p_name} سحب ورقة والورقة تشتغل وسيلعبها 🔄"
-            else:
-                msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وما تشتغل ❌ والدور عبر"
-                msgs[opp_id] = f"📥 {p_name} ما عنده ورقة مناسبة وسحب ورقة وما اشتغلت، الدور رجع لك ✅"
-            return await refresh_ui_2p(room_id, bot, msgs)
+            
+            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
+            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
 
-        # 🔥 هنا التعديل الرئيسي: نرسل الواجهة للاعبين الاثنين
+            if is_playable:
+                # إذا اشتغلت، يبقى الدور عنده
+                msgs = {p_id: f"📥 سحبت ({new_card}) وتگدر تلعبها 👍", opp_id: f"📥 {p_name} سحب ورقة والورقة تشتغل وسيلعبها 🔄"}
+                return await refresh_ui_2p(room_id, bot, msgs)
+            else:
+                # إذا ما اشتغلت، ننتظر 12 ثانية للتمرير أو يضغط مرر
+                msgs = {
+                    p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌\nراح يعبر الدور خلال 12 ثانية أو دوس 'مرر' هسة ⚡️",
+                    opp_id: f"📥 {p_name} سحب ورقة وما اشتغلت.. بانتظار التمرير ✅"
+                }
+                await refresh_ui_2p(room_id, bot, msgs)
+                return 
+
+        # --- واجهة اللاعبين (نفس نظامك القديم بالملي) ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
-
             turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "مو دورك ❌"
             num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
             players_info = []
@@ -538,7 +631,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 status_text += f"\n──────────────\n📢 {alert_msg_dict[p['user_id']]}"
             if room['turn_index'] == i:
                 status_text += f"\n──────────────\n⏱ لك وقت 20 ثانية"
-            status_text += f"\n──────────────\n🃏 الورقة النازلة: [ {room['top_card']} ]           {turn_status}"
+            status_text += f"\n──────────────\n🃏 الورقة النازلة: [ {room['top_card']} ]            {turn_status}"
 
             kb = []
             row = []
@@ -559,18 +652,24 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             if row: kb.append(row)
 
             controls = []
-            if i == room['turn_index'] and len(hand) == 2:
-                controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+            if i == room['turn_index']:
+                # 🔥 إضافة زر مرر هنا ليكون متاحاً دائماً في دور اللاعب
+                controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
+                if len(hand) == 2:
+                    controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+            
             opp = players[(i+1)%2]
             if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
                 controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
+            
             if controls: kb.append(controls)
+            
             exit_row = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
             if p['user_id'] == room.get('creator_id'):
                 exit_row.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(exit_row)
 
-            # 🔥 هنا نتأكد إننا نرسل للجميع (حتى لو مو دوره)
+            # --- إرسال وتحديث الرسائل (كامل كما كان) ---
             try:
                 if p.get('last_msg_id'):
                     try:
@@ -581,27 +680,25 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
                         )
                     except:
-                        try: 
-                            await bot.delete_message(p['user_id'], p['last_msg_id'])
-                        except: 
-                            pass
+                        try: await bot.delete_message(p['user_id'], p['last_msg_id'])
+                        except: pass
                         msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                 else:
                     msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                 
                 db_query("UPDATE room_players SET last_msg_id = %s WHERE room_id = %s AND user_id = %s", (msg.message_id, room_id, p['user_id']), commit=True)
                 
-                # العداد بس للاعب اللي دوره
                 if i == room['turn_index']:
+                    from handlers.room_2p import countdown_msgs
                     cd_msg = await bot.send_message(p['user_id'], "⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
                     countdown_msgs[room_id] = {'bot': bot, 'chat_id': p['user_id'], 'msg_id': cd_msg.message_id}
                     
             except Exception as ui_err:
                 print(f"❌ ما قدرت أرسل الواجهة لـ {p['user_id']}: {ui_err}")
-                # لو اللاعب بوت، نتجاهله ونكمل
                 continue
 
         # نبدأ العداد التلقائي
+        from handlers.room_2p import turn_timers, turn_timeout_2p
         turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
         
     except Exception as e: 
@@ -881,3 +978,34 @@ async def confirm_exit(c: types.CallbackQuery):
 async def cancel_exit(c: types.CallbackQuery):
     rid = c.data.split("_")[2]
     await refresh_ui_2p(rid, c.bot)
+
+@router.callback_query(F.data.startswith("pass_"))
+async def process_pass_turn(c: types.CallbackQuery):
+    try:
+        room_id = c.data.split("_")[1]
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data: return await c.answer("⚠️ الغرفة غير موجودة")
+        room = room_data[0]
+        
+        players = get_ordered_players(room_id)
+        curr_idx = room['turn_index']
+        
+        # التأكد أن اللاعب الذي ضغط هو صاحب الدور
+        if c.from_user.id != players[curr_idx]['user_id']:
+            return await c.answer("❌ مو دورك تمرر!", show_alert=True)
+        
+        # تمرير الدور للاعب التالي
+        next_turn = (curr_idx + 1) % 2
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+        
+        p_name = players[curr_idx].get('player_name') or "لاعب"
+        await c.answer("➡️ تم تمرير الدور")
+        
+        # تحديث الواجهة للجميع
+        await refresh_ui_2p(room_id, c.bot, {
+            players[curr_idx]['user_id']: "➡️ مررت دورك",
+            players[next_turn]['user_id']: f"➡️ {p_name} مرر دوره، صار دورك الآن ✅"
+        })
+        
+    except Exception as e:
+        print(f"Pass Error: {e}")
