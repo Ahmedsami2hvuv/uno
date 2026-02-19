@@ -49,7 +49,6 @@ async def clean_chat_messages(message: types.Message):
     current_msg_id = message.message_id
     deleted_count = 0
     
-    # نحاول مسح الرسائل من الرسالة الحالية ورجوعاً لعدد كبير (200 رسالة)
     for mid in range(current_msg_id, max(current_msg_id - 200, 0), -1):
         try:
             await message.bot.delete_message(chat_id, mid)
@@ -57,14 +56,13 @@ async def clean_chat_messages(message: types.Message):
         except:
             pass
     
-    # نرسل رسالة تأكيد ثم نعرض القائمة الرئيسية
     name = message.from_user.full_name
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     if user:
         name = user[0]['player_name']
     
     await show_main_menu(message, name, user_id=message.from_user.id, cleanup=False)
-    
+
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
@@ -1618,16 +1616,6 @@ async def start_calculator(c: types.CallbackQuery):
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# 1. الأزرار السفلية (زر واحد يرسل نص /start)
-persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="/start")] # يرسل كلمة ستارت كأنه المستخدم كتبها
-    ],
-    resize_keyboard=True,
-    persistent=True
-)
-
-
 @router.callback_query(F.data.startswith("calc_players_"))
 async def calc_choose_players(c: types.CallbackQuery, state: FSMContext):
     n = int(c.data.split("_")[-1])
@@ -2090,5 +2078,4 @@ async def handle_bottom_buttons(message: types.Message):
     # نقوم باستدعاء دالة الستارت نفسها
     name = message.from_user.full_name
     await show_main_menu(message, name)
-
 
