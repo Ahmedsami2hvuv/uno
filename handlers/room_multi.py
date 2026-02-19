@@ -10,6 +10,10 @@ from collections import Counter
 router = Router()
 turn_timers = {}
 TURN_TIMEOUT = 20
+# Track pending card draws (room_id -> draw info)
+pending_draws = {}
+# Track skip timers (room_id -> timer task)
+skip_timers = {}
 
 class MultiGameStates(StatesGroup):
     choosing_color = State()
@@ -146,6 +150,56 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
             except: pass
         asyncio.create_task(_del())
     except: pass
+
+async def _delayed_draw_card(room_id, bot, delay_seconds):
+    """Wait for specified seconds then trigger card draw"""
+    try:
+        await asyncio.sleep(delay_seconds)
+        # Trigger a refresh which will execute the draw
+        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if room:
+            await refresh_ui_multi(room_id, bot)
+    except:
+        pass
+
+async def _auto_skip_turn(room_id, bot, delay_seconds):
+    """Wait for specified seconds then automatically skip turn"""
+    try:
+        await asyncio.sleep(delay_seconds)
+        room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room:
+            return
+        room = room[0]
+        players = get_ordered_players(room_id)
+        if not players:
+            return
+        
+        direction = room.get('direction', 1)
+        curr_idx = room['turn_index']
+        next_turn = (curr_idx + direction) % len(players)
+        
+        # Pass turn
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+        
+        # Notify players
+        curr_p = players[curr_idx]
+        next_p = players[next_turn]
+        p_name = curr_p.get('player_name') or "لاعب"
+        next_name = next_p.get('player_name') or "لاعب"
+        
+        msgs = {
+            curr_p['user_id']: f"⏰ انتهى الوقت! عبر الدور تلقائياً ✅"
+        }
+        for op in players:
+            if op['user_id'] != curr_p['user_id']:
+                msgs[op['user_id']] = f"⏰ {p_name} ما لعب والدور عبر لـ {next_name} ✅"
+        
+        # Clear skip timer
+        skip_timers.pop(room_id, None)
+        
+        await refresh_ui_multi(room_id, bot, msgs)
+    except Exception as e:
+        pass
 
 async def turn_timeout_multi(room_id, bot, expected_turn):
     try:
@@ -425,37 +479,80 @@ async def refresh_ui_multi(room_id, bot, alert_msg_dict=None):
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
 
+        # Check if player has no valid card - new improved flow
         if not any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand):
-            deck = safe_load(room['deck'])
-            if not deck:
-                discard = safe_load(room['discard_pile'])
-                if discard:
-                    deck = discard
-                    random.shuffle(deck)
-                    db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
+            # Check if we haven't notified yet about drawing
+            if room_id not in pending_draws:
+                # First notification: tell player we will draw in 5 seconds
+                p_name = curr_p.get('player_name') or "لاعب"
+                msgs = {
+                    curr_p['user_id']: "⚠️ ما عندك ورقة مناسبة للعب!\n⏳ راح اسحبلك ورقة خلال 5 ثواني..."
+                }
+                for op in players:
+                    if op['user_id'] != curr_p['user_id']:
+                        msgs[op['user_id']] = f"⏳ {p_name} ما عنده ورقة مناسبة، جاري السحب..."
+                
+                # Store pending draw state
+                pending_draws[room_id] = {
+                    'player_id': curr_p['user_id'],
+                    'notified': True
+                }
+                
+                # Schedule the actual draw after 5 seconds
+                asyncio.create_task(_delayed_draw_card(room_id, bot, 5))
+                return await refresh_ui_multi(room_id, bot, msgs)
+            
+            # If already notified, perform the actual draw
+            if pending_draws.get(room_id, {}).get('notified'):
+                del pending_draws[room_id]  # Clear pending state
+                
+                deck = safe_load(room['deck'])
+                if not deck:
+                    discard = safe_load(room['discard_pile'])
+                    if discard:
+                        deck = discard
+                        random.shuffle(deck)
+                        db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
+                    else:
+                        deck = generate_deck()
+                new_card = deck.pop(0)
+                curr_hand.append(new_card)
+                is_playable = check_validity(new_card, room['top_card'], room['current_color'])
+                
+                p_name = curr_p.get('player_name') or "لاعب"
+                msgs = {}
+                
+                if is_playable:
+                    # Card is playable - keep turn with current player
+                    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
+                    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+                    
+                    msgs[curr_p['user_id']] = f"✅ سحبتلك ورقة ({new_card}) ومناسبة للعب!\n🎯 العبها الحين 👍"
+                    for op in players:
+                        if op['user_id'] != curr_p['user_id']:
+                            msgs[op['user_id']] = f"📥 {p_name} سحب ورقة والورقة تشتغل وراح يلعبها 🔄"
+                    return await refresh_ui_multi(room_id, bot, msgs)
                 else:
-                    deck = generate_deck()
-            new_card = deck.pop(0)
-            curr_hand.append(new_card)
-            is_playable = check_validity(new_card, room['top_card'], room['current_color'])
-            next_turn = curr_idx if is_playable else (curr_idx + direction) % num_players
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
-            db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", (json.dumps(deck), next_turn, room_id), commit=True)
-            p_name = curr_p.get('player_name') or "لاعب"
-            msgs = {}
-            if is_playable:
-                msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وتگدر تلعبها 👍"
-                for op in players:
-                    if op['user_id'] != curr_p['user_id']:
-                        msgs[op['user_id']] = f"📥 {p_name} سحب ورقة والورقة تشتغل وسيلعبها 🔄"
-            else:
-                msgs[curr_p['user_id']] = f"📥 سحبت ({new_card}) وما تشتغل ❌ والدور عبر"
-                next_p = players[next_turn]
-                next_name = next_p.get('player_name') or "لاعب"
-                for op in players:
-                    if op['user_id'] != curr_p['user_id']:
-                        msgs[op['user_id']] = f"📥 {p_name} ما عنده ورقة مناسبة وسحب ورقة وما اشتغلت، الدور لـ {next_name} ✅"
-            return await refresh_ui_multi(room_id, bot, msgs)
+                    # Card is NOT playable - need to pass turn with skip option
+                    next_turn = (curr_idx + direction) % num_players
+                    next_p = players[next_turn]
+                    next_name = next_p.get('player_name') or "لاعب"
+                    
+                    # Store the drawn card but don't pass turn yet
+                    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), curr_p['user_id']), commit=True)
+                    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+                    
+                    msgs[curr_p['user_id']] = f"❌ الورقة الي سحبتها ({new_card}) غير مناسبة للعب\n⏰ راح يعبر الدور خلال 12 ثانية\n💡 أو اضغط على زر 'مرر' لتعبر الدور مباشرة"
+                    for op in players:
+                        if op['user_id'] != curr_p['user_id']:
+                            msgs[op['user_id']] = f"📥 {p_name} سحب ورقة لكن ما اشتغلت، الدور راح يعبر لـ {next_name}"
+                    
+                    # Schedule auto-skip after 12 seconds
+                    if room_id in skip_timers:
+                        skip_timers[room_id].cancel()
+                    skip_timers[room_id] = asyncio.create_task(_auto_skip_turn(room_id, bot, 12))
+                    
+                    return await refresh_ui_multi(room_id, bot, msgs)
 
         dir_icon = "➡️" if direction == 1 else "⬅️"
         dir_arrow = "⤵️" if direction == 1 else "⤴️"
@@ -508,7 +605,14 @@ async def refresh_ui_multi(room_id, bot, alert_msg_dict=None):
                     controls.append(InlineKeyboardButton(text=f"🪤 صيد {o_name}", callback_data=f"repmul_{room_id}_{other['user_id']}"))
                     break
             if controls: kb.append(controls)
+            
+            # Create exit row with withdraw button
             exit_row = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"leavemul_{room_id}")]
+            
+            # Add skip button if player's turn and there's a pending skip timer (drawn unplayable card)
+            if i == room['turn_index'] and room_id in skip_timers:
+                exit_row.insert(0, InlineKeyboardButton(text="⏭️ مرر", callback_data=f"skipmul_{room_id}"))
+            
             if p['user_id'] == room.get('creator_id'):
                 exit_row.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(exit_row)
@@ -826,6 +930,52 @@ async def handle_catch_multi(c: types.CallbackQuery):
         else:
             await c.answer("❌ ما تگدر تصيده حالياً!")
     except Exception as e: print(f"Multi Catch Error: {e}")
+
+@router.callback_query(F.data.startswith("skipmul_"))
+async def skip_turn_multi(c: types.CallbackQuery):
+    """Handler for skip button - immediately pass turn when drawn card is not playable"""
+    room_id = c.data.split("_")[1]
+    
+    # Cancel the auto-skip timer
+    if room_id in skip_timers:
+        skip_timers[room_id].cancel()
+        del skip_timers[room_id]
+    
+    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+    if not room:
+        return await c.answer("⚠️ الغرفة غير موجودة!", show_alert=True)
+    room = room[0]
+    
+    players = get_ordered_players(room_id)
+    if not players:
+        return await c.answer("⚠️ خطأ في بيانات الغرفة!", show_alert=True)
+    
+    curr_idx = room['turn_index']
+    curr_p = players[curr_idx]
+    
+    # Verify it's the player's turn
+    if curr_p['user_id'] != c.from_user.id:
+        return await c.answer("❌ مو دورك!", show_alert=True)
+    
+    # Pass turn to next player
+    direction = room.get('direction', 1)
+    next_turn = (curr_idx + direction) % len(players)
+    next_p = players[next_turn]
+    next_name = next_p.get('player_name') or "لاعب"
+    
+    db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+    
+    # Notify players
+    p_name = curr_p.get('player_name') or "لاعب"
+    msgs = {
+        curr_p['user_id']: f"⏭️ مررت الدور ✅"
+    }
+    for op in players:
+        if op['user_id'] != curr_p['user_id']:
+            msgs[op['user_id']] = f"⏭️ {p_name} مرر الدور، الدور الحين لـ {next_name} ✅"
+    
+    await c.answer("✅ تم تمرير الدور")
+    await refresh_ui_multi(room_id, c.bot, msgs)
 
 @router.callback_query(F.data.startswith("leavemul_"))
 async def ask_leave_multi(c: types.CallbackQuery):

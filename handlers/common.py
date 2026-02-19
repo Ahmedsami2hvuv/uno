@@ -44,7 +44,7 @@ class RoomStates(StatesGroup):
 
 persistent_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="🚀 ابدأ اللعب")],
+        [KeyboardButton(text="🚀 ابدأ اللعب"), KeyboardButton(text="🧹 تنظيف الرسائل")],
         [KeyboardButton(text="🏠 القائمة الرئيسية")]
     ],
     resize_keyboard=True, # ليصغر حجم الأزرار وتكون أنيقة
@@ -130,6 +130,47 @@ async def quick_start_button(message: types.Message):
     # مسح رسالة المستخدم ليبقى الشات نظيفاً
     name = message.from_user.full_name
     await show_main_menu(message, name)
+
+@router.message(F.text == "🧹 تنظيف الرسائل")
+async def clean_messages(message: types.Message):
+    """Handler for cleaning bot messages from chat"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    try:
+        # Delete user's message first
+        await message.delete()
+    except:
+        pass
+    
+    # Send confirmation message
+    confirm_msg = await message.answer("🧹 جاري تنظيف الرسائل...")
+    
+    # Try to delete recent messages (Telegram allows deleting messages within 48 hours)
+    # We'll try to delete the last 100 messages starting from current message_id going backwards
+    deleted_count = 0
+    try:
+        current_msg_id = message.message_id
+        for i in range(1, 101):  # Try last 100 messages
+            try:
+                await message.bot.delete_message(chat_id=chat_id, message_id=current_msg_id - i)
+                deleted_count += 1
+                # Small delay to avoid rate limiting
+                if i % 10 == 0:
+                    await asyncio.sleep(0.5)
+            except:
+                # Message doesn't exist or can't be deleted (maybe user message or too old)
+                continue
+    except Exception as e:
+        pass
+    
+    # Update confirmation message
+    try:
+        await confirm_msg.edit_text(f"✅ تم تنظيف {deleted_count} رسالة من البوت")
+        await asyncio.sleep(2)
+        await confirm_msg.delete()
+    except:
+        pass
 
 
 
