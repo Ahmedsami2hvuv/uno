@@ -37,7 +37,7 @@ class RoomStates(StatesGroup):
     complete_profile_password = State()
 
 persistent_kb = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="/start")]],
+    keyboard=[[KeyboardButton(text="/start"), KeyboardButton(text="🧹 تنظيف الرسائل")]],
     resize_keyboard=True,
     persistent=True
 )
