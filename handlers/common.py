@@ -749,7 +749,7 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     msg_text = t(uid, "main_menu", name=name)
 
-    async def _cleanup_last_messages(msg_obj: types.Message, limit: int = 15):
+    async def _cleanup_last_messages(msg_obj, limit=15):
         if not cleanup:
             return
         try:
