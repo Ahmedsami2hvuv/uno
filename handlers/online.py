@@ -142,13 +142,6 @@ async def end_game_logic(winner_id, loser_id, game_id):
         await bot.send_message(loser_id, lose_text, reply_markup=kb)
     except: pass
 
-@router.callback_query(F.data == "home")
-async def go_home(c: types.CallbackQuery):
-    # هنا نستدعي الدالة اللي تفتح القائمة الرئيسية (تأكد من اسم الملف والدالة عندك)
-    from handlers.common import start_command 
-    await start_command(c.message) 
-    try: await c.message.delete()
-    except: pass
 
 # --- 4. السحب التلقائي (المطور للسيادة اللونية) ---
 async def auto_draw(user_id, game_id):
