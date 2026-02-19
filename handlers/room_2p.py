@@ -576,37 +576,30 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         
         if not is_playable_now:
             p_id = curr_p['user_id']
-            # إرسال رسالة تنبيه أولاً
-            await bot.send_message(p_id, "⚠️ ما عندك ورقة مناسبة.. سأقوم بسحب ورقة واحدة لك خلال 5 ثوانٍ ⏱")
-            
-            # الانتظار 5 ثواني
-            await asyncio.sleep(5)
-            
-            # تنفيذ عملية السحب (مرة واحدة فقط)
-            deck = safe_load(room['deck'])
-            if not deck:
-                discard = safe_load(room.get('discard_pile', '[]'))
-                deck = discard if discard else generate_h2o_deck()
-                random.shuffle(deck)
-                db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
-            
-            new_card = deck.pop(0)
-            curr_hand.append(new_card)
-            
-            # تحديث قاعدة البيانات بالورقة الجديدة
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            
-            # الآن نختبر الورقة الجديدة
-            if check_validity(new_card, room['top_card'], room['current_color']):
-                # إذا كانت تشتغل، نعيد تشغيل الواجهة ليراها اللاعب ويلعبها
-                return await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ({new_card}) وتگدر تلعبها 👍"})
-            else:
-                # إذا ما تشتغل، نظهر له واجهة "مرر الدور"
-                # ملاحظة: هنا نستدعي refresh_ui_2p لمرة أخيرة ليظهر زر "مرر الدور"
-                # ويجب أن يكون هناك منطق يمنع الدخول في حلقة سحب لا نهائية
-                return await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌.. مرر الدور أو انتظر"})
-
+            # نتحقق هل اللاعب سحب في هذه الخطوة أم لا (عبر فحص عدد الأوراق أو رسائل التنبيه)
+            # لتجنب التعليق، سنقوم بالسحب مباشرة هنا لمرة واحدة فقط إذا لم يكن هناك "تنبيه سحب" سابق
+            if not alert_msg_dict or "سحبت" not in str(alert_msg_dict.get(p_id, "")):
+                await bot.send_message(p_id, "⚠️ ما عندك ورقة مناسبة.. سأقوم بسحب ورقة واحدة لك خلال 5 ثوانٍ ⏱")
+                await asyncio.sleep(5)
+                
+                deck = safe_load(room['deck'])
+                if not deck:
+                    discard = safe_load(room.get('discard_pile', '[]'))
+                    deck = discard if discard else generate_h2o_deck()
+                    random.shuffle(deck)
+                    db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
+                
+                new_card = deck.pop(0)
+                curr_hand.append(new_card)
+                db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
+                db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+                
+                # فحص الورقة الجديدة
+                if check_validity(new_card, room['top_card'], room['current_color']):
+                    return await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ({new_card}) وتگدر تلعبها 👍"})
+                else:
+                    # إذا لم تشتغل، نظهر زر "مرر الدور" ولا نستدعي السحب مرة أخرى
+                    return await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌.. مرر دورك"})
         # --- واجهة اللاعبين (نفس نظامك القديم بالملي) ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
