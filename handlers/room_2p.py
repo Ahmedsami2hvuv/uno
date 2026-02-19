@@ -47,16 +47,22 @@ def make_end_kb(players, room, mode='2p', for_user_id=None):
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def generate_h2o_deck():
-    colors = ['🔴', '🔵', '🟡', '🟢']
+    colors = ['🔴', '🟡', '🟢', '🔵']
     deck = []
-    for c in colors:
-        deck.append(f"{c} 0")
-        for n in range(1, 10): deck.extend([f"{c} {n}"] * 2)
-        deck.extend([f"{c} 🚫", f"{c} 🔄", f"{c} ⬆️2"] * 2)
-    deck.extend(["🌈 جوكر"] * 4)
-    deck.extend(["🔥 جوكر+4"] * 4)
-    deck.append("💧 جوكر+1")
-    deck.append("🌊 جوكر+2")
+    for color in colors:
+        deck.append(f"{color} 0") # ورقة واحدة صفر (4 مجموعاً)
+        for i in range(1, 10):
+            deck.extend([f"{color} {i}", f"{color} {i}"]) # ورقتين 1-9 (72 مجموعاً)
+        deck.extend([f"{color} 🚫", f"{color} 🚫"]) # منع (8 مجموعاً)
+        deck.extend([f"{color} 🔄", f"{color} 🔄"]) # تحويل (8 مجموعاً)
+        deck.extend([f"{color} +2", f"{color} +2"]) # سحب 2 (8 مجموعاً)
+    
+    # الجوكرات حسب طلبك:
+    deck.extend(["🔥 جوكر+4"] * 4) # (4 مجموعاً)
+    deck.append("🌈 جوكر+1")        # (1 مجموعاً)
+    deck.append("🌈 جوكر+2")        # (1 مجموعاً)
+    deck.extend(["🌈 جوكر ألوان"] * 4) # لإكمال العدد أو حسب رغبتك في بقية الـ 110
+    
     random.shuffle(deck)
     return deck
 
@@ -152,11 +158,10 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
 async def turn_timeout_2p(room_id, bot, expected_turn):
     try:
         cd_info = countdown_msgs.get(room_id)
-        # العداد الأصلي (20 ثانية)
+        # العداد الأصلي (20 ثانية) - يبقى مثل ما هو لجمالية العداد
         for step in range(10, 0, -1):
             remaining = step * 2
             bar = "🟢" * step + "⚫" * (10 - step)
-            
             if cd_info:
                 try:
                     await bot.edit_message_text(
@@ -164,78 +169,54 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                         message_id=cd_info['msg_id'],
                         text=f"⏳ باقي {remaining} ثانية\n{bar}"
                     )
-                except Exception as e:
-                    if "message to edit not found" in str(e).lower():
-                        try:
-                            new_msg = await bot.send_message(
-                                cd_info['chat_id'],
-                                f"⏳ باقي {remaining} ثانية\n{bar}"
-                            )
-                            cd_info['msg_id'] = new_msg.message_id
-                        except: pass
-                    elif "message is not modified" in str(e).lower():
-                        pass
-                    else:
-                        print(f"Countdown edit error: {e}")
-            
+                except: pass
             await asyncio.sleep(2)
-            
-        # --- التحقق من صحة الغرفة والدور قبل التنفيذ ---
+            if room_id not in turn_timers: return # إذا لعب اللاعب، نوقف التايمر
+
+        # --- التحقق من الغرفة والدور قبل تنفيذ العقوبة ---
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
-        if room['status'] != 'playing': return
-        players = get_ordered_players(room_id)
-        curr_idx = room['turn_index']
-        if curr_idx != expected_turn: return
+        if room['status'] != 'playing' or room['turn_index'] != expected_turn: return
         
-        curr_p = players[curr_idx]
+        players = get_ordered_players(room_id)
+        curr_p = players[expected_turn]
         p_id = curr_p['user_id']
+        opp_id = players[(expected_turn + 1) % 2]['user_id']
+        p_name = curr_p.get('player_name') or "لاعب"
         curr_hand = safe_load(curr_p['hand'])
 
-        # --- المنطق الجديد: السحب التلقائي عند انتهاء الوقت ---
-        # بدلاً من تمرير الدور فوراً، نسحب له ورقة أولاً
+        # --- تنفيذ المنطق مالتك: عقوبة ضياع الوقت ---
+        # 1. السحب من كومة السحب (deck) حصراً وليس من اللاعب الثاني
         deck = safe_load(room['deck'])
         if not deck:
-            discard = safe_load(room.get('discard_pile', '[]'))
-            deck = discard if discard else generate_h2o_deck()
+            deck = generate_h2o_deck()
             random.shuffle(deck)
-            db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
         
-        new_card = deck.pop(0)
-        curr_hand.append(new_card)
-        is_playable = check_validity(new_card, room['top_card'], room['current_color'])
+        penalty_card = deck.pop(0) # سحب ورقة العقوبة
+        curr_hand.append(penalty_card)
         
-        # تحديث اليد والسطحة في قاعدة البيانات
+        # 2. نقل الدور للمقابل فوراً (بدون فرصة ثانية)
+        next_turn = (expected_turn + 1) % 2
+        
+        # 3. تحديث قاعدة البيانات (اليد الجديدة، الكومة الجديدة، الدور الجديد)
         db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+        db_query("UPDATE rooms SET turn_index = %s, deck = %s WHERE room_id = %s", (next_turn, json.dumps(deck), room_id), commit=True)
 
+        # 4. تنظيف العدادات
         turn_timers.pop(room_id, None)
         cd_del = countdown_msgs.pop(room_id, None)
         if cd_del:
             try: await bot.delete_message(cd_del['chat_id'], cd_del['msg_id'])
             except: pass
 
-        opp_id = players[(curr_idx + 1) % 2]['user_id']
-        p_name = curr_p.get('player_name') or "لاعب"
+        # 5. إبلاغ اللاعبين بالعقوبة وتحديث الواجهة
+        msgs = {
+            p_id: f"⏰ خلص وقتك! تعاقبت بسحب ورقة ({penalty_card}) وانتقل الدور للمنافس.",
+            opp_id: f"⏰ فلان {p_name} خلص وقته وتعاقب بسحب ورقة من الكومة، الدور صار إلك ✅"
+        }
+        await refresh_ui_2p(room_id, bot, msgs)
 
-        if is_playable:
-            # إذا الورقة المسحوبة قابلة للعب، نعطيه فرصة أخيرة أو نحدث الواجهة ليلعبها
-            msgs = {
-                p_id: f"⏰ انتهى وقتك! سحبت ({new_card}) وطلعت تشتغل.. العبها بسرعة! 🃏",
-                opp_id: f"⏰ انتهى وقت {p_name} وسحب ورقة وطلعت تشتغل.. ننتظر يلعبها 🔄"
-            }
-            await refresh_ui_2p(room_id, bot, msgs)
-        else:
-            # إذا ما تشتتغل، يمر الدور تلقائياً بعد السحب
-            next_turn = (curr_idx + 1) % 2
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
-            msgs = {
-                p_id: f"⏰ انتهى وقتك! سحبت ({new_card}) وما تشتغل.. عبر الدور ❌",
-                opp_id: f"⏰ انتهى وقت {p_name} وسحب ورقة وما اشتغلت.. الدور لك الآن ✅"
-            }
-            await refresh_ui_2p(room_id, bot, msgs)
-            
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -509,62 +490,53 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         score_limit = room.get('score_limit')
         if score_limit is None: score_limit = 500
 
-        # --- فحص نهاية الجولة أو اللعبة (كامل كما هو) ---
-        for p_idx, p_check in enumerate(players):
-            p_hand = safe_load(p_check['hand'])
-            if len(p_hand) == 0:
-                opp_idx = (p_idx + 1) % 2
-                opponent = players[opp_idx]
-                opp_hand = safe_load(opponent['hand'])
-                round_points = calculate_points(opp_hand)
-                opp_name = opponent.get('player_name') or "لاعب"
-                breakdown_text = f"📉 {opp_name}: -{round_points} نقطة ({len(opp_hand)} ورقة)"
-                current_score = p_check.get('points') or 0
-                new_total_score = current_score + round_points
-                db_query("UPDATE room_players SET points = %s WHERE room_id = %s AND user_id = %s", (new_total_score, room_id, p_check['user_id']), commit=True)
-                p_name = p_check.get('player_name') or "لاعب"
+        # فحص هل يوجد لعب
+        is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
+        
+        if not is_playable:
+            p_id = curr_p['user_id']
+            opp_id = players[(curr_idx+1)%2]['user_id']
+            p_name = curr_p.get('player_name') or "لاعب"
 
-                if score_limit > 0 and new_total_score >= score_limit:
-                    winner_name = p_name
-                    loser = players[opp_idx]
-                    loser_name = loser.get('player_name') or "لاعب"
-                    loser_score = loser.get('points') or 0
-                    summary = f"🏆 انتهت اللعبة!\n\n"
-                    summary += f"🥇 الفائز: {winner_name}\n💰 النقاط: {new_total_score}\n\n"
-                    summary += f"🥈 الخاسر: {loser_name}\n💰 النقاط: {loser_score}\n\n"
-                    summary += f"📊 نقاط الجولة الأخيرة:\n{breakdown_text}\n\n"
-                    summary += f"🎯 سقف اللعب: {score_limit} نقطة"
-                    for target_p in players:
-                        end_kb = make_end_kb(players, room, '2p', for_user_id=target_p['user_id'])
-                        try:
-                            await bot.send_message(target_p['user_id'], summary, reply_markup=end_kb)
-                        except Exception as send_err:
-                            print(f"❌ ما قدرت أرسل رسالة نهاية اللعبة لـ {target_p['user_id']}: {send_err}")
-                    db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
-                    return
-                elif score_limit == 0:
-                    summary = f"🏆 {p_name} فاز بالجولة! (+{round_points} نقطة)\n\n📊 النقاط المأخوذة:\n{breakdown_text}\n\n🎯 الوضع: جولة واحدة"
-                    for target_p in players:
-                        end_kb = make_end_kb(players, room, '2p', for_user_id=target_p['user_id'])
-                        try:
-                            await bot.send_message(target_p['user_id'], summary, reply_markup=end_kb)
-                        except Exception as send_err:
-                            print(f"❌ ما قدرت أرسل رسالة نهاية الجولة لـ {target_p['user_id']}: {send_err}")
-                    db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
-                    return
+            # نستخدم alert_msg_dict لمنع تكرار الدخول هنا في نفس اللفة
+            if not alert_msg_dict or "سحبت" not in str(alert_msg_dict.get(p_id, "")):
+                # 1. إبلاغ اللاعب والخصم
+                await bot.send_message(p_id, "⚠️ ما عندك ورقة مناسبة.. سأقوم بسحب ورقة واحدة لك خلال 5 ثوانٍ ⏱")
+                # للخصم: فلان ما عنده وراح يسحب
+                try: await bot.send_message(opp_id, f"📢 {p_name} ما عنده ورقة مناسبة وراح يسحب ورقة..")
+                except: pass
+                
+                await asyncio.sleep(5)
+                
+                # 2. السحب الفعلي من الكومة
+                deck = safe_load(room['deck'])
+                if not deck: deck = generate_h2o_deck()
+                new_card = deck.pop(0)
+                curr_hand.append(new_card)
+                
+                db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
+                db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+                
+                # 3. فحص الورقة المسحوبة
+                if check_validity(new_card, room['top_card'], room['current_color']):
+                    # مناسبة: يبلغ اللاعب بنوعها والخصم بأنها مناسبة فقط
+                    return await refresh_ui_2p(room_id, bot, {
+                        p_id: f"✅ سحبت {new_card} وهي مناسبة! يالله العبها (عندك 20 ثانية)",
+                        opp_id: f"📥 {p_name} سحب ورقة مناسبة وراح يلعبها"
+                    })
                 else:
-                    from handlers.common import pending_next_round, _next_round_timeout
-                    pending_next_round[room_id] = {'mode': '2p', 'start_turn': opp_idx}
-                    round_text = f"🎉 {p_name} فاز بالجولة (+{round_points} نقطة)!\n💰 مجموعه: {new_total_score}/{score_limit}\n\n📊 النقاط المأخوذة:\n{breakdown_text}\n\n⏳ اضغط كمل خلال 20 ثانية"
-                    next_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="🔄 كمل جولة جديدة", callback_data=f"nextround_{room_id}")]
-                    ])
-                    for tp in players:
-                        try:
-                            await bot.send_message(tp['user_id'], round_text, reply_markup=next_kb)
-                        except Exception as send_err:
-                            print(f"❌ ما قدرت أرسل رسالة جولة جديدة لـ {tp['user_id']}: {send_err}")
-                    asyncio.create_task(_next_round_timeout(room_id, bot))
+                    # غير مناسبة: 12 ثانية للتمرير
+                    await refresh_ui_2p(room_id, bot, {
+                        p_id: f"📥 سحبت ورقة غير مناسبة.. الدور ينتقل خلال 12 ثانية أو دوس مرر",
+                        opp_id: f"📥 {p_name} سحب ورقة غير مناسبة، بانتظار التمرير"
+                    })
+                    
+                    await asyncio.sleep(12)
+                    r_check = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
+                    if r_check and r_check[0]['turn_index'] == curr_idx:
+                        next_turn = (curr_idx + 1) % 2
+                        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+                        return await refresh_ui_2p(room_id, bot, {p_id: "⏱ انتهى الوقت وتم تمرير الدور تلقائياً"})
                     return
 
         curr_idx = room['turn_index']
