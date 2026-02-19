@@ -10,6 +10,8 @@ from collections import Counter
 router = Router()
 turn_timers = {}
 TURN_TIMEOUT = 20
+AUTO_DRAW_DELAY = 5  # Seconds to wait before auto-drawing a card
+SKIP_TIMEOUT = 12    # Seconds to wait before auto-passing turn after drawing non-playable card
 
 class GameStates(StatesGroup):
     choosing_color = State()
@@ -502,7 +504,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 pass
             
             # Step 2: Wait 5 seconds
-            await asyncio.sleep(5)
+            await asyncio.sleep(AUTO_DRAW_DELAY)
             
             # Step 3: Draw card
             deck = safe_load(room['deck'])
@@ -538,9 +540,10 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 await refresh_ui_2p(room_id, bot, msgs)
                 
                 # Step 4: Wait 12 seconds for skip or auto-pass
-                await asyncio.sleep(12)
+                await asyncio.sleep(SKIP_TIMEOUT)
                 
-                # Check if player already skipped manually
+                # Check if player already skipped manually (can_skip would be 0 if they did)
+                # If can_skip is still 1, player did NOT skip manually, so auto-pass their turn
                 check_skip = db_query("SELECT can_skip FROM room_players WHERE user_id = %s", (curr_p['user_id'],))
                 if check_skip and check_skip[0].get('can_skip') == 1:
                     # Auto-pass turn
