@@ -571,34 +571,33 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
 
-        # --- التعديل لمنع السحب المتكرر (سحب ورقة واحدة فقط) ---
+        # --- المنطق الصحيح: سحب ورقة واحدة فقط ومنع التكرار ---
         is_playable_now = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
         
         if not is_playable_now:
             p_id = curr_p['user_id']
-            # نتحقق هل اللاعب سحب في هذه الخطوة أم لا (عبر فحص عدد الأوراق أو رسائل التنبيه)
-            # لتجنب التعليق، سنقوم بالسحب مباشرة هنا لمرة واحدة فقط إذا لم يكن هناك "تنبيه سحب" سابق
+            # فحص: هل اللاعب سحب فعلاً في هذا الدور؟ (عبر التأكد أننا لم نرسل رسالة "سحبت" للتو)
             if not alert_msg_dict or "سحبت" not in str(alert_msg_dict.get(p_id, "")):
                 await bot.send_message(p_id, "⚠️ ما عندك ورقة مناسبة.. سأقوم بسحب ورقة واحدة لك خلال 5 ثوانٍ ⏱")
                 await asyncio.sleep(5)
                 
                 deck = safe_load(room['deck'])
                 if not deck:
-                    discard = safe_load(room.get('discard_pile', '[]'))
-                    deck = discard if discard else generate_h2o_deck()
+                    deck = generate_h2o_deck()
                     random.shuffle(deck)
-                    db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
                 
                 new_card = deck.pop(0)
                 curr_hand.append(new_card)
+                
+                # حفظ التغييرات
                 db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
                 db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
                 
-                # فحص الورقة الجديدة
+                # فحص الورقة الجديدة: إذا تشتغل نحدث الواجهة، إذا ما تشتغل نطلعه زر مرر
                 if check_validity(new_card, room['top_card'], room['current_color']):
                     return await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ({new_card}) وتگدر تلعبها 👍"})
                 else:
-                    # إذا لم تشتغل، نظهر زر "مرر الدور" ولا نستدعي السحب مرة أخرى
+                    # هنا السر: نحدث الواجهة برسالة "سحبت" عشان الشرط فوق يمنع السحب مرة ثانية
                     return await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌.. مرر دورك"})
         # --- واجهة اللاعبين (نفس نظامك القديم بالملي) ---
         for i, p in enumerate(players):
