@@ -714,11 +714,6 @@ async def auto_handle_no_play(room_id, bot, expected_turn):
     # منطق السحب (كودك الأصلي للسحب يوضع هنا)
     # بعد السحب، استدعِ refresh_ui_2p مرة واحدة فقط
     await refresh_ui_2p(room_id, bot, {p_id: "📥 سحبت ورقة تلقائياً"})
-    
-
-background_auto_draw
-
-    
 
 @router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
