@@ -201,6 +201,7 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
         asyncio.create_task(_del())
     except: pass
 
+
 async def turn_timeout_2p(room_id, bot, expected_turn):
     try:
         cd_info = countdown_msgs.get(room_id)
@@ -260,14 +261,48 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             
             bar = filled + empty
             
-            # تحديث رسالة الوقت
+            # جلب بيانات اللاعبين لبناء النص الكامل
+            players = get_ordered_players(room_id)
+            curr_p = players[expected_turn]
+            
+            # بناء معلومات اللاعبين
+            players_info = []
+            for pl_idx, pl in enumerate(players):
+                pl_name = pl.get('player_name') or 'لاعب'
+                pl_cards = len(safe_load(pl['hand']))
+                star = "✅" if pl_idx == expected_turn else "⏳"
+                players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
+            
+            # بناء النص الكامل مع الوقت المحدث
+            full_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقات\n"
+            full_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقات\n"
+            full_text += "\n".join(players_info)
+            full_text += f"\n──────────────\n⏳ باقي {remaining} ثانية\n{bar}"
+            full_text += f"\n──────────────\n✅ دورك 👍🏻"
+            full_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
+            
+            # تحديث نفس الرسالة (الرسالة الرئيسية) بدلاً من إرسال رسالة جديدة
             if cd_info:
                 try:
-                    await bot.edit_message_text(
-                        chat_id=cd_info['chat_id'],
-                        message_id=cd_info['msg_id'],
-                        text=f"⏳ باقي {remaining} ثانية\n{bar}"
-                    )
+                    # نحتاج لجلب الـ reply_markup الحالي للحفاظ على الأزرار
+                    # للأسف لا يمكننا جلب الـ reply_markup من الرسالة بسهولة
+                    # لذا سنستخدم رسالة الوقت المنفصلة مؤقتاً
+                    
+                    # بدلاً من ذلك، نقوم بتحديث الرسالة الرئيسية إذا كنا نخزنها
+                    if cd_info.get('is_main_message'):
+                        await bot.edit_message_text(
+                            chat_id=cd_info['chat_id'],
+                            message_id=cd_info['msg_id'],
+                            text=full_text,
+                            reply_markup=None  # سنحتاج لجلب الأزرار
+                        )
+                    else:
+                        # إذا كانت رسالة وقت منفصلة، نحدثها فقط
+                        await bot.edit_message_text(
+                            chat_id=cd_info['chat_id'],
+                            message_id=cd_info['msg_id'],
+                            text=f"⏳ باقي {remaining} ثانية\n{bar}"
+                        )
                 except Exception as e:
                     print(f"خطأ في تعديل رسالة الوقت: {e}")
             
@@ -563,8 +598,11 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             if alert_msg_dict and p['user_id'] in alert_msg_dict:
                 status_text += f"\n──────────────\n📢 {alert_msg_dict[p['user_id']]}"
             
-            # رسالة الوقت (سيتم تحديثها من دالة الوقت)
-            # نتركها فارغة حالياً لأن دالة الوقت ستحدثها
+            # إضافة رسالة الوقت إذا كان هذا هو صاحب الدور
+            if i == room['turn_index']:
+                # سنقوم بتحديث هذه الرسالة لاحقاً من دالة الوقت
+                # نضع نصاً مؤقتاً
+                status_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
             
             # الفاصل والورقة النازلة
             status_text += f"\n──────────────\n{turn_status}"
@@ -612,33 +650,65 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             try:
                 if p.get('last_msg_id'):
                     try:
-                        # إذا كان هذا هو صاحب الدور، نرسل رسالة الوقت منفصلة
-                        if i == room['turn_index']:
-                            # إرسال رسالة الوقت بشكل منفصل (سيتم تحديثها من دالة الوقت)
-                            time_msg = await bot.send_message(
-                                p['user_id'], 
-                                "⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
-                            )
-                            # حذف أي رسالة عداد سابقة
-                            old_cd = countdown_msgs.get(room_id)
-                            if old_cd:
-                                try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
-                                except: pass
-                            countdown_msgs[room_id] = {'bot': bot, 'chat_id': p['user_id'], 'msg_id': time_msg.message_id}
-                        
-                        # تحديث رسالة اللعب الرئيسية
+                        # تحديث رسالة اللعب الرئيسية (التي تحتوي على كل المعلومات)
                         await bot.edit_message_text(
                             text=status_text,
                             chat_id=p['user_id'],
                             message_id=p['last_msg_id'],
                             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
                         )
+                        
+                        # إذا كان هذا هو صاحب الدور، نحتفظ برسالة الوقت للتحديث
+                        if i == room['turn_index']:
+                            # حذف أي رسالة عداد سابقة
+                            old_cd = countdown_msgs.get(room_id)
+                            if old_cd:
+                                try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
+                                except: pass
+                            
+                            # نحتفظ بمعلومات الرسالة الرئيسية لتحديثها من دالة الوقت
+                            countdown_msgs[room_id] = {
+                                'bot': bot, 
+                                'chat_id': p['user_id'], 
+                                'msg_id': p['last_msg_id'],
+                                'is_main_message': True  # علامة تشير أن هذه هي الرسالة الرئيسية
+                            }
                     except:
+                        # إذا فشل التعديل، نرسل رسالة جديدة
                         msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                         db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
+                        
+                        # تحديث معلومات الرسالة الجديدة
+                        if i == room['turn_index']:
+                            old_cd = countdown_msgs.get(room_id)
+                            if old_cd:
+                                try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
+                                except: pass
+                            
+                            countdown_msgs[room_id] = {
+                                'bot': bot, 
+                                'chat_id': p['user_id'], 
+                                'msg_id': msg.message_id,
+                                'is_main_message': True
+                            }
                 else:
+                    # لا توجد رسالة سابقة، نرسل رسالة جديدة
                     msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                     db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
+                    
+                    # تحديث معلومات الرسالة الجديدة
+                    if i == room['turn_index']:
+                        old_cd = countdown_msgs.get(room_id)
+                        if old_cd:
+                            try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
+                            except: pass
+                        
+                        countdown_msgs[room_id] = {
+                            'bot': bot, 
+                            'chat_id': p['user_id'], 
+                            'msg_id': msg.message_id,
+                            'is_main_message': True
+                        }
                     
             except Exception as ui_err:
                 print(f"❌ ما قدرت أرسل الواجهة لـ {p['user_id']}: {ui_err}")
@@ -646,41 +716,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 
     except Exception as e: 
         print(f"UI Error: {e}")
-async def auto_handle_no_play(room_id, bot, expected_turn):
-    """معالج تلقائي عندما لا يكون لدى اللاعب أوراق قابلة للعب"""
-    try:
-        await asyncio.sleep(5)
-        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data or room_data[0]['turn_index'] != expected_turn: 
-            return
-
-        room = room_data[0]
-        players = get_ordered_players(room_id)
-        curr_idx = room['turn_index']
-        curr_p = players[curr_idx]
-        p_id = curr_p['user_id']
-        
-        # سحب ورقة تلقائياً
-        deck = safe_load(room['deck'])
-        if not deck:
-            deck = generate_h2o_deck()
-        
-        curr_hand = safe_load(curr_p['hand'])
-        if deck:
-            new_card = deck.pop(0)
-            curr_hand.append(new_card)
-            
-            # تحديث قاعدة البيانات
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                    (json.dumps(curr_hand), p_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                    (json.dumps(deck), room_id), commit=True)
-            
-            # تحديث الواجهة
-            await refresh_ui_2p(room_id, bot, {p_id: f"📥 سحبت ورقة تلقائياً: {new_card}"})
-            
-    except Exception as e:
-        print(f"Error in auto_handle_no_play: {e}")
 
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي في الخلفية عندما لا يوجد أوراق مناسبة"""
