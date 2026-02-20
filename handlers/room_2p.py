@@ -213,7 +213,7 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
         # 5. إبلاغ اللاعبين بالعقوبة وتحديث الواجهة
         msgs = {
             p_id: f"⏰ خلص وقتك! تعاقبت بسحب ورقة ({penalty_card}) وانتقل الدور للمنافس.",
-            opp_id: f"⏰ فلان {p_name} خلص وقته وتعاقب بسحب ورقة من الكومة، الدور صار إلك ✅"
+            opp_id: f"⏰ {p_name} خلص وقته وتعاقب بسحب ورقة من الكومة، الدور صار إلك ✅"
         }
         await refresh_ui_2p(room_id, bot, msgs)
 
