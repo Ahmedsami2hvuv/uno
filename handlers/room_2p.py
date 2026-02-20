@@ -123,15 +123,15 @@ def cancel_challenge_timer(room_id):
     if cd: asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
 
 def cancel_timer(room_id):
+    # إلغاء العداد
     task = turn_timers.pop(room_id, None)
-    if task and not task.done():
+    if task:
         task.cancel()
+    
+    # إلغاء رسالة العداد ومسحها من القاموس فوراً
     cd = countdown_msgs.pop(room_id, None)
     if cd:
         asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
-    cancel_color_timer(room_id)
-    cancel_challenge_timer(room_id)
-    color_timed_out.discard(room_id)
 
 async def _delete_countdown(bot, chat_id, msg_id):
     try: await bot.delete_message(chat_id, msg_id)
@@ -496,16 +496,15 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         # 2. فحص هل اللاعب عنده لعب؟
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
         
-        # 3. إذا ما عنده لعب، نطلق "مهمة خلفية" للسحب ونكمل بناء الواجهة (لا ننتظر هنا!)
-        if not is_playable:
-            # نتأكد ما نكرر السحب إذا كان التنبيه موجود أصلاً
-            if not alert_msg_dict or ("سحبت" not in str(alert_msg_dict.get(p_id, ""))):
-                # نشغل السحب في الخلفية كـ Task منفصل تماماً
+        # 3. إذا ما عنده لعب، نطلق "مهمة خلفية" (Task) ونكمل فوراً
+        if not is_playable and i == room['turn_index']:
+            # نتحقق إننا ما أطلقنا المهمة مسبقاً (عشان ما تتكرر بكل تحديث واجهة)
+            if not alert_msg_dict or ("سحب" not in str(alert_msg_dict.get(p_id, ""))):
+                # نستخدم اسم الدالة اللي سميناها background_auto_draw
                 asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
-                # نضيف رسالة تنبيه للواجهة اللي راح تظهر حالاً
+                
                 if not alert_msg_dict: alert_msg_dict = {}
                 alert_msg_dict[p_id] = "⏳ ما عندك لعب.. راح اسحب لك ورقة تلقائياً"
-                await asyncio.sleep(5)
                 
                 # 2. السحب الفعلي من الكومة
                 deck = safe_load(room['deck'])
@@ -599,7 +598,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         
     except Exception as e: 
         print(f"UI Error: {e}")
-                    
+        
         # --- واجهة اللاعبين (نفس نظامك القديم بالملي) ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
@@ -698,6 +697,16 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         
     except Exception as e: 
         print(f"UI Error: {e}")
+
+async def auto_handle_no_play(room_id, bot, expected_turn):
+    await asyncio.sleep(5)
+    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+    if not room_data or room_data[0]['turn_index'] != expected_turn: return
+
+    # منطق السحب (كودك الأصلي للسحب يوضع هنا)
+    # بعد السحب، استدعِ refresh_ui_2p مرة واحدة فقط
+    await refresh_ui_2p(room_id, bot, {p_id: "📥 سحبت ورقة تلقائياً"})
+    
 
 async def background_auto_draw(room_id, bot, expected_turn):
     """ هذه الدالة تعمل في الخلفية ولا تعطل استجابة البوت """
