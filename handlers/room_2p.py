@@ -70,7 +70,7 @@ def check_validity(card, top_card, current_color):
     """
     التحقق من صحة الورقة الملعوبة
     - الجوكرات الملونة (🌈) تعتبر صالحة دائماً وتحتاج اختيار لون
-    - جوكرات السحب (💧, 🌊, 🔥) تعتبر صالحة دائماً ولا تحتاج اختيار لون
+    - جوكرات السحب (💧, 🌊, 🔥) تعتبر صالحة دائماً وبعدها يمكن لعب أي لون
     - باقي الأوراق تتبع القواعد العادية (نفس اللون أو نفس الرقم)
     """
     
@@ -78,7 +78,7 @@ def check_validity(card, top_card, current_color):
     if "🌈" in card:
         return True
         
-    # جوكرات السحب (💧, 🌊, 🔥) - صالحة دائماً والدور يرجع للاعب نفسه
+    # جوكرات السحب (💧, 🌊, 🔥) - صالحة دائماً وبعدها يمكن لعب أي لون
     if any(x in card for x in ["🔥", "💧", "🌊"]):
         return True
     
@@ -664,35 +664,18 @@ async def background_auto_draw(room_id, bot, curr_idx):
         opp_id = players[(curr_idx + 1) % 2]['user_id']
         p_name = players[curr_idx].get('player_name') or "لاعب"
         
-        # إرسال رسالة معلومات للسحب التلقائي داخل واجهة اللعب
+        # إرسال رسالة واحدة فقط للسحب التلقائي داخل واجهة اللعب
         alerts = {
-            p_id: "⏳ ليس لديك أوراق مناسبة... سيتم سحب ورقة لك خلال 5 ثواني",
-            opp_id: f"⏳ {p_name} ليس لديه أوراق مناسبة... سيتم سحب ورقة له خلال 5 ثواني"
+            p_id: "⏳ ليس لديك أوراق مناسبة... سيتم سحب ورقة لك خلال 5 ثواني"
         }
         
-        # تحديث الواجهة مع رسالة السحب
+        # تحديث الواجهة مع رسالة السحب (مرة واحدة فقط)
         await refresh_ui_2p(room_id, bot, alerts)
         
-        # انتظار 5 ثواني مع تحديث العد التنازلي داخل الواجهة
-        for step in range(5, 0, -1):
-            await asyncio.sleep(1)
-            
-            # التحقق من الغرفة والدور
-            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-            if not room_data:
-                return
-            room = room_data[0]
-            
-            if room['turn_index'] != curr_idx or room['status'] != 'playing':
-                return
-            
-            # تحديث العد التنازلي داخل الواجهة
-            countdown_alerts = {
-                p_id: f"⏳ باقي {step} ثواني على السحب التلقائي..."
-            }
-            await refresh_ui_2p(room_id, bot, countdown_alerts)
+        # انتظار 5 ثواني بدون إرسال رسائل إضافية
+        await asyncio.sleep(5)
         
-        # التحقق النهائي من الغرفة والدور
+        # التحقق من الغرفة والدور
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data:
             return
@@ -744,7 +727,7 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             return
         p_id = players[expected_turn]['user_id']
         
-        # عد تنازلي 12 ثانية مع تحديث الواجهة
+        # عد تنازلي 12 ثانية مع تحديث الواجهة (مرة واحدة فقط)
         for step in range(6, 0, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -756,13 +739,10 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
                 return
             
             remaining = step * 2
-            filled = "🟢" * step
-            empty = "⚫" * (6 - step)
-            bar = filled + empty
             
-            # تحديث الواجهة مع العد التنازلي
+            # تحديث الواجهة مع العد التنازلي (مرة واحدة فقط لكل خطوة)
             alerts = {
-                p_id: f"📥 سحبت ورقة ({drawn_card}) وهي لا تعمل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
+                p_id: f"📥 سحبت ورقة ({drawn_card}) وهي لا تعمل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي"
             }
             await refresh_ui_2p(room_id, bot, alerts)
             
@@ -1082,9 +1062,10 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                         if deck:
                             drawn_cards.append(deck.pop(0))
                             opp_hand.append(drawn_cards[-1])
-                    # الورقة تبقى كما هي
-                    top_card_value = card
-                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
+                    # الورقة تبقى كما هي - نستخدم لون عشوائي للجوكر
+                    random_color = random.choice(['🔴', '🔵', '🟡', '🟢'])
+                    top_card_value = f"{card} {random_color}"
+                    current_color = random_color
                     msg_opp = f"🔥 {p_name} لعب جوكر +4 وسحبك 4 ورقات! 🎨 يمكنه الآن لعب أي لون"
                     msg_me = f"🔥 لعبت جوكر +4 وسحبت الخصم 4 ورقات! 🎨 يمكنك الآن لعب أي لون"
                     
@@ -1093,8 +1074,10 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                         if deck:
                             drawn_cards.append(deck.pop(0))
                             opp_hand.append(drawn_cards[-1])
-                    top_card_value = card
-                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
+                    # نستخدم لون عشوائي للجوكر
+                    random_color = random.choice(['🔴', '🔵', '🟡', '🟢'])
+                    top_card_value = f"{card} {random_color}"
+                    current_color = random_color
                     msg_opp = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎨 يمكنه الآن لعب أي لون"
                     msg_me = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! 🎨 يمكنك الآن لعب أي لون"
                     
@@ -1103,8 +1086,10 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                         if deck:
                             drawn_cards.append(deck.pop(0))
                             opp_hand.append(drawn_cards[-1])
-                    top_card_value = card
-                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
+                    # نستخدم لون عشوائي للجوكر
+                    random_color = random.choice(['🔴', '🔵', '🟡', '🟢'])
+                    top_card_value = f"{card} {random_color}"
+                    current_color = random_color
                     msg_opp = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎨 يمكنه الآن لعب أي لون"
                     msg_me = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! 🎨 يمكنك الآن لعب أي لون"
                 
@@ -1115,7 +1100,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                     db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
                             (json.dumps(deck), room_id), commit=True)
                 
-                # تحديث الغرفة - نستخدم current_color من الورقة نفسها
+                # تحديث الغرفة - نضع لون عشوائي للجوكر
                 db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                         (top_card_value, current_color, next_turn, json.dumps(discard_pile), room_id), commit=True)
                 
