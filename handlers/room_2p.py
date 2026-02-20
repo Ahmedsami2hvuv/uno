@@ -492,8 +492,11 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_hand = safe_load(curr_p['hand'])
         p_id = curr_p['user_id']
 
-        # فحص هل اللاعب عنده لعب؟
-        is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
+        if not is_playable:
+    # لا تشغل تايمر الـ 20 ثانية هنا لأن الـ background_auto_draw هو المسؤول
+    pass 
+else:
+    turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
         
         # إذا ما عنده لعب، نطلق المهمة الخلفية "مرة واحدة فقط"
         if not is_playable:
@@ -690,6 +693,8 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
 
         # نبدأ العداد التلقائي
         from handlers.room_2p import turn_timers, turn_timeout_2p
+else:
+
         turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
         
     except Exception as e: 
