@@ -931,7 +931,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             alerts[opp_id] = f"🚫 {p_name} لعب ورقة أكشن والدور بقى عنده!"
             alerts[c.from_user.id] = f"🚫 لعبت {card} والدور رجع الك!"
         
-        elif "+2" in card or "2" in card:
+        elif "+2" in card:
             next_turn = p_idx  # الدور يبقى عند اللاعب
             deck = safe_load(room['deck'])
             opp_hand = safe_load(players[opp_idx]['hand'])
