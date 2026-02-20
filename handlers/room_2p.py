@@ -484,12 +484,9 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
 
             # أزرار التحكم
             controls = []
+            controls = []
             if i == room['turn_index']:
                 can_play = any(check_validity(c, room['top_card'], room['current_color']) for c in hand)
-                if not can_play:
-                    controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
-                if len(hand) == 2:
-                    controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
             
             # زر الصيد
             opp = players[(i+1)%2]
@@ -638,11 +635,11 @@ async def background_auto_draw(room_id, bot, curr_idx):
         else:
             # الورقة لا تعمل - نعطي 12 ثانية للتمرير
             alerts = {
-                p_id: f"📥 سحبت ورقة ({new_card}) وهي لا تعمل ❌\n⏳ لديك 12 ثانية للتمرير أو اضغط على زر التمرير الآن",
-                opp_id: f"📥 {p_name} سحب ورقة ({new_card}) وهي لا تعمل، سيمرر دوره خلال 12 ثانية"
+                p_id: f"📥 سحبت ورقة ({new_card}) وهي لا تعمل ❌\n⏳ لديك 12 ثانية للتمرير",
+                opp_id: f"📥 {p_name} سحب ورقة ({new_card}) وهي لا تعمل"
             }
             
-            # تحديث الواجهة
+            # تحديث الواجهة - هنا سيظهر زر التمرير تلقائياً
             await refresh_ui_2p(room_id, bot, alerts)
             
             # بدء تايمر 12 ثانية للتمرير التلقائي
