@@ -204,7 +204,10 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
 async def turn_timeout_2p(room_id, bot, expected_turn):
     try:
         cd_info = countdown_msgs.get(room_id)
-        # العداد الأصلي (20 ثانية) - تعديل نفس الرسالة
+        if not cd_info:
+            return
+            
+        # العداد الأصلي (20 ثانية)
         for step in range(10, 0, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -241,24 +244,41 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             # حساب الوقت المتبقي
             remaining = step * 2
             
-            # رسم شريط التقدم
-            filled = "🟢" * step
-            empty = "⚫" * (10 - step)
+            # تحديد لون الشريط حسب الوقت المتبقي
+            if remaining > 10:
+                # أكثر من 10 ثواني - أخضر
+                filled = "🟢" * step
+                empty = "⚫" * (10 - step)
+            elif remaining > 5:
+                # بين 5 و 10 ثواني - أصفر
+                filled = "🟡" * step
+                empty = "⚫" * (10 - step)
+            else:
+                # أقل من 5 ثواني - أحمر
+                filled = "🔴" * step
+                empty = "⚫" * (10 - step)
+            
             bar = filled + empty
             
-            # تحديث نفس الرسالة وليس إرسال رسالة جديدة
+            # تحديث رسالة الوقت
             if cd_info:
                 try:
                     await bot.edit_message_text(
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id'],
-                        text=f"⏳ الوقت المتبقي: {remaining} ثانية\n{bar}"
+                        text=f"⏳ باقي {remaining} ثانية\n{bar}"
                     )
                 except Exception as e:
                     print(f"خطأ في تعديل رسالة الوقت: {e}")
             
             await asyncio.sleep(2)
 
+        # بعد انتهاء الوقت، نحذف رسالة العداد
+        if cd_info:
+            try: 
+                await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+            except: 
+                pass
         
         # --- التحقق من الغرفة والدور قبل تنفيذ العقوبة ---
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -534,14 +554,19 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 star = "✅" if pl_idx == room['turn_index'] else "⏳"
                 players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
 
+            # بناء النص الرئيسي
             status_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقات\n"
             status_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقات\n"
             status_text += "\n".join(players_info)
             
+            # إضافة رسالة التنبيه إن وجدت
             if alert_msg_dict and p['user_id'] in alert_msg_dict:
                 status_text += f"\n──────────────\n📢 {alert_msg_dict[p['user_id']]}"
             
-            # الورقة النازلة في سطر منفصل تحت
+            # رسالة الوقت (سيتم تحديثها من دالة الوقت)
+            # نتركها فارغة حالياً لأن دالة الوقت ستحدثها
+            
+            # الفاصل والورقة النازلة
             status_text += f"\n──────────────\n{turn_status}"
             status_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
 
@@ -587,6 +612,21 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             try:
                 if p.get('last_msg_id'):
                     try:
+                        # إذا كان هذا هو صاحب الدور، نرسل رسالة الوقت منفصلة
+                        if i == room['turn_index']:
+                            # إرسال رسالة الوقت بشكل منفصل (سيتم تحديثها من دالة الوقت)
+                            time_msg = await bot.send_message(
+                                p['user_id'], 
+                                "⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+                            )
+                            # حذف أي رسالة عداد سابقة
+                            old_cd = countdown_msgs.get(room_id)
+                            if old_cd:
+                                try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
+                                except: pass
+                            countdown_msgs[room_id] = {'bot': bot, 'chat_id': p['user_id'], 'msg_id': time_msg.message_id}
+                        
+                        # تحديث رسالة اللعب الرئيسية
                         await bot.edit_message_text(
                             text=status_text,
                             chat_id=p['user_id'],
@@ -600,23 +640,12 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                     msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                     db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
                     
-                # إرسال رسالة العد التنازلي فقط لصاحب الدور
-                if i == room['turn_index']:
-                    cd_msg = await bot.send_message(p['user_id'], "⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
-                    # حذف أي رسالة عداد سابقة
-                    old_cd = countdown_msgs.get(room_id)
-                    if old_cd:
-                        try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
-                        except: pass
-                    countdown_msgs[room_id] = {'bot': bot, 'chat_id': p['user_id'], 'msg_id': cd_msg.message_id}
-                    
             except Exception as ui_err:
                 print(f"❌ ما قدرت أرسل الواجهة لـ {p['user_id']}: {ui_err}")
                 continue
                 
     except Exception as e: 
         print(f"UI Error: {e}")
-
 async def auto_handle_no_play(room_id, bot, expected_turn):
     """معالج تلقائي عندما لا يكون لدى اللاعب أوراق قابلة للعب"""
     try:
@@ -727,7 +756,7 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             return
         p_id = players[expected_turn]['user_id']
         
-        # عد تنازلي 12 ثانية مع تحديث الواجهة (مرة واحدة فقط)
+        # عد تنازلي 12 ثانية مع تحديث الواجهة
         for step in range(6, 0, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -740,9 +769,20 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             
             remaining = step * 2
             
-            # رسم الشريط الأخضر
-            filled = "🟢" * step
-            empty = "⚫" * (6 - step)
+            # تحديد لون الشريط حسب الوقت المتبقي
+            if remaining > 8:
+                # أكثر من 8 ثواني - أخضر
+                filled = "🟢" * step
+                empty = "⚫" * (6 - step)
+            elif remaining > 4:
+                # بين 4 و 8 ثواني - أصفر
+                filled = "🟡" * step
+                empty = "⚫" * (6 - step)
+            else:
+                # أقل من 4 ثواني - أحمر
+                filled = "🔴" * step
+                empty = "⚫" * (6 - step)
+            
             bar = filled + empty
             
             # تحديث الواجهة مع العد التنازلي والشريط
@@ -784,7 +824,6 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
         
     except Exception as e:
         print(f"Error in auto_pass_with_countdown: {e}")
-
 
 async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
     """تمرير الدور تلقائياً بعد 12 ثانية من سحب ورقة لا تعمل"""
@@ -1310,7 +1349,6 @@ async def ask_exit(c: types.CallbackQuery):
     kb = [[InlineKeyboardButton(text="✅ نعم", callback_data=f"cf_ex_{rid}"), InlineKeyboardButton(text="❌ لا", callback_data=f"cn_ex_{rid}")]]
     await c.message.edit_text("🚪 هل أنت متأكد من الانسحاب؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-@router.callback_query(F.data.startswith("cf_ex_"))
 @router.callback_query(F.data.startswith("cf_ex_"))
 async def confirm_exit(c: types.CallbackQuery):
     rid = c.data.split("_")[2]
