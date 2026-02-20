@@ -694,11 +694,15 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 continue
 
         # نبدأ العداد التلقائي
-        from handlers.room_2p import turn_timers, turn_timeout_2p
-        else:
-
-        turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
+        is_playable_now = any(check_validity(c, room['top_card'], room['current_color']) for c in hand)
         
+        if is_playable_now:
+            from handlers.room_2p import turn_timers, turn_timeout_2p
+            turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
+        else:
+            # إذا ما عنده لعب نكتفي بالـ pass لأن السحب التلقائي شغال
+            pass
+            
     except Exception as e: 
         print(f"UI Error: {e}")
 
