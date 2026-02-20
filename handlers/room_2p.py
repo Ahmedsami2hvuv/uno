@@ -204,7 +204,7 @@ async def _send_photo_then_schedule_delete(bot, chat_id, photo_id, delay=3):
 async def turn_timeout_2p(room_id, bot, expected_turn):
     try:
         cd_info = countdown_msgs.get(room_id)
-        # العداد الأصلي (20 ثانية)
+        # العداد الأصلي (20 ثانية) - تعديل نفس الرسالة
         for step in range(10, 0, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -246,7 +246,7 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             empty = "⚫" * (10 - step)
             bar = filled + empty
             
-            # تحديث رسالة العداد
+            # تحديث نفس الرسالة وليس إرسال رسالة جديدة
             if cd_info:
                 try:
                     await bot.edit_message_text(
@@ -254,21 +254,12 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                         message_id=cd_info['msg_id'],
                         text=f"⏳ الوقت المتبقي: {remaining} ثانية\n{bar}"
                     )
-                except: 
-                    # إذا فشل التعديل، نحاول إرسال رسالة جديدة
-                    try:
-                        new_msg = await bot.send_message(
-                            cd_info['chat_id'],
-                            f"⏳ الوقت المتبقي: {remaining} ثانية\n{bar}"
-                        )
-                        # تحديث معلومات الرسالة في القاموس
-                        countdown_msgs[room_id] = {'bot': bot, 'chat_id': cd_info['chat_id'], 'msg_id': new_msg.message_id}
-                        cd_info = countdown_msgs.get(room_id)
-                    except:
-                        pass
+                except Exception as e:
+                    print(f"خطأ في تعديل رسالة الوقت: {e}")
             
             await asyncio.sleep(2)
 
+        
         # --- التحقق من الغرفة والدور قبل تنفيذ العقوبة ---
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: 
@@ -911,7 +902,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             # عقوبة الورقة الخطأ
             deck = safe_load(room['deck'])
             penalty_cards = []
-            for _ in range(2):
+            for _ in range(1):
                 if deck:
                     penalty_cards.append(deck.pop(0))
             
@@ -924,9 +915,9 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             
             print(f"DEBUG: {p_name} tried {card} on {room['top_card']} (Color: {room['current_color']}) -> REJECTED")
             alerts = {
-                c.from_user.id: f"⛔ لعبت ورقة خطأ ({card}) وتعاقبت بسحب ورقتين!" + 
+                c.from_user.id: f"⛔ لعبت ورقة خطأ ({card}) وتعاقبت بسحب ورقة واحدة!" + 
                                (f" (سحبت: {', '.join(penalty_cards)})" if penalty_cards else ""),
-                opp_id: f"⚠️ {p_name} لعب ورقة خطأ وتعاقب بسحب ورقتين!"
+                opp_id: f"⚠️ {p_name} لعب ورقة خطأ وتعاقب بسحب ورقة واحدة!"
             }
             return await refresh_ui_2p(room_id, c.bot, alerts)
         
@@ -1114,12 +1105,11 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                         if deck:
                             drawn_cards.append(deck.pop(0))
                             opp_hand.append(drawn_cards[-1])
-                    # نختار لون عشوائي للجوكر
-                    random_color = random.choice(['🔴', '🔵', '🟡', '🟢'])
-                    top_card_value = f"{card} {random_color}"
-                    current_color = random_color
-                    msg_opp = f"🔥 {p_name} لعب جوكر +4 وسحبك 4 ورقات! والدور رجع له!"
-                    msg_me = f"🔥 لعبت جوكر +4 وسحبت الخصم 4 ورقات! والدور رجع لك!"
+                    # لا نختار لون - الورقة تبقى كما هي بدون لون محدد
+                    top_card_value = card  # نخزن الورقة بدون لون
+                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'  # نحتفظ باللون الأصلي إذا كان موجوداً
+                    msg_opp = f"🔥 {p_name} لعب جوكر +4 وسحبك 4 ورقات! 🎨 يمكنه الآن لعب أي لون يريده"
+                    msg_me = f"🔥 لعبت جوكر +4 وسحبت الخصم 4 ورقات! 🎨 يمكنك الآن لعب أي لون تريده"
                     
                 elif "💧" in card:  # جوكر +1
                     for _ in range(1):
@@ -1128,8 +1118,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                             opp_hand.append(drawn_cards[-1])
                     top_card_value = card
                     current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
-                    msg_opp = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! والدور رجع له!"
-                    msg_me = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! والدور رجع لك!"
+                    msg_opp = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎨 يمكنه الآن لعب أي لون يريده"
+                    msg_me = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! 🎨 يمكنك الآن لعب أي لون تريده"
                     
                 elif "🌊" in card:  # جوكر +2
                     for _ in range(2):
@@ -1138,8 +1128,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                             opp_hand.append(drawn_cards[-1])
                     top_card_value = card
                     current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
-                    msg_opp = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! والدور رجع له!"
-                    msg_me = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! والدور رجع لك!"
+                    msg_opp = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎨 يمكنه الآن لعب أي لون يريده"
+                    msg_me = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! 🎨 يمكنك الآن لعب أي لون تريده"
                 
                 # تحديث يد الخصم والكومة
                 if drawn_cards:
@@ -1148,9 +1138,22 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                     db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
                             (json.dumps(deck), room_id), commit=True)
                 
-                # تحديث الغرفة
+                # تحديث الغرفة - هنا الأهم: current_color تبقى كما هي أو نضعها كلون اللاعب المفضل؟
+                # بما أن الجوكر يسمح بلعب أي لون، نحتاج لتحديث current_color إلى لون الورقة نفسها
+                # أو نتركها كما هي؟ الأفضل نحدثها إلى لون الورقة إذا كان لها لون
+                
+                # استخراج لون الورقة إذا كان موجوداً
+                card_parts = card.split()
+                if len(card_parts) > 1 and card_parts[0] in ['🔴', '🔵', '🟡', '🟢']:
+                    # إذا كانت الورقة لها لون محدد
+                    new_color = card_parts[0]
+                else:
+                    # إذا كانت الورقة بدون لون (جوكر)، نترك اللون الحالي أو نضعه كلون عشوائي؟
+                    # الأفضل نتركه كما هو لأن الجوكر يسمح بأي لون
+                    new_color = room['current_color']
+                
                 db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                        (top_card_value, current_color, next_turn, json.dumps(discard_pile), room_id), commit=True)
+                        (top_card_value, new_color, next_turn, json.dumps(discard_pile), room_id), commit=True)
                 
                 # إضافة الرسائل
                 alerts[opp_id] = msg_opp
