@@ -491,15 +491,18 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
         p_id = curr_p['user_id']
-        
+
+        # فحص إذا كان اللاعب عنده ورقة قابلة للعب
+        is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
+
+        # إصلاح المسافات هنا (أهم جزء)
         if not is_playable:
-        pass 
-    else:
-    turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
+            pass 
+        else:
+            turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
         
-        # إذا ما عنده لعب، نطلق المهمة الخلفية "مرة واحدة فقط"
+        # إطلاق مهمة السحب التلقائي
         if not is_playable:
-            # نستخدم alert_msg_dict كعلامة عشان ما نكرر الطلب في كل تحديث شاشة
             if not alert_msg_dict or ("سحب" not in str(alert_msg_dict.get(p_id, ""))):
                 asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
                 if not alert_msg_dict: alert_msg_dict = {}
