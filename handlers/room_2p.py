@@ -185,44 +185,72 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             if not room_data:
                 # حذف رسالة العداد إذا الغرفة غير موجودة
                 if cd_info:
-                    try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                    except: pass
+                    try: 
+                        await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+                    except: 
+                        pass
                 return
                 
             room = room_data[0]
+            
             # إذا تغير الدور أو انتهت اللعبة
             if room['status'] != 'playing' or room['turn_index'] != expected_turn:
                 # حذف رسالة العداد
                 if cd_info:
-                    try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                    except: pass
+                    try: 
+                        await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+                    except: 
+                        pass
                 return
             
             # إذا ألغي التايمر
             if room_id not in turn_timers:
                 if cd_info:
-                    try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                    except: pass
+                    try: 
+                        await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+                    except: 
+                        pass
                 return
-                
+            
+            # حساب الوقت المتبقي
             remaining = step * 2
-            bar = "🟢" * step + "⚫" * (10 - step)
+            
+            # رسم شريط التقدم
+            filled = "🟢" * step
+            empty = "⚫" * (10 - step)
+            bar = filled + empty
+            
+            # تحديث رسالة العداد
             if cd_info:
                 try:
                     await bot.edit_message_text(
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id'],
-                        text=f"⏳ باقي {remaining} ثانية\n{bar}"
+                        text=f"⏳ الوقت المتبقي: {remaining} ثانية\n{bar}"
                     )
                 except: 
-                    pass
+                    # إذا فشل التعديل، نحاول إرسال رسالة جديدة
+                    try:
+                        new_msg = await bot.send_message(
+                            cd_info['chat_id'],
+                            f"⏳ الوقت المتبقي: {remaining} ثانية\n{bar}"
+                        )
+                        # تحديث معلومات الرسالة في القاموس
+                        countdown_msgs[room_id] = {'bot': bot, 'chat_id': cd_info['chat_id'], 'msg_id': new_msg.message_id}
+                        cd_info = countdown_msgs.get(room_id)
+                    except:
+                        pass
+            
             await asyncio.sleep(2)
 
         # --- التحقق من الغرفة والدور قبل تنفيذ العقوبة ---
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data: return
+        if not room_data: 
+            return
         room = room_data[0]
-        if room['status'] != 'playing' or room['turn_index'] != expected_turn: return
+        
+        if room['status'] != 'playing' or room['turn_index'] != expected_turn: 
+            return
         
         players = get_ordered_players(room_id)
         curr_p = players[expected_turn]
@@ -244,15 +272,19 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
         next_turn = (expected_turn + 1) % 2
         
         # تحديث قاعدة البيانات
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
-        db_query("UPDATE rooms SET turn_index = %s, deck = %s WHERE room_id = %s", (next_turn, json.dumps(deck), room_id), commit=True)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(curr_hand), p_id), commit=True)
+        db_query("UPDATE rooms SET turn_index = %s, deck = %s WHERE room_id = %s", 
+                (next_turn, json.dumps(deck), room_id), commit=True)
 
         # تنظيف العدادات
         turn_timers.pop(room_id, None)
         cd_del = countdown_msgs.pop(room_id, None)
         if cd_del:
-            try: await bot.delete_message(cd_del['chat_id'], cd_del['msg_id'])
-            except: pass
+            try: 
+                await bot.delete_message(cd_del['chat_id'], cd_del['msg_id'])
+            except: 
+                pass
 
         # إبلاغ اللاعبين
         msgs = {
@@ -265,11 +297,22 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
         # حذف رسالة العداد عند الإلغاء
         cd_info = countdown_msgs.get(room_id)
         if cd_info:
-            try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-            except: pass
+            try: 
+                await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+            except: 
+                pass
+        # إعادة رفع الاستثناء للإلغاء الصحيح
         raise
+        
     except Exception as e:
         print(f"Timer error 2p: {e}")
+        # محاولة حذف رسالة العداد في حالة الخطأ
+        cd_info = countdown_msgs.get(room_id)
+        if cd_info:
+            try: 
+                await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+            except: 
+                pass
         
 
 async def color_timeout_2p(room_id, bot, player_id):
@@ -484,9 +527,16 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
 
             # أزرار التحكم
             controls = []
-            controls = []
             if i == room['turn_index']:
                 can_play = any(check_validity(c, room['top_card'], room['current_color']) for c in hand)
+                
+                # زر التمرير يظهر فقط إذا اللاعب ليس لديه أوراق قابلة للعب
+                if not can_play:
+                    controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
+                
+                # زر اونو يظهر إذا عنده ورقتين
+                if len(hand) == 2:
+                    controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
             
             # زر الصيد
             opp = players[(i+1)%2]
@@ -575,8 +625,35 @@ async def auto_handle_no_play(room_id, bot, expected_turn):
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي في الخلفية عندما لا يوجد أوراق مناسبة"""
     try:
-        # انتظار 5 ثواني
-        await asyncio.sleep(5)
+        # إرسال إشعار للاعب بأنه سيتم السحب خلال 5 ثواني
+        players = get_ordered_players(room_id)
+        if curr_idx < len(players):
+            p_id = players[curr_idx]['user_id']
+            opp_id = players[(curr_idx + 1) % 2]['user_id']
+            p_name = players[curr_idx].get('player_name') or "لاعب"
+            
+            # إرسال إشعار للاعب وللخصم
+            await bot.send_message(
+                p_id,
+                "⏳ ليس لديك أوراق مناسبة... سيتم سحب ورقة لك خلال 5 ثواني"
+            )
+            await bot.send_message(
+                opp_id,
+                f"⏳ {p_name} ليس لديه أوراق مناسبة... سيتم سحب ورقة له خلال 5 ثواني"
+            )
+        
+        # انتظار 5 ثواني مع إرسال تحديثات كل ثانيتين
+        for step in range(5, 0, -2):
+            if step > 1:
+                remaining = step
+                await asyncio.sleep(2)
+                try:
+                    await bot.send_message(
+                        p_id,
+                        f"⏳ باقي {remaining} ثواني على السحب التلقائي..."
+                    )
+                except:
+                    pass
         
         # التحقق من الغرفة والدور
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -588,25 +665,13 @@ async def background_auto_draw(room_id, bot, curr_idx):
         if room['turn_index'] != curr_idx or room['status'] != 'playing':
             return
         
-        players = get_ordered_players(room_id)
-        curr_p = players[curr_idx]
-        p_id = curr_p['user_id']
-        opp_id = players[(curr_idx + 1) % 2]['user_id']
-        p_name = curr_p.get('player_name') or "لاعب"
-        
-        # إرسال إشعار للخصم
-        await bot.send_message(
-            opp_id,
-            f"⏳ {p_name} ليس لديه أوراق مناسبة... جاري سحب ورقة له"
-        )
-        
         # سحب ورقة من الكومة
         deck = safe_load(room['deck'])
         if not deck:
             deck = generate_h2o_deck()
             random.shuffle(deck)
         
-        curr_hand = safe_load(curr_p['hand'])
+        curr_hand = safe_load(players[curr_idx]['hand'])
         new_card = deck.pop(0)
         curr_hand.append(new_card)
         
@@ -627,7 +692,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
             # تحديث الواجهة مع بدء تايمر 20 ثانية
             await refresh_ui_2p(room_id, bot, alerts)
             
-            # بدء تايمر 20 ثانية (العد التنازلي الطبيعي)
+            # بدء تايمر 20 ثانية
             turn_timers[room_id] = asyncio.create_task(
                 turn_timeout_2p(room_id, bot, curr_idx)
             )
@@ -639,16 +704,84 @@ async def background_auto_draw(room_id, bot, curr_idx):
                 opp_id: f"📥 {p_name} سحب ورقة ({new_card}) وهي لا تعمل"
             }
             
-            # تحديث الواجهة - هنا سيظهر زر التمرير تلقائياً
+            # تحديث الواجهة
             await refresh_ui_2p(room_id, bot, alerts)
             
-            # بدء تايمر 12 ثانية للتمرير التلقائي
+            # بدء تايمر 12 ثانية مع رسائل تحديث
             asyncio.create_task(
-                auto_pass_after_auto_draw(room_id, bot, curr_idx, new_card)
+                auto_pass_with_countdown(room_id, bot, curr_idx, new_card)
             )
             
     except Exception as e:
         print(f"Error in background_auto_draw: {e}")
+
+async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
+    """تمرير الدور تلقائياً مع رسائل عد تنازلي كل ثانيتين"""
+    try:
+        players = get_ordered_players(room_id)
+        if expected_turn >= len(players):
+            return
+        p_id = players[expected_turn]['user_id']
+        
+        # عد تنازلي 12 ثانية (6 خطوات كل خطوة ثانيتين)
+        for step in range(6, 0, -1):
+            # التحقق من الغرفة في كل دورة
+            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+            if not room_data:
+                return
+            room = room_data[0]
+            
+            if room['turn_index'] != expected_turn or room['status'] != 'playing':
+                return
+            
+            remaining = step * 2
+            filled = "🟢" * step
+            empty = "⚫" * (6 - step)
+            bar = filled + empty
+            
+            try:
+                await bot.send_message(
+                    p_id,
+                    f"⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
+                )
+            except:
+                pass
+            
+            await asyncio.sleep(2)
+        
+        # بعد انتهاء العد، نمرر الدور
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data:
+            return
+        room = room_data[0]
+        
+        if room['turn_index'] != expected_turn or room['status'] != 'playing':
+            return
+        
+        players = get_ordered_players(room_id)
+        curr_idx = room['turn_index']
+        next_idx = (curr_idx + 1) % 2
+        p_name = players[curr_idx].get('player_name') or "لاعب"
+        opp_id = players[next_idx]['user_id']
+        
+        # تمرير الدور
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
+                (next_idx, room_id), commit=True)
+        
+        # إلغاء التايمر الحالي
+        cancel_timer(room_id)
+        
+        # إشعار الجميع
+        alerts = {
+            players[curr_idx]['user_id']: f"⏱ انتهى الوقت! تم تمرير دورك تلقائياً (سحبت {drawn_card} ولا تعمل)",
+            players[next_idx]['user_id']: f"⏱ {p_name} انتهى وقته وصار دورك الآن!"
+        }
+        
+        await refresh_ui_2p(room_id, bot, alerts)
+        
+    except Exception as e:
+        print(f"Error in auto_pass_with_countdown: {e}")
+
 
 async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
     """تمرير الدور تلقائياً بعد 12 ثانية من سحب ورقة لا تعمل"""
