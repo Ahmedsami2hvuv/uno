@@ -710,43 +710,7 @@ async def auto_handle_no_play(room_id, bot, expected_turn):
     await refresh_ui_2p(room_id, bot, {p_id: "📥 سحبت ورقة تلقائياً"})
     
 
-async def background_auto_draw(room_id, bot, expected_turn):
-    await asyncio.sleep(5) # انتظار هادئ في الخلفية
-    
-    # نتحقق هل الغرفة لسه موجودة والدور لسه عند نفس الشخص؟
-    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-    if not room_data or room_data[0]['turn_index'] != expected_turn:
-        return
-
-    # تنفيذ السحب
-    room = room_data[0]
-    players = get_ordered_players(room_id)
-    curr_p = players[expected_turn]
-    hand = safe_load(curr_p['hand'])
-    deck = safe_load(room['deck'])
-    if not deck: deck = generate_h2o_deck()
-    
-    new_card = deck.pop(0)
-    hand.append(new_card)
-    
-    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), curr_p['user_id']), commit=True)
-    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-    
-    # فحص الورقة الجديدة
-    if check_validity(new_card, room['top_card'], room['current_color']):
-        # إذا شغالة، نحدث الواجهة فقط ونترك اللاعب يلعبها (التايمر الأصلي سيحاسبه)
-        await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"✅ سحبت ({new_card}) وتكدر تلعبها"})
-    else:
-        # إذا ما شغالة، نحدث الواجهة وننتظر 12 ثانية قبل التمرير التلقائي
-        await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"📥 سحبت ({new_card}) وما تشتغل.. راح يمر الدور"})
-        await asyncio.sleep(12)
-        
-        # فحص أخير قبل التمرير
-        r_final = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
-        if r_final and r_final[0]['turn_index'] == expected_turn:
-            next_turn = (expected_turn + 1) % 2
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
-            await refresh_ui_2p(room_id, bot)
+background_auto_draw
 
     
 
@@ -759,6 +723,13 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         await asyncio.sleep(0)
         room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
         players = get_ordered_players(room_id)
+        
+        # 1. عرف p_idx أولاً (من بيانات الغرفة)
+        p_idx = room['turn_index'] 
+        
+        # 2. الآن تقدر تستخدمه لتعريف الخصم
+        opp_idx = (p_idx + 1) % 2
+        opp_id = players[opp_idx]['user_id']
         p_idx = room['turn_index']
         if players[p_idx]['user_id'] != c.from_user.id: return await c.answer("مو دورك! ❌", show_alert=True)
         hand = sort_hand(safe_load(players[p_idx]['hand']))
@@ -828,29 +799,36 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             color_timers[room_id] = asyncio.create_task(color_timeout_2p(room_id, c.bot, c.from_user.id))
             return
 
-        next_turn = (p_idx + 1) % 2
-        if "🚫" in card:
+        # --- بداية التعديل المطلوب ---
+        next_turn = (p_idx + 1) % 2  # الافتراضي: الدور ينتقل للخصم
+        
+        # في نظام الـ 2 لاعبين: الأوراق الخاصة ترجع الدور لنفس اللاعب
+        if "🚫" in card or "🔄" in card:
             next_turn = p_idx
-            alerts[opp_id] = f"🚫 {p_name} لعب منع والدور رجع اله!"
-            alerts[c.from_user.id] = f"🚫 لعبت منع والدور رجع الك!"
-        elif "🔄" in card:
-            next_turn = p_idx
-            alerts[opp_id] = f"🔄 {p_name} لعب تحويل والدور رجع اله!"
-            alerts[c.from_user.id] = f"🔄 لعبت تحويل والدور رجع الك!"
-        elif "⬆️2" in card:
-            next_turn = p_idx
+            alerts[opp_id] = f"🚫 {p_name} لعب ورقة أكشن والدور بقى عنده!"
+            alerts[c.from_user.id] = f"🚫 لعبت {card} والدور رجع الك!"
+
+        elif "2" in card:  # يشمل +2 و ⬆️2
+            next_turn = p_idx  # الدور يبقى عندك
             deck = safe_load(room['deck'])
-            opp_h = safe_load(players[(p_idx+1)%2]['hand'])
+            opp_h = safe_load(players[opp_idx]['hand'])
+            # سحب الخصم ورقتين
             for _ in range(2):
                 if deck: opp_h.append(deck.pop(0))
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_h), players[(p_idx+1)%2]['user_id']), commit=True)
+            
+            # تحديث يد الخصم والكومة في خطوة واحدة قبل الـ UI
+            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_h), opp_id), commit=True)
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            alerts[opp_id] = f"⬆️2 {p_name} لعب سحب 2 وسحبك ورقتين والدور رجع اله!"
-            alerts[c.from_user.id] = f"⬆️2 لعبت سحب 2 وسحبت الخصم ورقتين والدور رجع الك!"
+            
+            alerts[opp_id] = f"⬆️2 {p_name} سحبك 2 والدور بقى عنده!"
+            alerts[c.from_user.id] = f"⬆️2 سحبت الخصم ورقتين والدور رجع الك!"
 
-        db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
-        await refresh_ui_2p(room_id, c.bot, alerts)
-    except Exception as e: print(f"Play Error: {e}")
+        # تحديث حالة الغرفة النهائية (الورقة، اللون، والدور الجديد)
+        db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
+                 (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
+        
+        return await refresh_ui_2p(room_id, c.bot, alerts)
+        # --- نهاية التعديل المطلوب ---
 
 @router.callback_query(GameStates.choosing_color, F.data.startswith("cl_"))
 async def handle_color(c: types.CallbackQuery, state: FSMContext):
