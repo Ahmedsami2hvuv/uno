@@ -350,7 +350,7 @@ async def color_timeout_2p(room_id, bot, player_id):
                     # إرسال رسالة جديدة
                     new_msg = await bot.send_message(
                         cd_info['chat_id'],
-                        f"⏳ باقي {remaining} ثانية لاختيار اللون\n{bar}"
+                        f"⏳ الوقت المتبقي: {remaining} ثانية لاختيار اللون\n{bar}"
                     )
                     cd_info['msg_id'] = new_msg.message_id
                 except Exception as e:
@@ -396,6 +396,9 @@ async def color_timeout_2p(room_id, bot, player_id):
         alerts = {}
         penalty = 1 if "💧" in card else (2 if "🌊" in card else 0)
         
+        # في جميع حالات جوكر السحب، الدور يرجع للاعب نفسه
+        next_turn = p_idx  # الدور يرجع للاعب نفسه
+        
         if penalty > 0:
             if not deck:
                 discard = safe_load(room['discard_pile'])
@@ -409,13 +412,11 @@ async def color_timeout_2p(room_id, bot, player_id):
             for _ in range(penalty):
                 if deck: opp_h.append(deck.pop(0))
             db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_h), opp_id), commit=True)
-            next_turn = p_idx
             alerts[opp_id] = f"⏰ {p_name} ما اختار اللون بالوقت! تم اختيار {chosen_color} تلقائياً وسحبك {penalty} ورقة والدور رجع له!"
             alerts[player_id] = f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً."
         else:
-            next_turn = (p_idx + 1) % 2
-            alerts[opp_id] = f"⏰ {p_name} ما اختار اللون بالوقت! تم اختيار {chosen_color} تلقائياً والدور صار لك!"
-            alerts[player_id] = f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً."
+            alerts[opp_id] = f"🎨 {p_name} اختار اللون {chosen_color} والدور رجع له!"
+            alerts[player_id] = f"🎨 اخترت اللون {chosen_color} والدور رجع لك!"
             
         db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, deck = %s WHERE room_id = %s", 
                 (f"{card} {chosen_color}", chosen_color, next_turn, json.dumps(deck), room_id), commit=True)
@@ -423,6 +424,16 @@ async def color_timeout_2p(room_id, bot, player_id):
         turn_timers.pop(room_id, None)
         countdown_msgs.pop(room_id, None)
         await refresh_ui_2p(room_id, bot, alerts)
+        
+    except asyncio.CancelledError:
+        # حذف رسالة العداد عند الإلغاء
+        cd_info = color_countdown_msgs.get(room_id)
+        if cd_info:
+            try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+            except: pass
+        raise
+    except Exception as e:
+        print(f"Color timer error 2p: {e}")
         
     except asyncio.CancelledError:
         # حذف رسالة العداد عند الإلغاء
@@ -506,13 +517,16 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 star = "✅" if pl_idx == room['turn_index'] else "⏳"
                 players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
 
-            status_text = f"📦 السحب: {len(safe_load(room['deck']))} | الورقة النازلة: [ {room['top_card']} ]\n"
+             status_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقات\n"
+            status_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقات\n"
             status_text += "\n".join(players_info)
             
             if alert_msg_dict and p['user_id'] in alert_msg_dict:
                 status_text += f"\n──────────────\n📢 {alert_msg_dict[p['user_id']]}"
             
+            # الورقة النازلة في سطر منفصل تحت
             status_text += f"\n──────────────\n{turn_status}"
+            status_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
 
             # بناء الكيبورد (الأوراق)
             kb = []
@@ -913,28 +927,43 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             points = calculate_points(opp_hand)
             
             # تحديث النقاط
-            current_points = players[p_idx].get('points', 0)
+            current_points = players[p_idx].get('online_points', 0)
             new_points = current_points + points
-            db_query("UPDATE room_players SET points = %s WHERE user_id = %s", 
+            db_query("UPDATE users SET online_points = %s WHERE user_id = %s", 
                     (new_points, c.from_user.id), commit=True)
+            
+            # تحديث نقاط الخصم (لا يضاف له شيء)
             
             # تحديث الغرفة
             db_query("UPDATE rooms SET discard_pile = %s, top_card = %s, current_color = %s WHERE room_id = %s", 
                     (json.dumps(discard_pile), card, card.split()[0], room_id), commit=True)
             
+            # حذف أوراق اللعب السابقة
+            db_query("DELETE FROM room_players WHERE room_id = %s", (room_id,), commit=True)
+            
             # التحقق من الفوز باللعبة
             score_limit = room.get('score_limit', 500)
-            if new_points >= score_limit:
-                # انتهت اللعبة
-                end_kb = make_end_kb(players, room, '2p')
-                for p in players:
-                    await c.bot.send_message(
-                        p['user_id'],
-                        f"🏆 {p_name} فاز باللعبة! النقاط: {new_points}",
-                        reply_markup=end_kb
-                    )
-                db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
-                return
+            total_points = new_points
+            
+            # رسالة الفوز مع النقاط
+            win_text = f"🏆 **{p_name} فاز باللعبة!** 🏆\n\n"
+            win_text += f"📊 نقاط هذه الجولة: {points}\n"
+            win_text += f"💰 إجمالي نقاطك: {total_points}\n\n"
+            
+            if score_limit > 0:
+                win_text += f"🎯 هدف اللعبة كان: {score_limit} نقطة"
+            
+            end_kb = make_end_kb(players, room, '2p')
+            for p in players:
+                await c.bot.send_message(
+                    p['user_id'],
+                    win_text,
+                    reply_markup=end_kb
+                )
+            
+            # تنظيف الغرفة
+            db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
+            return
             
             # بدء جولة جديدة
             await start_new_round(room_id, c.bot, p_idx, {
