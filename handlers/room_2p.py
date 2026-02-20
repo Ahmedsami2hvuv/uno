@@ -706,8 +706,7 @@ async def auto_handle_no_play(room_id, bot, expected_turn):
     
 
 async def background_auto_draw(room_id, bot, expected_turn):
-    """ هذه الدالة تعمل في الخلفية ولا تعطل استجابة البوت """
-    await asyncio.sleep(5)
+    await asyncio.sleep(5) # انتظار هادئ في الخلفية
     
     # نتحقق هل الغرفة لسه موجودة والدور لسه عند نفس الشخص؟
     room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -728,15 +727,16 @@ async def background_auto_draw(room_id, bot, expected_turn):
     db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), curr_p['user_id']), commit=True)
     db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
     
-    # فحص هل الورقة الجديدة قابلة للعب؟
+    # فحص الورقة الجديدة
     if check_validity(new_card, room['top_card'], room['current_color']):
+        # إذا شغالة، نحدث الواجهة فقط ونترك اللاعب يلعبها (التايمر الأصلي سيحاسبه)
         await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"✅ سحبت ({new_card}) وتكدر تلعبها"})
     else:
-        # إذا ما تشتغل، ننتظر 12 ثانية ثم نمرر الدور تلقائياً
-        await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"📥 سحبت ({new_card}) وما تشتغل.. راح يمر الدور خلال ثواني"})
+        # إذا ما شغالة، نحدث الواجهة وننتظر 12 ثانية قبل التمرير التلقائي
+        await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"📥 سحبت ({new_card}) وما تشتغل.. راح يمر الدور"})
         await asyncio.sleep(12)
         
-        # فحص أخير قبل نقل الدور تلقائياً
+        # فحص أخير قبل التمرير
         r_final = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
         if r_final and r_final[0]['turn_index'] == expected_turn:
             next_turn = (expected_turn + 1) % 2
