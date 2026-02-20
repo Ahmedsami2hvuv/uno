@@ -664,7 +664,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
         opp_id = players[(curr_idx + 1) % 2]['user_id']
         p_name = players[curr_idx].get('player_name') or "لاعب"
         
-        # إرسال رسالة واحدة فقط للسحب التلقائي داخل واجهة اللعب
+        # إرسال رسالة واحدة فقط للسحب التلقائي داخل واجهة اللعب للاعب صاحب الدور فقط
         alerts = {
             p_id: "⏳ ليس لديك أوراق مناسبة... سيتم سحب ورقة لك خلال 5 ثواني"
         }
@@ -710,7 +710,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
             turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
         else:
             alerts = {
-                p_id: f"📥 سحبت ورقة ({new_card}) وهي لا تعمل ❌\n⏳ لديك 12 ثانية للتمرير",
+                p_id: f"📥 سحبت ورقة ({new_card}) وهي لا تعمل ❌",
                 opp_id: f"📥 {p_name} سحب ورقة ({new_card}) وهي لا تعمل"
             }
             await refresh_ui_2p(room_id, bot, alerts)
@@ -740,9 +740,14 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             
             remaining = step * 2
             
-            # تحديث الواجهة مع العد التنازلي (مرة واحدة فقط لكل خطوة)
+            # رسم الشريط الأخضر
+            filled = "🟢" * step
+            empty = "⚫" * (6 - step)
+            bar = filled + empty
+            
+            # تحديث الواجهة مع العد التنازلي والشريط
             alerts = {
-                p_id: f"📥 سحبت ورقة ({drawn_card}) وهي لا تعمل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي"
+                p_id: f"📥 سحبت ورقة ({drawn_card}) وهي لا تعمل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
             }
             await refresh_ui_2p(room_id, bot, alerts)
             
