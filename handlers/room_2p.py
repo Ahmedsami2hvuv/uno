@@ -951,8 +951,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             
             alerts[opp_id] = f"⬆️2 {p_name} سحبك 2 والدور بقى عنده!" + \
                             (f" (سحبت: {', '.join(drawn_cards)})" if drawn_cards else "")
-            alerts[c.from_user.id] = f"⬆️2 سحبت الخصم ورقتين والدور رجع الك!" + \
-                                    (f" (سحب: {', '.join(drawn_cards)})" if drawn_cards else "")
+            alerts[c.from_user.id] = f"⬆️2 سحبت الخصم ورقتين والدور رجع الك!"
         
         # تحديث الغرفة
         db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
