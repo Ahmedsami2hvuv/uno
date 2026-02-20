@@ -1013,7 +1013,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             else:
                 alerts[opp_id] = f"⚠️ {p_name} بقتله ورقة وحدة ونسي يصيح اونو! صيده بسرعة! 🪤"
         
-            # معالجة الأوراق الخاصة
+                # معالجة الأوراق الخاصة
     next_turn = (p_idx + 1) % 2  # الدور ينتقل للخصم (القيمة الافتراضية)
     
     if any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
@@ -1033,12 +1033,12 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             # بناء كيبورد اختيار اللون مع أسماء الألوان
             color_kb = [
                 [
-                    InlineKeyboardButton(text="🔴 اختار", callback_data="cl_🔴"),
-                    InlineKeyboardButton(text="🔵 اختار", callback_data="cl_🔵")
+                    InlineKeyboardButton(text="🔴 أحمر", callback_data="cl_🔴"),
+                    InlineKeyboardButton(text="🔵 أزرق", callback_data="cl_🔵")
                 ],
                 [
-                    InlineKeyboardButton(text="🟡 اختار", callback_data="cl_🟡"),
-                    InlineKeyboardButton(text="🟢 اختار", callback_data="cl_🟢")
+                    InlineKeyboardButton(text="🟡 أصفر", callback_data="cl_🟡"),
+                    InlineKeyboardButton(text="🟢 أخضر", callback_data="cl_🟢")
                 ]
             ]
             
