@@ -656,43 +656,48 @@ async def auto_handle_no_play(room_id, bot, expected_turn):
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي في الخلفية عندما لا يوجد أوراق مناسبة"""
     try:
-        # إرسال إشعار للاعب بأنه سيتم السحب خلال 5 ثواني
         players = get_ordered_players(room_id)
-        if curr_idx < len(players):
-            p_id = players[curr_idx]['user_id']
-            opp_id = players[(curr_idx + 1) % 2]['user_id']
-            p_name = players[curr_idx].get('player_name') or "لاعب"
+        if curr_idx >= len(players):
+            return
             
-            # إرسال إشعار للاعب وللخصم
-            await bot.send_message(
-                p_id,
-                "⏳ ليس لديك أوراق مناسبة... سيتم سحب ورقة لك خلال 5 ثواني"
-            )
-            await bot.send_message(
-                opp_id,
-                f"⏳ {p_name} ليس لديه أوراق مناسبة... سيتم سحب ورقة له خلال 5 ثواني"
-            )
+        p_id = players[curr_idx]['user_id']
+        opp_id = players[(curr_idx + 1) % 2]['user_id']
+        p_name = players[curr_idx].get('player_name') or "لاعب"
         
-        # انتظار 5 ثواني مع إرسال تحديثات كل ثانيتين
-        for step in range(5, 0, -2):
-            if step > 1:
-                remaining = step
-                await asyncio.sleep(2)
-                try:
-                    await bot.send_message(
-                        p_id,
-                        f"⏳ باقي {remaining} ثواني على السحب التلقائي..."
-                    )
-                except:
-                    pass
+        # إرسال رسالة معلومات للسحب التلقائي داخل واجهة اللعب
+        alerts = {
+            p_id: "⏳ ليس لديك أوراق مناسبة... سيتم سحب ورقة لك خلال 5 ثواني",
+            opp_id: f"⏳ {p_name} ليس لديه أوراق مناسبة... سيتم سحب ورقة له خلال 5 ثواني"
+        }
         
-        # التحقق من الغرفة والدور
+        # تحديث الواجهة مع رسالة السحب
+        await refresh_ui_2p(room_id, bot, alerts)
+        
+        # انتظار 5 ثواني مع تحديث العد التنازلي داخل الواجهة
+        for step in range(5, 0, -1):
+            await asyncio.sleep(1)
+            
+            # التحقق من الغرفة والدور
+            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+            if not room_data:
+                return
+            room = room_data[0]
+            
+            if room['turn_index'] != curr_idx or room['status'] != 'playing':
+                return
+            
+            # تحديث العد التنازلي داخل الواجهة
+            countdown_alerts = {
+                p_id: f"⏳ باقي {step} ثواني على السحب التلقائي..."
+            }
+            await refresh_ui_2p(room_id, bot, countdown_alerts)
+        
+        # التحقق النهائي من الغرفة والدور
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data:
             return
         room = room_data[0]
         
-        # التأكد أن اللاعب ما زال في نفس الدور واللعبة مستمرة
         if room['turn_index'] != curr_idx or room['status'] != 'playing':
             return
         
@@ -714,47 +719,32 @@ async def background_auto_draw(room_id, bot, curr_idx):
         
         # التحقق من صلاحية الورقة المسحوبة
         if check_validity(new_card, room['top_card'], room['current_color']):
-            # الورقة تعمل - نعطي 20 ثانية للعبها
             alerts = {
                 p_id: f"✅ سحبت ورقة ({new_card}) وهذه الورقة تعمل! لديك 20 ثانية للعبها",
                 opp_id: f"🎯 {p_name} سحب ورقة ({new_card}) وهي تعمل! سيلعبها خلال 20 ثانية"
             }
-            
-            # تحديث الواجهة مع بدء تايمر 20 ثانية
             await refresh_ui_2p(room_id, bot, alerts)
-            
-            # بدء تايمر 20 ثانية
-            turn_timers[room_id] = asyncio.create_task(
-                turn_timeout_2p(room_id, bot, curr_idx)
-            )
-            
+            turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
         else:
-            # الورقة لا تعمل - نعطي 12 ثانية للتمرير
             alerts = {
                 p_id: f"📥 سحبت ورقة ({new_card}) وهي لا تعمل ❌\n⏳ لديك 12 ثانية للتمرير",
                 opp_id: f"📥 {p_name} سحب ورقة ({new_card}) وهي لا تعمل"
             }
-            
-            # تحديث الواجهة
             await refresh_ui_2p(room_id, bot, alerts)
-            
-            # بدء تايمر 12 ثانية مع رسائل تحديث
-            asyncio.create_task(
-                auto_pass_with_countdown(room_id, bot, curr_idx, new_card)
-            )
+            asyncio.create_task(auto_pass_with_countdown(room_id, bot, curr_idx, new_card))
             
     except Exception as e:
         print(f"Error in background_auto_draw: {e}")
 
 async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
-    """تمرير الدور تلقائياً مع رسائل عد تنازلي كل ثانيتين"""
+    """تمرير الدور تلقائياً مع عد تنازلي داخل واجهة اللعب"""
     try:
         players = get_ordered_players(room_id)
         if expected_turn >= len(players):
             return
         p_id = players[expected_turn]['user_id']
         
-        # عد تنازلي 12 ثانية (6 خطوات كل خطوة ثانيتين)
+        # عد تنازلي 12 ثانية مع تحديث الواجهة
         for step in range(6, 0, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -770,13 +760,11 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             empty = "⚫" * (6 - step)
             bar = filled + empty
             
-            try:
-                await bot.send_message(
-                    p_id,
-                    f"⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
-                )
-            except:
-                pass
+            # تحديث الواجهة مع العد التنازلي
+            alerts = {
+                p_id: f"📥 سحبت ورقة ({drawn_card}) وهي لا تعمل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
+            }
+            await refresh_ui_2p(room_id, bot, alerts)
             
             await asyncio.sleep(2)
         
@@ -793,7 +781,6 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
         curr_idx = room['turn_index']
         next_idx = (curr_idx + 1) % 2
         p_name = players[curr_idx].get('player_name') or "لاعب"
-        opp_id = players[next_idx]['user_id']
         
         # تمرير الدور
         db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
@@ -802,7 +789,7 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
         # إلغاء التايمر الحالي
         cancel_timer(room_id)
         
-        # إشعار الجميع
+        # إشعار الجميع داخل الواجهة
         alerts = {
             players[curr_idx]['user_id']: f"⏱ انتهى الوقت! تم تمرير دورك تلقائياً (سحبت {drawn_card} ولا تعمل)",
             players[next_idx]['user_id']: f"⏱ {p_name} انتهى وقته وصار دورك الآن!"
@@ -1089,79 +1076,66 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                 return
                 
             else:
-                # جوكرات السحب (🔥, 💧, 🌊) - تلعب بدون اختيار لون والدور يرجع للاعب نفسه
-                next_turn = p_idx  # الدور يرجع للاعب نفسه
-                
-                # تحديث كومة المرمي
-                discard_pile.append(room['top_card'])
-                
-                # سحب الورقات حسب نوع الجوكر
-                deck = safe_load(room['deck'])
-                opp_hand = safe_load(players[opp_idx]['hand'])
-                drawn_cards = []
-                
-                if "🔥" in card:  # جوكر +4
-                    for _ in range(4):
-                        if deck:
-                            drawn_cards.append(deck.pop(0))
-                            opp_hand.append(drawn_cards[-1])
-                    # لا نختار لون - الورقة تبقى كما هي بدون لون محدد
-                    top_card_value = card  # نخزن الورقة بدون لون
-                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'  # نحتفظ باللون الأصلي إذا كان موجوداً
-                    msg_opp = f"🔥 {p_name} لعب جوكر +4 وسحبك 4 ورقات! 🎨 يمكنه الآن لعب أي لون يريده"
-                    msg_me = f"🔥 لعبت جوكر +4 وسحبت الخصم 4 ورقات! 🎨 يمكنك الآن لعب أي لون تريده"
-                    
-                elif "💧" in card:  # جوكر +1
-                    for _ in range(1):
-                        if deck:
-                            drawn_cards.append(deck.pop(0))
-                            opp_hand.append(drawn_cards[-1])
-                    top_card_value = card
-                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
-                    msg_opp = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎨 يمكنه الآن لعب أي لون يريده"
-                    msg_me = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! 🎨 يمكنك الآن لعب أي لون تريده"
-                    
-                elif "🌊" in card:  # جوكر +2
-                    for _ in range(2):
-                        if deck:
-                            drawn_cards.append(deck.pop(0))
-                            opp_hand.append(drawn_cards[-1])
-                    top_card_value = card
-                    current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
-                    msg_opp = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎨 يمكنه الآن لعب أي لون يريده"
-                    msg_me = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! 🎨 يمكنك الآن لعب أي لون تريده"
-                
-                # تحديث يد الخصم والكومة
-                if drawn_cards:
-                    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                            (json.dumps(opp_hand), opp_id), commit=True)
-                    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                            (json.dumps(deck), room_id), commit=True)
-                
-                # تحديث الغرفة - هنا الأهم: current_color تبقى كما هي أو نضعها كلون اللاعب المفضل؟
-                # بما أن الجوكر يسمح بلعب أي لون، نحتاج لتحديث current_color إلى لون الورقة نفسها
-                # أو نتركها كما هي؟ الأفضل نحدثها إلى لون الورقة إذا كان لها لون
-                
-                # استخراج لون الورقة إذا كان موجوداً
-                card_parts = card.split()
-                if len(card_parts) > 1 and card_parts[0] in ['🔴', '🔵', '🟡', '🟢']:
-                    # إذا كانت الورقة لها لون محدد
-                    new_color = card_parts[0]
-                else:
-                    # إذا كانت الورقة بدون لون (جوكر)، نترك اللون الحالي أو نضعه كلون عشوائي؟
-                    # الأفضل نتركه كما هو لأن الجوكر يسمح بأي لون
-                    new_color = room['current_color']
-                
-                db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                        (top_card_value, new_color, next_turn, json.dumps(discard_pile), room_id), commit=True)
-                
-                # إضافة الرسائل
-                alerts[opp_id] = msg_opp
-                alerts[c.from_user.id] = msg_me
-                
-                # تحديث الواجهة
-                await refresh_ui_2p(room_id, c.bot, alerts)
-                return
+    # جوكرات السحب (🔥, 💧, 🌊) - تلعب بدون اختيار لون والدور يرجع للاعب نفسه
+    next_turn = p_idx  # الدور يرجع للاعب نفسه
+    
+    # تحديث كومة المرمي
+    discard_pile.append(room['top_card'])
+    
+    # سحب الورقات حسب نوع الجوكر
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    drawn_cards = []
+    
+    if "🔥" in card:  # جوكر +4
+        for _ in range(4):
+            if deck:
+                drawn_cards.append(deck.pop(0))
+                opp_hand.append(drawn_cards[-1])
+        # الورقة تبقى كما هي
+        top_card_value = card
+        current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
+        msg_opp = f"🔥 {p_name} لعب جوكر +4 وسحبك 4 ورقات! 🎨 يمكنه الآن لعب أي لون"
+        msg_me = f"🔥 لعبت جوكر +4 وسحبت الخصم 4 ورقات! 🎨 يمكنك الآن لعب أي لون"
+        
+    elif "💧" in card:  # جوكر +1
+        for _ in range(1):
+            if deck:
+                drawn_cards.append(deck.pop(0))
+                opp_hand.append(drawn_cards[-1])
+        top_card_value = card
+        current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
+        msg_opp = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎨 يمكنه الآن لعب أي لون"
+        msg_me = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! 🎨 يمكنك الآن لعب أي لون"
+        
+    elif "🌊" in card:  # جوكر +2
+        for _ in range(2):
+            if deck:
+                drawn_cards.append(deck.pop(0))
+                opp_hand.append(drawn_cards[-1])
+        top_card_value = card
+        current_color = card.split()[0] if len(card.split()) > 1 else '🌈'
+        msg_opp = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎨 يمكنه الآن لعب أي لون"
+        msg_me = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! 🎨 يمكنك الآن لعب أي لون"
+    
+    # تحديث يد الخصم والكومة
+    if drawn_cards:
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    # تحديث الغرفة - نستخدم current_color من الورقة نفسها
+    db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
+            (top_card_value, current_color, next_turn, json.dumps(discard_pile), room_id), commit=True)
+    
+    # إضافة الرسائل
+    alerts[opp_id] = msg_opp
+    alerts[c.from_user.id] = msg_me
+    
+    # تحديث الواجهة
+    await refresh_ui_2p(room_id, c.bot, alerts)
+    return
         
         # أوراق الأكشن
         if "🚫" in card or "🔄" in card:
@@ -1357,22 +1331,39 @@ async def ask_exit(c: types.CallbackQuery):
     await c.message.edit_text("🚪 هل أنت متأكد من الانسحاب؟", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @router.callback_query(F.data.startswith("cf_ex_"))
+@router.callback_query(F.data.startswith("cf_ex_"))
 async def confirm_exit(c: types.CallbackQuery):
     rid = c.data.split("_")[2]
+    
+    # مسح رسالة التأكيد
+    try:
+        await c.message.delete()
+    except:
+        pass
+    
     cancel_timer(rid)
     players = get_ordered_players(rid)
     room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (rid,))
     room = room_data[0] if room_data else {'max_players': 2, 'score_limit': 0}
     me = next((x for x in players if x['user_id'] == c.from_user.id), None)
     leave_name = me.get('player_name') if me else "لاعب"
+    
     for p in players:
         end_kb = make_end_kb(players, room, '2p', for_user_id=p['user_id'])
         await c.bot.send_message(p['user_id'], f"🚪 {leave_name} انسحب، تم إلغاء اللعبة.", reply_markup=end_kb)
+    
     db_query("DELETE FROM rooms WHERE room_id = %s", (rid,), commit=True)
 
 @router.callback_query(F.data.startswith("cn_ex_"))
 async def cancel_exit(c: types.CallbackQuery):
     rid = c.data.split("_")[2]
+    
+    # مسح رسالة التأكيد
+    try:
+        await c.message.delete()
+    except:
+        pass
+    
     await refresh_ui_2p(rid, c.bot)
 
 @router.callback_query(F.data.startswith("pass_"))
