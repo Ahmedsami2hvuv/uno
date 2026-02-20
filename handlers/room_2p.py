@@ -10,7 +10,7 @@ from collections import Counter
 router = Router()
 turn_timers = {}
 TURN_TIMEOUT = 20
-countdown_msgs = {ذ}
+countdown_msgs = {}
 
 class GameStates(StatesGroup):
     choosing_color = State()
