@@ -543,7 +543,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 star = "✅" if pl_idx == room['turn_index'] else "⏳"
                 players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
 
-             status_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقات\n"
+            status_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقات\n"
             status_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقات\n"
             status_text += "\n".join(players_info)
             
