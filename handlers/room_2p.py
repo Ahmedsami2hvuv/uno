@@ -492,8 +492,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_hand = safe_load(curr_p['hand'])
         p_id = curr_p['user_id']
         
-        
-if not is_playable:
+        if not is_playable:
     # لا تشغل تايمر الـ 20 ثانية هنا لأن الـ background_auto_draw هو المسؤول
     pass 
 else:
