@@ -493,9 +493,8 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         p_id = curr_p['user_id']
         
         if not is_playable:
-    # لا تشغل تايمر الـ 20 ثانية هنا لأن الـ background_auto_draw هو المسؤول
-    pass 
-else:
+        pass 
+    else:
     turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, room['turn_index']))
         
         # إذا ما عنده لعب، نطلق المهمة الخلفية "مرة واحدة فقط"
