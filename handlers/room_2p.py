@@ -482,7 +482,6 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
     try:
         cancel_timer(room_id)
-        # 1. جلب البيانات
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
@@ -493,16 +492,14 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_hand = safe_load(curr_p['hand'])
         p_id = curr_p['user_id']
 
-        # 2. فحص هل اللاعب عنده لعب؟
+        # فحص هل اللاعب عنده لعب؟
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
         
-        # 3. إذا ما عنده لعب، نطلق "مهمة خلفية" (Task) ونكمل فوراً
-        if not is_playable and i == room['turn_index']:
-            # نتحقق إننا ما أطلقنا المهمة مسبقاً (عشان ما تتكرر بكل تحديث واجهة)
+        # إذا ما عنده لعب، نطلق المهمة الخلفية "مرة واحدة فقط"
+        if not is_playable:
+            # نستخدم alert_msg_dict كعلامة عشان ما نكرر الطلب في كل تحديث شاشة
             if not alert_msg_dict or ("سحب" not in str(alert_msg_dict.get(p_id, ""))):
-                # نستخدم اسم الدالة اللي سميناها background_auto_draw
                 asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
-                
                 if not alert_msg_dict: alert_msg_dict = {}
                 alert_msg_dict[p_id] = "⏳ ما عندك لعب.. راح اسحب لك ورقة تلقائياً"
                 
