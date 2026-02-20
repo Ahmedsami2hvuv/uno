@@ -677,6 +677,123 @@ async def auto_handle_no_play(room_id, bot, expected_turn):
     except Exception as e:
         print(f"Error in auto_handle_no_play: {e}")
 
+async def background_auto_draw(room_id, bot, curr_idx):
+    """دالة السحب التلقائي في الخلفية عندما لا يوجد أوراق مناسبة"""
+    try:
+        # انتظار 5 ثواني
+        await asyncio.sleep(5)
+        
+        # التحقق من الغرفة والدور
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data:
+            return
+        room = room_data[0]
+        
+        # التأكد أن اللاعب ما زال في نفس الدور واللعبة مستمرة
+        if room['turn_index'] != curr_idx or room['status'] != 'playing':
+            return
+        
+        players = get_ordered_players(room_id)
+        curr_p = players[curr_idx]
+        p_id = curr_p['user_id']
+        opp_id = players[(curr_idx + 1) % 2]['user_id']
+        p_name = curr_p.get('player_name') or "لاعب"
+        
+        # إرسال إشعار للخصم
+        await bot.send_message(
+            opp_id,
+            f"⏳ {p_name} ليس لديه أوراق مناسبة... جاري سحب ورقة له"
+        )
+        
+        # سحب ورقة من الكومة
+        deck = safe_load(room['deck'])
+        if not deck:
+            deck = generate_h2o_deck()
+            random.shuffle(deck)
+        
+        curr_hand = safe_load(curr_p['hand'])
+        new_card = deck.pop(0)
+        curr_hand.append(new_card)
+        
+        # تحديث قاعدة البيانات
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(curr_hand), p_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+        
+        # التحقق من صلاحية الورقة المسحوبة
+        if check_validity(new_card, room['top_card'], room['current_color']):
+            # الورقة تعمل - نعطي 20 ثانية للعبها
+            alerts = {
+                p_id: f"✅ سحبت ورقة ({new_card}) وهذه الورقة تعمل! لديك 20 ثانية للعبها",
+                opp_id: f"🎯 {p_name} سحب ورقة ({new_card}) وهي تعمل! سيلعبها خلال 20 ثانية"
+            }
+            
+            # تحديث الواجهة مع بدء تايمر 20 ثانية
+            await refresh_ui_2p(room_id, bot, alerts)
+            
+            # بدء تايمر 20 ثانية (العد التنازلي الطبيعي)
+            turn_timers[room_id] = asyncio.create_task(
+                turn_timeout_2p(room_id, bot, curr_idx)
+            )
+            
+        else:
+            # الورقة لا تعمل - نعطي 12 ثانية للتمرير
+            alerts = {
+                p_id: f"📥 سحبت ورقة ({new_card}) وهي لا تعمل ❌\n⏳ لديك 12 ثانية للتمرير أو اضغط على زر التمرير الآن",
+                opp_id: f"📥 {p_name} سحب ورقة ({new_card}) وهي لا تعمل، سيمرر دوره خلال 12 ثانية"
+            }
+            
+            # تحديث الواجهة
+            await refresh_ui_2p(room_id, bot, alerts)
+            
+            # بدء تايمر 12 ثانية للتمرير التلقائي
+            asyncio.create_task(
+                auto_pass_after_auto_draw(room_id, bot, curr_idx, new_card)
+            )
+            
+    except Exception as e:
+        print(f"Error in background_auto_draw: {e}")
+
+async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
+    """تمرير الدور تلقائياً بعد 12 ثانية من سحب ورقة لا تعمل"""
+    try:
+        await asyncio.sleep(12)
+        
+        # التحقق من الغرفة
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data:
+            return
+        room = room_data[0]
+        
+        if room['turn_index'] != expected_turn or room['status'] != 'playing':
+            return
+        
+        players = get_ordered_players(room_id)
+        curr_idx = room['turn_index']
+        next_idx = (curr_idx + 1) % 2
+        p_name = players[curr_idx].get('player_name') or "لاعب"
+        opp_id = players[next_idx]['user_id']
+        
+        # تمرير الدور
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
+                (next_idx, room_id), commit=True)
+        
+        # إلغاء التايمر الحالي
+        cancel_timer(room_id)
+        
+        # إشعار الجميع
+        alerts = {
+            players[curr_idx]['user_id']: f"⏱ انتهى الوقت! تم تمرير دورك تلقائياً (سحبت {drawn_card} ولا تعمل)",
+            players[next_idx]['user_id']: f"⏱ {p_name} انتهى وقته وصار دورك الآن!"
+        }
+        
+        await refresh_ui_2p(room_id, bot, alerts)
+        
+    except Exception as e:
+        print(f"Error in auto_pass_after_auto_draw: {e}")
+
+
 @router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
     try:
