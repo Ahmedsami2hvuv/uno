@@ -272,7 +272,7 @@ async def _join_room_by_code(message, code, user_data):
         if max_p == 2:
             for p in all_players:
                 try: 
-                    await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
+                    await message.bot.send_message(p['user_id'], t(p['user_id'], "🎮 بدأت اللعبة! استعد..."))
                 except: 
                     pass
             await asyncio.sleep(0.5)  # ⬅�� السطر المضاف للإصلاح
@@ -443,7 +443,7 @@ async def menu_random(c: types.CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
         ])
-        await c.message.edit_text(t(uid, "random_waiting"), reply_markup=kb)
+        await c.message.edit_text(t(uid, "🤌🏻اصبر شوي "), reply_markup=kb)
 
 
 @router.callback_query(F.data == "menu_friends")
