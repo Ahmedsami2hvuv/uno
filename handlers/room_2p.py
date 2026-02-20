@@ -482,30 +482,29 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
     try:
         cancel_timer(room_id)
-        await asyncio.sleep(0)
+        # 1. جلب البيانات
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
         players = get_ordered_players(room_id)
         
-        # تعريف المتغيرات الأساسية للدور الحالي
         curr_idx = room['turn_index']
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
         p_id = curr_p['user_id']
-        opp_id = players[(curr_idx+1)%2]['user_id']
-        p_name = curr_p.get('player_name') or "لاعب"
 
-        # --- منطق السحب الذكي (5 ثواني ثم 12 ثانية تمرير) ---
-        is_playable_now = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
+        # 2. فحص هل اللاعب عنده لعب؟
+        is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
         
-        if not is_playable_now:
-            # نتحقق إذا كنا أرسلنا تنبيه السحب مسبقاً لمنع الحلقة اللانهائية
-            if not alert_msg_dict or ("سحبت" not in str(alert_msg_dict.get(p_id, "")) and "باقي" not in str(alert_msg_dict.get(p_id, ""))):
-                
-                # 1. إبلاغ اللاعبين بالانتظار (5 ثواني)
-                # نحدث الواجهة برسالة تنبيه داخلية بدلاً من رسالة خارجية مستقلة
-                await refresh_ui_2p(room_id, bot, {p_id: "⏳ ما عندك لعب.. راح اسحب لك ورقة خلال 5 ثواني"})
+        # 3. إذا ما عنده لعب، نطلق "مهمة خلفية" للسحب ونكمل بناء الواجهة (لا ننتظر هنا!)
+        if not is_playable:
+            # نتأكد ما نكرر السحب إذا كان التنبيه موجود أصلاً
+            if not alert_msg_dict or ("سحبت" not in str(alert_msg_dict.get(p_id, ""))):
+                # نشغل السحب في الخلفية كـ Task منفصل تماماً
+                asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
+                # نضيف رسالة تنبيه للواجهة اللي راح تظهر حالاً
+                if not alert_msg_dict: alert_msg_dict = {}
+                alert_msg_dict[p_id] = "⏳ ما عندك لعب.. راح اسحب لك ورقة تلقائياً"
                 await asyncio.sleep(5)
                 
                 # 2. السحب الفعلي من الكومة
@@ -699,6 +698,46 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         
     except Exception as e: 
         print(f"UI Error: {e}")
+
+async def background_auto_draw(room_id, bot, expected_turn):
+    """ هذه الدالة تعمل في الخلفية ولا تعطل استجابة البوت """
+    await asyncio.sleep(5)
+    
+    # نتحقق هل الغرفة لسه موجودة والدور لسه عند نفس الشخص؟
+    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+    if not room_data or room_data[0]['turn_index'] != expected_turn:
+        return
+
+    # تنفيذ السحب
+    room = room_data[0]
+    players = get_ordered_players(room_id)
+    curr_p = players[expected_turn]
+    hand = safe_load(curr_p['hand'])
+    deck = safe_load(room['deck'])
+    if not deck: deck = generate_h2o_deck()
+    
+    new_card = deck.pop(0)
+    hand.append(new_card)
+    
+    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), curr_p['user_id']), commit=True)
+    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
+    
+    # فحص هل الورقة الجديدة قابلة للعب؟
+    if check_validity(new_card, room['top_card'], room['current_color']):
+        await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"✅ سحبت ({new_card}) وتكدر تلعبها"})
+    else:
+        # إذا ما تشتغل، ننتظر 12 ثانية ثم نمرر الدور تلقائياً
+        await refresh_ui_2p(room_id, bot, {curr_p['user_id']: f"📥 سحبت ({new_card}) وما تشتغل.. راح يمر الدور خلال ثواني"})
+        await asyncio.sleep(12)
+        
+        # فحص أخير قبل نقل الدور تلقائياً
+        r_final = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
+        if r_final and r_final[0]['turn_index'] == expected_turn:
+            next_turn = (expected_turn + 1) % 2
+            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+            await refresh_ui_2p(room_id, bot)
+
+    
 
 @router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
