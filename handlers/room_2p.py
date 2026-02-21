@@ -1177,11 +1177,11 @@ async def handle_reverse_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_
     alerts[c.from_user.id] = f"🔄 لعبت ورقة عكس!"
     return next_turn
 
-async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
     """معالجة جوكر +1 (💧) - كأكشن: يسحب الخصم ورقة واحدة"""
     next_turn = p_idx  # الدور يبقى عند اللاعب
     deck = safe_load(room['deck'])
-    opp_hand = safe_load(players[opp_idx]['hand'])
+    opp_hand = safe_load(players[opp_idx]['hand'])  // الآن صار عندي opp_idx
     
     # سحب ورقة واحدة للخصم
     drawn_cards = []
@@ -1199,12 +1199,12 @@ async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_i
     alerts[opp_id] = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎯"
     alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✅"
     return next_turn
-
-async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+    
+async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
     """معالجة جوكر +2 (🌊) - كأكشن: يسحب الخصم ورقتين"""
     next_turn = p_idx  # الدور يبقى عند اللاعب
     deck = safe_load(room['deck'])
-    opp_hand = safe_load(players[opp_idx]['hand'])
+    opp_hand = safe_load(players[opp_idx]['hand'])  // هنا يستخدم opp_idx
     
     # سحب ورقتين للخصم
     drawn_cards = []
