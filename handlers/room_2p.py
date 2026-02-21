@@ -1056,7 +1056,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             cancel_color_timer(room_id)
             
             # التحقق من نوع الجوكر
-             if "🌈" in card:
+           if "🌈" in card:
                 # جوكر ألوان
                 await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
                 return
