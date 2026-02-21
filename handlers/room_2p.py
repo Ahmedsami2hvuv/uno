@@ -1330,8 +1330,13 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", 
                     (new_msg.message_id, c.from_user.id), commit=True)
         
-        # رسالة تأكيد صغيرة تظهر للمستخدم
-        await c.answer("✅ تم لعب جوكر +4! بانتظار رد الخصم...", show_alert=False)
+        # ========== التعديل الوحيد هنا ==========
+        # إرسال رسالة واضحة للاعب الأول (هذي هي المهمة)
+        await c.bot.send_message(
+            c.from_user.id,
+            "✅ تم لعب جوكر +4! بانتظار رد الخصم... (لديه 10 ثواني)"
+        )
+        # ========================================
         
         return  # إنهاء الدالة بنجاح
         
