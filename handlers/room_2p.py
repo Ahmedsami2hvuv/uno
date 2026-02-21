@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.thandle_action_draw1_cardypes import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db_query
 from config import IMG_UNO_SAFE_ME, IMG_UNO_SAFE_OPP, IMG_CATCH_SUCCESS, IMG_CATCH_PENALTY
 import json, random, asyncio, uuid
@@ -967,6 +967,7 @@ async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
         print(f"Error in auto_pass_after_auto_draw: {e}")
 
 @router.callback_query(F.data.startswith("pl_"))
+@router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
     try:
         # استخراج البيانات من callback
@@ -1116,245 +1117,265 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # ========== معالجة الأوراق الخاصة ==========
         next_turn = (p_idx + 1) % 2  # الدور ينتقل للخصم (القيمة الافتراضية)
         
-        # 1. جوكر ألوان (🌈) - يحتاج اختيار لون
+        # 1. جوكر ألوان (🌈)
         if "🌈" in card:
-            # إلغاء أي تايمر سابق لاختيار اللون
-            cancel_color_timer(room_id)
-            
-            await state.update_data(
-                room_id=room_id, 
-                card_played=card, 
-                p_idx=p_idx, 
-                prev_color=room['current_color']
-            )
-            
-            # بناء كيبورد اختيار اللون مع أسماء الألوان
-            color_kb = [
-                [
-                    InlineKeyboardButton(text="🔴 أحمر", callback_data="cl_🔴"),
-                    InlineKeyboardButton(text="🔵 أزرق", callback_data="cl_🔵")
-                ],
-                [
-                    InlineKeyboardButton(text="🟡 أصفر", callback_data="cl_🟡"),
-                    InlineKeyboardButton(text="🟢 أخضر", callback_data="cl_🟢")
-                ]
-            ]
-            
-            # إضافة أوراق اللاعب تحت أزرار اختيار اللون
-            hand_kb = []
-            row = []
-            for card_idx, h_card in enumerate(hand):
-                row.append(InlineKeyboardButton(text=h_card, callback_data="ignore"))
-                if len(row) == 3:
-                    hand_kb.append(row)
-                    row = []
-            if row:
-                hand_kb.append(row)
-            
-            # دمج الكيبوردين
-            full_kb = color_kb + hand_kb
-            
-            # رسالة مع أوراق اللاعب
-            hand_text = "\n".join([f"• {h_card}" for h_card in hand])
-            await c.message.edit_text(
-                f"🎨 اختر اللون الجديد:\n\n📋 أوراقك الحالية:\n{hand_text}", 
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=full_kb)
-            )
-            await state.set_state(GameStates.choosing_color)
-            
-            # تحديث كومة المرمي
-            db_query("UPDATE rooms SET discard_pile = %s WHERE room_id = %s", 
-                    (json.dumps(discard_pile), room_id), commit=True)
-            
-            # بدء تايمر اختيار اللون
-            pending_color_data[room_id] = {
-                'card_played': card, 
-                'p_idx': p_idx, 
-                'prev_color': room['current_color']
-            }
-            
-            # إرسال رسالة العد التنازلي لاختيار اللون
-            cd_msg = await c.bot.send_message(
-                c.from_user.id, 
-                "⏳ باقي 20 ثانية لاختيار اللون\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
-            )
-            
-            # حذف أي رسالة عداد سابقة
-            old_cd = color_countdown_msgs.get(room_id)
-            if old_cd:
-                try: await c.bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
-                except: pass
-            
-            color_countdown_msgs[room_id] = {
-                'bot': c.bot, 
-                'chat_id': c.from_user.id, 
-                'msg_id': cd_msg.message_id
-            }
-            color_timers[room_id] = asyncio.create_task(
-                color_timeout_2p(room_id, c.bot, c.from_user.id)
-            )
+            await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
             return
-        
-        # 2. جوكر +4 (🔥) - يحتاج تحدي
+            
+        # 2. جوكر +4 (🔥)
         if "🔥" in card:
-            # تخزين معلومات الجوكر في الذاكرة
-            pending_color_data[room_id] = {
-                'card_played': card,
-                'p_idx': p_idx,
-                'opp_id': opp_id,
-                'p_name': p_name,
-                'type': 'challenge'
-            }
-            
-            # تحديث الغرفة مؤقتاً
-            db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
-                    (card, json.dumps(discard_pile), room_id), commit=True)
-            
-            # إرسال رسالة للخصم مع خياري التحدي والقبول
-            challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
-                    InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
-                ]
-            ])
-            
-            await c.bot.send_message(
-                opp_id,
-                f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
-                reply_markup=challenge_kb
-            )
-            
-            # بدء تايمر التحدي (10 ثواني)
-            challenge_timers[room_id] = asyncio.create_task(
-                challenge_timeout_2p(room_id, c.bot, opp_id)
-            )
-            
-            # إرسال رسالة العد التنازلي للخصم
-            cd_msg = await c.bot.send_message(
-                opp_id,
-                "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢"
-            )
-            challenge_countdown_msgs[room_id] = {
-                'bot': c.bot,
-                'chat_id': opp_id,
-                'msg_id': cd_msg.message_id
-            }
-            
-            # رسالة للاعب الأصلي
-            await c.bot.send_message(
-                c.from_user.id,
-                f"🔥 لعبت جوكر +4! بانتظار رد الخصم..."
-            )
-            
-            # تحديث واجهة اللاعب الأصلي
-            await refresh_ui_2p(room_id, c.bot)
+            await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
             return
+            
+        # 3. أوراق الأكشن (بما فيها الجوكر +1 و +2)
         
-        # 3. جوكر +1 (💧) - مثل الأكشن (هذا هو التعديل المهم)
-        if "💧" in card:
-            # سحب ورقة للخصم
-            deck = safe_load(room['deck'])
-            opp_hand = safe_load(players[opp_idx]['hand'])
-            
-            if deck:
-                drawn_card = deck.pop(0)
-                opp_hand.append(drawn_card)
-                db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                        (json.dumps(opp_hand), opp_id), commit=True)
-                db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                        (json.dumps(deck), room_id), commit=True)
-            
-            next_turn = p_idx  # الدور يرجع للاعب نفسه
-            
-            # تحديث الغرفة
-            db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                    (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
-            
-            # إرسال إشعار للخصم
-            await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1! تم سحب ورقة لك.")
-            
-            alerts[opp_id] = f"💧 {p_name} سحبك ورقة!"
-            alerts[c.from_user.id] = f"💧 سحبت الخصم ورقة!"
-            
-            # تحديث الواجهة
-            await refresh_ui_2p(room_id, c.bot, alerts)
-            return
-        
-        # 4. جوكر +2 (🌊) - مثل الأكشن
-        if "🌊" in card:
-            # سحب ورقتين للخصم
-            deck = safe_load(room['deck'])
-            opp_hand = safe_load(players[opp_idx]['hand'])
-            drawn_cards = []
-            
-            for _ in range(2):
-                if deck:
-                    drawn_cards.append(deck.pop(0))
-                    opp_hand.append(drawn_cards[-1])
-            
-            if drawn_cards:
-                db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                        (json.dumps(opp_hand), opp_id), commit=True)
-                db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                        (json.dumps(deck), room_id), commit=True)
-            
-            next_turn = p_idx  # الدور يرجع للاعب نفسه
-            
-            # تحديث الغرفة
-            db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                    (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
-            
-            # إرسال إشعار للخصم
-            await c.bot.send_message(opp_id, f"🌊 {p_name} لعب جوكر +2! تم سحب ورقتين لك.")
-            
-            alerts[opp_id] = f"🌊 {p_name} سحبك ورقتين!"
-            alerts[c.from_user.id] = f"🌊 سحبت الخصم ورقتين!"
-            
-            # تحديث الواجهة
-            await refresh_ui_2p(room_id, c.bot, alerts)
-            return
-        
-        # 5. أوراق الأكشن العادية
+        # ورقة منع (🚫)
         if "🚫" in card:
-            next_turn = p_idx  # الدور يرجع للاعب نفسه
-            alerts[opp_id] = f"🚫 {p_name} لعب ورقة منع!"
-            alerts[c.from_user.id] = f"🚫 لعبت ورقة منع!"
-        
+            next_turn = await handle_skip_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
+            
+        # ورقة عكس (🔄)
         elif "🔄" in card:
-            next_turn = p_idx  # في 2 لاعبين، الدور يرجع للاعب نفسه
-            alerts[opp_id] = f"🔄 {p_name} لعب ورقة عكس!"
-            alerts[c.from_user.id] = f"🔄 لعبت ورقة عكس!"
+            next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
         
+        # جوكر +1 (💧) - يعامل كأكشن
+        elif "💧" in card:
+            next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts)
+            
+        # جوكر +2 (🌊) - يعامل كأكشن
+        elif "🌊" in card:
+            next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts)
+        
+        # ورقة +2 العادية
         elif "+2" in card:
-            next_turn = p_idx  # الدور يبقى عند اللاعب
-            deck = safe_load(room['deck'])
-            opp_hand = safe_load(players[opp_idx]['hand'])
-            
-            drawn_cards = []
-            for _ in range(2):
-                if deck:
-                    drawn_cards.append(deck.pop(0))
-            
-            if drawn_cards:
-                opp_hand.extend(drawn_cards)
-                db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                        (json.dumps(opp_hand), opp_id), commit=True)
-                db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                        (json.dumps(deck), room_id), commit=True)
-            
-            alerts[opp_id] = f"⬆️2 {p_name} سحبك 2!"
-            alerts[c.from_user.id] = f"⬆️2 سحبت الخصم 2!"
+            next_turn = await handle_draw2_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts)
         
         # تحديث الغرفة (للأوراق التي لم تقم بالتحديث بنفسها)
-        db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
-        
-        # تحديث الواجهة
-        await refresh_ui_2p(room_id, c.bot, alerts)
+        if not any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
+            db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
+                    (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
+            
+            # تحديث الواجهة
+            await refresh_ui_2p(room_id, c.bot, alerts)
         
     except Exception as e:
         print(f"Error in handle_play: {e}")
         await c.answer("⚠️ حدث خطأ", show_alert=True)
+
+
+# =============== دوال الأكشن ===============
+
+async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
+    """معالجة ورقة منع (🚫) - تمنع اللاعب التالي"""
+    next_turn = p_idx  # الدور يرجع للاعب نفسه
+    alerts[opp_id] = f"🚫 {p_name} لعب ورقة منع!"
+    alerts[c.from_user.id] = f"🚫 لعبت ورقة منع!"
+    return next_turn
+
+async def handle_reverse_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
+    """معالجة ورقة عكس (🔄) - في 2 لاعبين ترجع الدور للاعب نفسه"""
+    next_turn = p_idx  # الدور يرجع للاعب نفسه
+    alerts[opp_id] = f"🔄 {p_name} لعب ورقة عكس!"
+    alerts[c.from_user.id] = f"🔄 لعبت ورقة عكس!"
+    return next_turn
+
+async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+    """معالجة جوكر +1 (💧) - كأكشن: يسحب الخصم ورقة واحدة"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    
+    # سحب ورقة واحدة للخصم
+    drawn_cards = []
+    for _ in range(1):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    alerts[opp_id] = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎯"
+    alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✅"
+    return next_turn
+
+async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+    """معالجة جوكر +2 (🌊) - كأكشن: يسحب الخصم ورقتين"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    
+    # سحب ورقتين للخصم
+    drawn_cards = []
+    for _ in range(2):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    alerts[opp_id] = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎯"
+    alerts[c.from_user.id] = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! ✅"
+    return next_turn
+
+async def handle_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+    """معالجة ورقة +2 العادية"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    
+    # سحب ورقتين للخصم
+    drawn_cards = []
+    for _ in range(2):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    alerts[opp_id] = f"⬆️2 {p_name} سحبك 2!"
+    alerts[c.from_user.id] = f"⬆️2 سحبت الخصم 2!"
+    return next_turn
+
+
+# =============== دوال الجوكرات ===============
+
+async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room):
+    """معالجة جوكر الألوان (🌈)"""
+    await state.update_data(
+        room_id=room_id, 
+        card_played=card, 
+        p_idx=p_idx, 
+        prev_color=room['current_color']
+    )
+    
+    # بناء كيبورد اختيار اللون
+    color_kb = [
+        [
+            InlineKeyboardButton(text="🔴 أحمر", callback_data="cl_🔴"),
+            InlineKeyboardButton(text="🔵 أزرق", callback_data="cl_🔵")
+        ],
+        [
+            InlineKeyboardButton(text="🟡 أصفر", callback_data="cl_🟡"),
+            InlineKeyboardButton(text="🟢 أخضر", callback_data="cl_🟢")
+        ]
+    ]
+    
+    # إضافة أوراق اللاعب تحت أزرار اختيار اللون
+    hand_kb = []
+    row = []
+    for card_idx, h_card in enumerate(hand):
+        row.append(InlineKeyboardButton(text=h_card, callback_data="ignore"))
+        if len(row) == 3:
+            hand_kb.append(row)
+            row = []
+    if row:
+        hand_kb.append(row)
+    
+    full_kb = color_kb + hand_kb
+    
+    hand_text = "\n".join([f"• {h_card}" for h_card in hand])
+    await c.message.edit_text(
+        f"🎨 اختر اللون الجديد:\n\n📋 أوراقك الحالية:\n{hand_text}", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=full_kb)
+    )
+    await state.set_state(GameStates.choosing_color)
+    
+    db_query("UPDATE rooms SET discard_pile = %s WHERE room_id = %s", 
+            (json.dumps(discard_pile), room_id), commit=True)
+    
+    pending_color_data[room_id] = {
+        'card_played': card, 
+        'p_idx': p_idx, 
+        'prev_color': room['current_color']
+    }
+    
+    cd_msg = await c.bot.send_message(
+        c.from_user.id, 
+        "⏳ باقي 20 ثانية لاختيار اللون\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+    )
+    
+    old_cd = color_countdown_msgs.get(room_id)
+    if old_cd:
+        try: await c.bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
+        except: pass
+    
+    color_countdown_msgs[room_id] = {
+        'bot': c.bot, 
+        'chat_id': c.from_user.id, 
+        'msg_id': cd_msg.message_id
+    }
+    color_timers[room_id] = asyncio.create_task(
+        color_timeout_2p(room_id, c.bot, c.from_user.id)
+    )
+
+async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
+    """معالجة جوكر +4 (🔥)"""
+    try:
+        # تخزين معلومات الجوكر
+        pending_color_data[room_id] = {
+            'card_played': card,
+            'p_idx': p_idx,
+            'opp_id': opp_id,
+            'p_name': p_name,
+            'type': 'challenge'
+        }
+        
+        db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
+                (card, json.dumps(discard_pile), room_id), commit=True)
+        
+        # إرسال رسالة للخصم مع خياري التحدي والقبول
+        challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
+                InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
+            ]
+        ])
+        
+        await c.bot.send_message(
+            opp_id,
+            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
+            reply_markup=challenge_kb
+        )
+        
+        # بدء تايمر التحدي
+        challenge_timers[room_id] = asyncio.create_task(
+            challenge_timeout_2p(room_id, c.bot, opp_id)
+        )
+        
+        # إرسال رسالة العد التنازلي للخصم
+        cd_msg = await c.bot.send_message(
+            opp_id,
+            "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢"
+        )
+        challenge_countdown_msgs[room_id] = {
+            'bot': c.bot,
+            'chat_id': opp_id,
+            'msg_id': cd_msg.message_id
+        }
+        
+        # رسالة للاعب الأصلي
+        await c.bot.send_message(
+            c.from_user.id,
+            f"🔥 لعبت جوكر +4! بانتظار رد الخصم..."
+        )
+        
+        await refresh_ui_2p(room_id, c.bot)
+        return
+        
+    except Exception as e:
+        print(f"Error in handle_wild_draw4_card: {e}")
+        return
 
 async def handle_wild_draw1_card_simple(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
     """نسخة مبسطة جداً من جوكر +1 - بدون استخدام c.message"""
@@ -1575,87 +1596,6 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         # لا نعرض رسالة خطأ للمستخدم، فقط نسجلها في السجل
         return
         
-async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
-    """معالجة جوكر +1 (💧) - نسخة مبسطة"""
-    try:
-        # سحب ورقة للخصم
-        deck = safe_load(room['deck'])
-        opp_hand = safe_load(players[opp_idx]['hand'])
-        
-        if deck:
-            drawn_card = deck.pop(0)
-            opp_hand.append(drawn_card)
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                    (json.dumps(opp_hand), opp_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                    (json.dumps(deck), room_id), commit=True)
-        
-        # تحديث الغرفة
-        db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                (card, p_idx, json.dumps(discard_pile), room_id), commit=True)
-        
-        # إعلام الخصم
-        await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1! تم سحب ورقة لك.")
-        
-        # تحديث واجهة الجميع
-        await refresh_ui_2p(room_id, c.bot)
-        
-        # رسالة تأكيد بسيطة
-        await c.answer("✅ تم لعب جوكر +1", show_alert=False)
-        
-    except Exception as e:
-        print(f"Error in handle_wild_draw1_card: {e}")
-        await c.answer("⚠️ حدث خطأ", show_alert=True)
-        
-        
-
-async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
-    """معالجة جوكر +2 (🌊) - الخصم يسحب ورقتين تلقائياً والدور يعود للاعب"""
-    try:
-        next_turn = p_idx  # الدور يرجع للاعب نفسه
-        
-        # تحديث كومة المرمي
-        discard_pile.append(room['top_card'])
-        
-        # سحب ورقتين للخصم (تلقائي بدون اختيار)
-        deck = safe_load(room['deck'])
-        opp_hand = safe_load(players[opp_idx]['hand'])
-        drawn_cards = []
-        
-        for _ in range(2):
-            if deck:
-                card_drawn = deck.pop(0)
-                drawn_cards.append(card_drawn)
-                opp_hand.append(card_drawn)
-        
-        # تحديث يد الخصم والكومة
-        if drawn_cards:
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                    (json.dumps(opp_hand), opp_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                    (json.dumps(deck), room_id), commit=True)
-        
-        # تحديث الغرفة - نجعل current_color = 'ANY' للسماح بلعب أي لون
-        db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
-        
-        # إرسال إشعار للخصم فقط (بدون أزرار)
-        await c.bot.send_message(opp_id, f"🌊 {p_name} لعب جوكر +2! تم سحب ورقتين لك.")
-        
-        # إرسال رسالة للاعب الأصلي (تأكيد)
-        await c.bot.send_message(
-            c.from_user.id,
-            f"✅ لعبت جوكر +2! الخصم سحب ورقتين ودورك الآن (يمكنك لعب أي لون)"
-        )
-        
-        # تحديث واجهة اللاعب الأساسية
-        await refresh_ui_2p(room_id, c.bot)
-        
-    except Exception as e:
-        print(f"Error in handle_wild_draw2_card: {e}")
-        # إرسال رسالة خطأ للمستخدم
-        await c.answer("⚠️ حدث خطأ في معالجة جوكر +2", show_alert=True)
-
 
 async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
     """معالجة ورقة منع (🚫) - تمنع اللاعب التالي"""
@@ -1692,7 +1632,63 @@ async def handle_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_
     
     alerts[opp_id] = f"⬆️2 {p_name} سحبك 2 والدور بقى عنده!"
     alerts[c.from_user.id] = f"⬆️2 سحبت الخصم ورقتين والدور رجع الك!"
-    return next_turn\
+    return next_turn
+
+async def handle_draw2_card_joker(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+    """معالجة جوكر +2 (🌊) - تسحب ورقتين للخصم والدور يبقى للاعب (مثل الاكشن)"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    
+    # سحب ورقتين للخصم
+    drawn_cards = []
+    for _ in range(2):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    # تحديث اللون (نحتفظ بلون الورقة)
+    card_color = card.split()[0] if len(card.split()) > 1 else 'ANY'
+    db_query("UPDATE rooms SET current_color = %s WHERE room_id = %s", 
+            (card_color, room_id), commit=True)
+    
+    alerts[opp_id] = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎯"
+    alerts[c.from_user.id] = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! ✅"
+    return next_turn
+
+async def handle_draw1_card_joker(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
+    """معالجة جوكر +1 (💧) - تسحب ورقة واحدة للخصم والدور يبقى للاعب (مثل الاكشن)"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    
+    # سحب ورقة واحدة للخصم
+    drawn_cards = []
+    for _ in range(1):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    # تحديث اللون (نحتفظ بلون الورقة)
+    card_color = card.split()[0] if len(card.split()) > 1 else 'ANY'
+    db_query("UPDATE rooms SET current_color = %s WHERE room_id = %s", 
+            (card_color, room_id), commit=True)
+    
+    alerts[opp_id] = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎯"
+    alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✅"
+    return next_turn
 
 
 @router.callback_query(F.data.startswith("challenge_"))
