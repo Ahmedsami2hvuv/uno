@@ -1293,7 +1293,7 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         if row: 
             kb.append(row)
 
-        # أزرار التحكم (بدون زر تمرير لأن اللاعب لعب ورقة)
+        # أزرار التحكم
         controls = []
         if len(hand) == 2:
             controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
@@ -1313,22 +1313,11 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
         kb.append(extra_buttons)
         
-        # محاولة تحديث رسالة اللاعب الأصلي
-        try:
-            await c.message.edit_text(
-                f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-            )
-        except Exception as msg_error:
-            # إذا فشل التعديل، نرسل رسالة جديدة
-            new_msg = await c.bot.send_message(
-                c.from_user.id,
-                f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-            )
-            # تحديث last_msg_id في قاعدة البيانات
-            db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", 
-                    (new_msg.message_id, c.from_user.id), commit=True)
+        # رسالة للاعب الأصلي مع أزراره
+        await c.message.edit_text(
+            f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
         
         return  # إنهاء الدالة بنجاح
         
