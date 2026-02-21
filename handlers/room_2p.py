@@ -446,7 +446,7 @@ async def color_timeout_2p(room_id, bot, player_id):
         opp_id = players[opp_idx]['user_id']
         p_name = players[p_idx].get('player_name') or "لاعب"
         
-         card:
+        if "🔥" in card:
             db_query("UPDATE rooms SET top_card = %s, current_color = %s WHERE room_id = %s", (f"{card} {chosen_color}", chosen_color, room_id), commit=True)
             kb = [[InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{prev_color}_{chosen_color}"), InlineKeyboardButton(text="✅ قبول", callback_data=f"rs_n_{room_id}_{chosen_color}")]]
             msg_sent = await bot.send_message(opp_id, f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -488,16 +488,6 @@ async def color_timeout_2p(room_id, bot, player_id):
         turn_timers.pop(room_id, None)
         countdown_msgs.pop(room_id, None)
         await refresh_ui_2p(room_id, bot, alerts)
-        
-    except asyncio.CancelledError:
-        # حذف رسالة العداد عند الإلغاء
-        cd_info = color_countdown_msgs.get(room_id)
-        if cd_info:
-            try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-            except: pass
-        raise
-    except Exception as e:
-        print(f"Color timer error 2p: {e}")
         
     except asyncio.CancelledError:
         # حذف رسالة العداد عند الإلغاء
