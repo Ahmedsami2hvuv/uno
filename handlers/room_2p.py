@@ -1140,13 +1140,15 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         elif "💧" in card:
             next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             
-        # جوكر +2 (🌊) - يعامل كأكشن
-        elif "🌊" in card:
-            next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
-        
-        # ورقة +2 العادية
-        elif "+2" in card:
-            next_turn = await handle_draw2_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts)
+        # جوكر +1 (💧) - يعامل كأكشن
+elif "💧" in card:
+    next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
+    await refresh_ui_2p(room_id, c.bot, alerts)  # <--- أضف هذا السطر
+
+# جوكر +2 (🌊) - يعامل كأكشن
+elif "🌊" in card:
+    next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
+    await refresh_ui_2p(room_id, c.bot, alerts)  # <--- أضف هذا السطر
         
         # تحديث الغرفة (للأوراق التي لم تقم بالتحديث بنفسها)
         if not any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
@@ -1160,8 +1162,6 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         print(f"Error in handle_play: {e}")
         await c.answer("⚠️ حدث خطأ", show_alert=True)
 
-
-# =============== دوال الأكشن ===============
 
 # =============== دوال الأكشن ===============
 
