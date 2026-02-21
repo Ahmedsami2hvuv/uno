@@ -1304,6 +1304,10 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
 
 async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room):
     """معالجة جوكر الألوان (🌈) - يختار لون ويمرر الدور للخصم"""
+    
+    # هذا السطر ضفناه حتى نفهم البوت إنو اللاعب هسة بمرحلة اختيار اللون
+    await state.set_state(GameStates.choosing_color)
+    
     await state.update_data(
         room_id=room_id, 
         card_played=card, 
@@ -1387,7 +1391,6 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
     color_timers[room_id] = asyncio.create_task(
         color_timeout_2p(room_id, c.bot, c.from_user.id)
     )
-
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
     """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم ويحافظ على أزرار اللاعب"""
