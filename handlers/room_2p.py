@@ -288,17 +288,50 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             # تحديث نفس الرسالة (الرسالة الرئيسية)
             if cd_info and cd_info.get('is_main_message'):
                 try:
-                    # نحتاج لجلب الأزرار الحالية - نخزنها في مكان ما
-                    # للتبسيط، سنستخدم None وسيتم إعادة إنشاء الأزرار في refresh_ui
+                    # جلب الأزرار الحالية من قاعدة البيانات أو إعادة بنائها
+                    # للتبسيط، سنقوم بإعادة بناء الأزرار
+                    curr_player = players[expected_turn]
+                    curr_hand = safe_load(curr_player['hand'])
+                    
+                    # بناء الأزرار
+                    kb = []
+                    row = []
+                    for card_idx, card in enumerate(curr_hand):
+                        row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
+                        if len(row) == 3: 
+                            kb.append(row)
+                            row = []
+                    if row: 
+                        kb.append(row)
+                    
+                    # أزرار التحكم
+                    controls = []
+                    can_play = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
+                    if not can_play:
+                        controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
+                    if len(curr_hand) == 2:
+                        controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+                    
+                    opp_player = players[(expected_turn + 1) % 2]
+                    if len(safe_load(opp_player['hand'])) == 1 and not str(opp_player.get('said_uno', 'false')).lower() in ['true', '1']:
+                        controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
+                    
+                    if controls: 
+                        kb.append(controls)
+                    
+                    extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
+                    if curr_player['user_id'] == room.get('creator_id'):
+                        extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
+                    kb.append(extra_buttons)
+                    
                     await bot.edit_message_text(
                         chat_id=cd_info['chat_id'],
                         message_id=cd_info['msg_id'],
-                        text=full_text
+                        text=full_text,
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
                     )
                 except Exception as e:
                     print(f"خطأ في تعديل رسالة الوقت: {e}")
-            
-            await asyncio.sleep(2)
 
         # بعد انتهاء الوقت، نحذف رسالة العداد
         if cd_info:
@@ -772,7 +805,7 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             return
         p_id = players[expected_turn]['user_id']
         
-        # عد تنازلي 12 ثانية مع تحديث الواجهة
+        # عد تنازلي 12 ثانية مع تحديث الواجهة (نفس الرسالة)
         for step in range(6, 0, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -787,21 +820,15 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             
             # تحديد لون الشريط حسب الوقت المتبقي
             if remaining > 8:
-                # أكثر من 8 ثواني - أخضر
                 filled = "🟢" * step
-                empty = "⚫" * (6 - step)
             elif remaining > 4:
-                # بين 4 و 8 ثواني - أصفر
                 filled = "🟡" * step
-                empty = "⚫" * (6 - step)
             else:
-                # أقل من 4 ثواني - أحمر
                 filled = "🔴" * step
-                empty = "⚫" * (6 - step)
-            
+            empty = "⚫" * (6 - step)
             bar = filled + empty
             
-            # تحديث الواجهة مع العد التنازلي والشريط
+            # تحديث الواجهة مع العد التنازلي والشريط (بدون إرسال رسالة جديدة)
             alerts = {
                 p_id: f"📥 سحبت ورقة ({drawn_card}) وهي لا تعمل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
             }
@@ -1149,39 +1176,44 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile):
     """معالجة جوكر +4 (🔥) - يحتاج تحدي"""
-    # تخزين معلومات الجوكر في الذاكرة
-    pending_color_data[room_id] = {
-        'card_played': card,
-        'p_idx': p_idx,
-        'opp_id': opp_id,
-        'p_name': p_name,
-        'type': 'challenge'
-    }
-    
-    # إرسال رسالة للخصم مع خياري التحدي والقبول
-    challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
-            InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
-        ]
-    ])
-    
-    await c.bot.send_message(
-        opp_id,
-        f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟",
-        reply_markup=challenge_kb
-    )
-    
-    # تحديث الغرفة - نجعل current_color = 'ANY' للسماح بأي لون
-    db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', discard_pile = %s WHERE room_id = %s", 
-            (card, json.dumps(discard_pile), room_id), commit=True)
-    
-    # إعلام اللاعب بأنه بانتظار رد الخصم
-    await c.message.edit_text(
-        f"🔥 لعبت جوكر +4! بانتظار رد الخصم..."
-    )
+    try:
+        # تخزين معلومات الجوكر في الذاكرة
+        pending_color_data[room_id] = {
+            'card_played': card,
+            'p_idx': p_idx,
+            'opp_id': opp_id,
+            'p_name': p_name,
+            'type': 'challenge'
+        }
+        
+        # تحديث الغرفة مؤقتاً
+        db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
+                (card, json.dumps(discard_pile), room_id), commit=True)
+        
+        # إرسال رسالة للخصم مع خياري التحدي والقبول
+        challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
+                InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
+            ]
+        ])
+        
+        await c.bot.send_message(
+            opp_id,
+            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟",
+            reply_markup=challenge_kb
+        )
+        
+        # إعلام اللاعب بأنه بانتظار رد الخصم
+        await c.message.edit_text(
+            f"🔥 لعبت جوكر +4! بانتظار رد الخصم..."
+        )
+        
+    except Exception as e:
+        print(f"Error in handle_wild_draw4_card: {e}")
+        await c.answer("⚠️ حدث خطأ", show_alert=True)
 
-async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players, alerts):
+async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
     """معالجة جوكر +1 (💧) - يسحب ورقة واحدة والدور يعود للاعب"""
     try:
         next_turn = p_idx  # الدور يرجع للاعب نفسه
@@ -1211,18 +1243,17 @@ async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
         
-        # إضافة الرسائل
-        alerts[opp_id] = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! ✨ يمكنه الآن لعب أي لون"
-        alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✨ يمكنك الآن لعب أي لون"
+        # إرسال رسائل للاعبين
+        await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! ✨ يمكنه الآن لعب أي لون")
         
         # تحديث الواجهة
-        await refresh_ui_2p(room_id, c.bot, alerts)
+        await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
         print(f"Error in handle_wild_draw1_card: {e}")
-        await c.answer("⚠️ حدث خطأ في معالجة جوكر +1", show_alert=True)
+        await c.answer("⚠️ حدث خطأ", show_alert=True)
 
-async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players, alerts):
+async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
     """معالجة جوكر +2 (🌊) - يسحب ورقتين والدور يعود للاعب"""
     try:
         next_turn = p_idx  # الدور يرجع للاعب نفسه
@@ -1252,16 +1283,17 @@ async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
         
-        # إضافة الرسائل
-        alerts[opp_id] = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! ✨ يمكنه الآن لعب أي لون"
-        alerts[c.from_user.id] = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! ✨ يمكنك الآن لعب أي لون"
+        # إرسال رسائل للاعبين
+        await c.bot.send_message(opp_id, f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! ✨ يمكنه الآن لعب أي لون")
         
         # تحديث الواجهة
-        await refresh_ui_2p(room_id, c.bot, alerts)
+        await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
         print(f"Error in handle_wild_draw2_card: {e}")
-        await c.answer("⚠️ حدث خطأ في معالجة جوكر +2", show_alert=True)
+        await c.answer("⚠️ حدث خطأ", show_alert=True)
+
+
 async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
     """معالجة ورقة منع (🚫) - تمنع اللاعب التالي"""
     next_turn = p_idx  # الدور يرجع للاعب نفسه
