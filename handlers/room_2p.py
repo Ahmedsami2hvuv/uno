@@ -1005,12 +1005,13 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # التحقق من الدور
         p_idx = room['turn_index']
         if players[p_idx]['user_id'] != c.from_user.id:
-    await c.answer("❌ مو دورك!", show_alert=True)
-    try:
-        await refresh_ui_2p(room_id, c.bot)
-    except:
-        pass
-    return
+            await c.answer("❌ مو دورك!", show_alert=True)
+            # نحاول نحدث واجهة اللاعب الأصلي عشان نتأكد ما تختفي الأزرار
+            try:
+                await refresh_ui_2p(room_id, c.bot)
+            except:
+                pass
+            return
         
         # جلب يد اللاعب
         hand = sort_hand(safe_load(players[p_idx]['hand']))
