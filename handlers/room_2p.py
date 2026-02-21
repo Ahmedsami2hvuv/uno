@@ -976,13 +976,6 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         idx = int(parts[-1])
         room_id = "_".join(parts[1:-1])
         
-        # حذف رسالة العداد الحالية
-        cd_info = countdown_msgs.get(room_id)
-        if cd_info:
-            try: await c.bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-            except: pass
-        countdown_msgs.pop(room_id, None)
-        
         # إلغاء التايمر الحالي
         cancel_timer(room_id)
         await asyncio.sleep(0)
@@ -1315,7 +1308,7 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
         ]
     ]
     
-    # إضافة أوراق اللاعب تحت أزرار اختيار اللون
+    # إضافة أوراق اللاعب تحت أزرار اختيار اللون (مع إلغاء تفعيلها)
     hand_kb = []
     row = []
     for card_idx, h_card in enumerate(hand):
@@ -1326,22 +1319,31 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
     if row:
         hand_kb.append(row)
     
-    # دمج الكيبوردين
     full_kb = color_kb + hand_kb
-    
-    # رسالة مع أوراق اللاعب
     hand_text = "\n".join([f"• {h_card}" for h_card in hand])
-    await c.message.edit_text(
-        f"🎨 اختر اللون الجديد:\n\n📋 أوراقك الحالية:\n{hand_text}", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=full_kb)
-    )
-    await state.set_state(GameStates.choosing_color)
     
-    # تحديث كومة المرمي
+    # محاولة تعديل الرسالة، وإذا فشلت نرسل رسالة جديدة
+    try:
+        await c.message.edit_text(
+            f"🎨 اختر اللون الجديد:\n\n📋 أوراقك الحالية:\n{hand_text}", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=full_kb)
+        )
+    except Exception:
+        # إذا كانت الرسالة الأصلية محذوفة، نرسل رسالة جديدة
+        new_msg = await c.bot.send_message(
+            c.from_user.id,
+            f"🎨 اختر اللون الجديد:\n\n📋 أوراقك الحالية:\n{hand_text}", 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=full_kb)
+        )
+        # تحديث last_msg_id في قاعدة البيانات لهذا اللاعب
+        db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", 
+                (new_msg.message_id, c.from_user.id), commit=True)
+    
+    # تحديث كومة المرمي في قاعدة البيانات
     db_query("UPDATE rooms SET discard_pile = %s WHERE room_id = %s", 
             (json.dumps(discard_pile), room_id), commit=True)
     
-    # بدء تايمر اختيار اللون
+    # تخزين بيانات الجوكر للاستخدام عند اختيار اللون
     pending_color_data[room_id] = {
         'card_played': card, 
         'p_idx': p_idx, 
@@ -1360,14 +1362,17 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
         try: await c.bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
         except: pass
     
+    # تخزين معلومات العداد الجديد
     color_countdown_msgs[room_id] = {
         'bot': c.bot, 
         'chat_id': c.from_user.id, 
         'msg_id': cd_msg.message_id
     }
+    # بدء تايمر اختيار اللون (20 ثانية)
     color_timers[room_id] = asyncio.create_task(
         color_timeout_2p(room_id, c.bot, c.from_user.id)
     )
+
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
     """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم ويحافظ على أزرار اللاعب"""
