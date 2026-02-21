@@ -69,16 +69,21 @@ def generate_h2o_deck():
 def check_validity(card, top_card, current_color):
     """
     التحقق من صحة الورقة الملعوبة
+    - إذا كان current_color = "ANY" فهذا يعني أي لون مسموح
     - الجوكرات الملونة (🌈) تعتبر صالحة دائماً وتحتاج اختيار لون
-    - جوكرات السحب (💧, 🌊, 🔥) تعتبر صالحة دائماً وبعدها يمكن لعب أي لون
+    - جوكرات السحب (💧, 🌊, 🔥) تعتبر صالحة دائماً
     - باقي الأوراق تتبع القواعد العادية (نفس اللون أو نفس الرقم)
     """
     
-    # جوكر ألوان (🌈) - يختار لون ويمرر الدور للخصم
+    # إذا كان current_color = "ANY" فهذا يعني أي لون مسموح
+    if current_color == "ANY":
+        return True
+        
+    # جوكر ألوان (🌈) - يختار لون
     if "🌈" in card:
         return True
         
-    # جوكرات السحب (💧, 🌊, 🔥) - صالحة دائماً وبعدها يمكن لعب أي لون
+    # جوكرات السحب (💧, 🌊, 🔥) - صالحة دائماً
     if any(x in card for x in ["🔥", "💧", "🌊"]):
         return True
     
@@ -441,7 +446,7 @@ async def color_timeout_2p(room_id, bot, player_id):
         opp_id = players[opp_idx]['user_id']
         p_name = players[p_idx].get('player_name') or "لاعب"
         
-        if "🔥" in card:
+         card:
             db_query("UPDATE rooms SET top_card = %s, current_color = %s WHERE room_id = %s", (f"{card} {chosen_color}", chosen_color, room_id), commit=True)
             kb = [[InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{prev_color}_{chosen_color}"), InlineKeyboardButton(text="✅ قبول", callback_data=f"rs_n_{room_id}_{chosen_color}")]]
             msg_sent = await bot.send_message(opp_id, f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -1135,8 +1140,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                         reply_markup=challenge_kb
                     )
                     
-                    # تحديث الغرفة مؤقتاً (بدون تطبيق العقوبة بعد)
-                    db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
+                    # تحديث الغرفة - نجعل current_color = 'ANY' للسماح بأي لون
+                    db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', discard_pile = %s WHERE room_id = %s", 
                             (card, json.dumps(discard_pile), room_id), commit=True)
                     
                     # إعلام اللاعب بأنه بانتظار رد الخصم
@@ -1348,7 +1353,7 @@ async def handle_challenge_decision(c: types.CallbackQuery):
                         (json.dumps(deck), room_id), commit=True)
                 
                 # تحديث current_color للسماح بلعب أي لون
-                db_query("UPDATE rooms SET current_color = '🌈' WHERE room_id = %s", 
+                db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
                         (room_id,), commit=True)
                 
                 await c.message.edit_text("❌ فشل التحدي! اللاعب كان محقاً. سحبت 6 ورقات.")
