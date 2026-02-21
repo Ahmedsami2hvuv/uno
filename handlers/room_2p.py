@@ -1185,6 +1185,8 @@ async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_i
     
     alerts[opp_id] = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎯"
     alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✅"
+    # تحديث الورقة النازلة
+    db_query("UPDATE rooms SET top_card = %s WHERE room_id = %s", (card, room_id), commit=True)
     return next_turn
     
 
@@ -1210,6 +1212,8 @@ async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_i
     
     alerts[opp_id] = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎯"
     alerts[c.from_user.id] = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! ✅"
+    # تحديث الورقة النازلة
+    db_query("UPDATE rooms SET top_card = %s WHERE room_id = %s", (card, room_id), commit=True)
     return next_turn
 
 async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
