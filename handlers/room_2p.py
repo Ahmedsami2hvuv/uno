@@ -1175,7 +1175,7 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
     )
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile):
-    """معالجة جوكر +4 (🔥) - يحتاج تحدي"""
+    """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم"""
     try:
         # تخزين معلومات الجوكر في الذاكرة
         pending_color_data[room_id] = {
@@ -1212,16 +1212,16 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
     except Exception as e:
         print(f"Error in handle_wild_draw4_card: {e}")
         await c.answer("⚠️ حدث خطأ", show_alert=True)
-
+        
 async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
-    """معالجة جوكر +1 (💧) - يسحب ورقة واحدة والدور يعود للاعب"""
+    """معالجة جوكر +1 (💧) - الخصم يسحب ورقة واحدة تلقائياً والدور يعود للاعب"""
     try:
         next_turn = p_idx  # الدور يرجع للاعب نفسه
         
         # تحديث كومة المرمي
         discard_pile.append(room['top_card'])
         
-        # سحب ورقة واحدة للخصم
+        # سحب ورقة واحدة للخصم (تلقائي بدون اختيار)
         deck = safe_load(room['deck'])
         opp_hand = safe_load(players[opp_idx]['hand'])
         drawn_cards = []
@@ -1239,29 +1239,29 @@ async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
                     (json.dumps(deck), room_id), commit=True)
         
-        # تحديث الغرفة
+        # تحديث الغرفة - نجعل current_color = 'ANY' للسماح بلعب أي لون
         db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
         
-        # إرسال رسائل للاعبين
-        await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! ✨ يمكنه الآن لعب أي لون")
+        # إرسال إشعار للخصم فقط (بدون أزرار)
+        await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1! تم سحب ورقة واحدة لك.")
         
-        # تحديث الواجهة
+        # تحديث واجهة اللاعب الأساسية
         await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
         print(f"Error in handle_wild_draw1_card: {e}")
-        await c.answer("⚠️ حدث خطأ", show_alert=True)
+        await c.answer("⚠️ حدث خطأ في معالجة جوكر +1", show_alert=True)
 
 async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
-    """معالجة جوكر +2 (🌊) - يسحب ورقتين والدور يعود للاعب"""
+    """معالجة جوكر +2 (🌊) - الخصم يسحب ورقتين تلقائياً والدور يعود للاعب"""
     try:
         next_turn = p_idx  # الدور يرجع للاعب نفسه
         
         # تحديث كومة المرمي
         discard_pile.append(room['top_card'])
         
-        # سحب ورقتين للخصم
+        # سحب ورقتين للخصم (تلقائي بدون اختيار)
         deck = safe_load(room['deck'])
         opp_hand = safe_load(players[opp_idx]['hand'])
         drawn_cards = []
@@ -1279,19 +1279,19 @@ async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
                     (json.dumps(deck), room_id), commit=True)
         
-        # تحديث الغرفة
+        # تحديث الغرفة - نجعل current_color = 'ANY' للسماح بلعب أي لون
         db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, next_turn, json.dumps(discard_pile), room_id), commit=True)
         
-        # إرسال رسائل للاعبين
-        await c.bot.send_message(opp_id, f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! ✨ يمكنه الآن لعب أي لون")
+        # إرسال إشعار للخصم فقط (بدون أزرار)
+        await c.bot.send_message(opp_id, f"🌊 {p_name} لعب جوكر +2! تم سحب ورقتين لك.")
         
-        # تحديث الواجهة
+        # تحديث واجهة اللاعب الأساسية
         await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
         print(f"Error in handle_wild_draw2_card: {e}")
-        await c.answer("⚠️ حدث خطأ", show_alert=True)
+        await c.answer("⚠️ حدث خطأ في معالجة جوكر +2", show_alert=True)
 
 
 async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
