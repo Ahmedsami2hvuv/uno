@@ -67,31 +67,41 @@ def generate_h2o_deck():
     return deck
 
 def check_validity(card, top_card, current_color):
-    # إذا كان اللون المطلوب 'ANY'، هذا يعني أن الجوكر سُحب واللاعب له الحرية
-    if current_color == 'ANY':
-        return True
-        
+    """
+    التحقق من صحة الورقة الملعوبة
+    - الجوكرات الملونة (🌈) تعتبر صالحة دائماً وتحتاج اختيار لون
+    - جوكرات السحب (💧, 🌊, 🔥) تعتبر صالحة دائماً وبعدها يمكن لعب أي لون
+    - باقي الأوراق تتبع القواعد العادية (نفس اللون أو نفس الرقم)
+    """
+    
     # جوكر ألوان (🌈) - يختار لون ويمرر الدور للخصم
     if "🌈" in card:
         return True
         
-    # جوكرات السحب (💧, 🌊, 🔥) - صالحة دائماً
+    # جوكرات السحب (💧, 🌊, 🔥) - صالحة دائماً وبعدها يمكن لعب أي لون
     if any(x in card for x in ["🔥", "💧", "🌊"]):
         return True
     
+    # باقي الأوراق (الأرقام والأكشنات)
     parts = card.split()
-    if len(parts) < 2: return False
+    if len(parts) < 2: 
+        return False
     
     c_color, c_value = parts[0], parts[1]
     
-    # نفس اللون أو نفس القيمة
-    if c_color == current_color: return True
+    # نفس اللون
+    if c_color == current_color: 
+        return True
     
+    # نفس الرقم أو نفس الأكشن
     top_parts = top_card.split()
     top_value = top_parts[1] if len(top_parts) > 1 else top_parts[0]
     
-    if c_value == top_value: return True
+    if c_value == top_value: 
+        return True
     
+    # إذا ما تطابق أي شرط
+    print(f"⚠️ رفض الورقة: لعبت ({card}) | الساحة ({top_card}) | اللون المطلوب ({current_color})")
     return False
 
 def calculate_points(hand):
@@ -1099,34 +1109,35 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                     color_timeout_2p(room_id, c.bot, c.from_user.id)
                 )
                 return
-            elif "🔥" in card:  # جوكر +4
-                    # بدلاً من التحدي المعقد، سنجعلها تتبع نفس منطق +1 و +2
-                    next_turn = p_idx  # الدور يبقى عند اللاعب
-                    deck = safe_load(room['deck'])
-                    opp_hand = safe_load(players[opp_idx]['hand'])
+            else:
+                # جوكرات السحب (🔥, 💧, 🌊)
+                if "🔥" in card:  # جوكر +4
+                    # تخزين معلومات الجوكر في الذاكرة
+                    pending_color_data[room_id] = {
+                        'card_played': card,
+                        'p_idx': p_idx,
+                        'opp_id': opp_id,
+                        'p_name': p_name,
+                        'type': 'challenge'
+                    }
                     
-                    # سحب 4 أوراق للخصم
-                    drawn_cards = []
-                    for _ in range(4):
-                        if not deck:
-                            deck = generate_h2o_deck()
-                        drawn_cards.append(deck.pop(0))
+                    # إرسال رسالة للخصم مع خياري التحدي والقبول
+                    challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
+                            InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
+                        ]
+                    ])
                     
-                    opp_hand.extend(drawn_cards)
+                    await c.bot.send_message(
+                        opp_id,
+                        f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟",
+                        reply_markup=challenge_kb
+                    )
                     
-                    # تحديث البيانات
-                    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                            (json.dumps(opp_hand), opp_id), commit=True)
-                    
-                    # ضبط اللون على ANY للسماح باللعب الحر
-                    db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, deck = %s, discard_pile = %s WHERE room_id = %s", 
-                            (card, next_turn, json.dumps(deck), json.dumps(discard_pile), room_id), commit=True)
-                    
-                    alerts[opp_id] = f"🔥 {p_name} لعب جوكر +4 وسحبك 4 أوراق! ✨ يمكنه الآن لعب أي ورقة يريدها."
-                    alerts[c.from_user.id] = f"🔥 لعبت جوكر +4 وسحبت الخصم 4 أوراق! ✨ العب أي ورقة تبيها الآن."
-                    
-                    await refresh_ui_2p(room_id, c.bot, alerts)
-                    return
+                    # تحديث الغرفة مؤقتاً (بدون تطبيق العقوبة بعد)
+                    db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
+                            (card, json.dumps(discard_pile), room_id), commit=True)
                     
                     # إعلام اللاعب بأنه بانتظار رد الخصم
                     await c.message.edit_text(
