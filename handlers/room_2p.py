@@ -1391,11 +1391,18 @@ async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         # إرسال إشعار للخصم فقط (بدون أزرار)
         await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1! تم سحب ورقة واحدة لك.")
         
+        # إرسال رسالة للاعب الأصلي (تأكيد)
+        await c.bot.send_message(
+            c.from_user.id,
+            f"✅ لعبت جوكر +1! الخصم سحب ورقة واحدة ودورك الآن (يمكنك لعب أي لون)"
+        )
+        
         # تحديث واجهة اللاعب الأساسية
         await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
         print(f"Error in handle_wild_draw1_card: {e}")
+        # إرسال رسالة خطأ للمستخدم
         await c.answer("⚠️ حدث خطأ في معالجة جوكر +1", show_alert=True)
 
 async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
