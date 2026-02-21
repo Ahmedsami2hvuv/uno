@@ -153,6 +153,67 @@ def cancel_challenge_timer(room_id):
     cd = challenge_countdown_msgs.pop(room_id, None)
     if cd: asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
 
+async def challenge_timeout_2p(room_id, bot, expected_decision):
+    """إذا انتهى الوقت بدون رد الخصم، يعتبر أنه قبل السحب تلقائياً"""
+    try:
+        # انتظار 20 ثانية
+        await asyncio.sleep(10)
+        
+        # التحقق من الغرفة
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data:
+            return
+        room = room_data[0]
+        
+        if room['status'] != 'playing':
+            return
+            
+        # جلب بيانات التحدي
+        pending = pending_color_data.get(room_id)
+        if not pending:
+            return
+            
+        if pending.get('type') != 'challenge':
+            return
+            
+        players = get_ordered_players(room_id)
+        p_idx = pending['p_idx']
+        opp_id = pending['opp_id']
+        p_name = pending['p_name']
+        
+        # تطبيق القبول التلقائي (الخصم يسحب 4 ورقات)
+        deck = safe_load(room['deck'])
+        opp_hand = safe_load(players[(p_idx + 1) % 2]['hand'])
+        drawn_cards = []
+        
+        for _ in range(4):
+            if deck:
+                drawn_cards.append(deck.pop(0))
+                opp_hand.append(drawn_cards[-1])
+        
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s", 
+                (json.dumps(deck), p_idx, room_id), commit=True)
+        
+        # إشعار اللاعبين
+        await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً وسحبت 4 ورقات.")
+        await bot.send_message(players[p_idx]['user_id'], 
+                             f"⏰ الخصم لم يرد! تم قبول السحب تلقائياً ودورك الآن.")
+        
+        # إلغاء البيانات المؤقتة
+        cancel_color_timer(room_id)
+        
+        # تحديث الواجهة
+        await refresh_ui_2p(room_id, bot)
+        
+    except asyncio.CancelledError:
+        # تم إلغاء التايمر (الخصم رد قبل انتهاء الوقت)
+        pass
+    except Exception as e:
+        print(f"Challenge timeout error: {e}")
+
+
 def cancel_timer(room_id):
     # إلغاء عداد الدور
     task = turn_timers.pop(room_id, None)
@@ -183,7 +244,6 @@ def cancel_timer(room_id):
     challenge_cd = challenge_countdown_msgs.pop(room_id, None)
     if challenge_cd:
         asyncio.create_task(_delete_countdown(challenge_cd['bot'], challenge_cd['chat_id'], challenge_cd['msg_id']))
-
 async def _delete_countdown(bot, chat_id, msg_id):
     try: await bot.delete_message(chat_id, msg_id)
     except: pass
@@ -1204,7 +1264,21 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟",
             reply_markup=challenge_kb
         )
+        # بدء تايمر التحدي (10 ثواني)
+        challenge_timers[room_id] = asyncio.create_task(
+            challenge_timeout_2p(room_id, c.bot, opp_id)
+        )
         
+        # إرسال رسالة العد التنازلي للخصم
+        cd_msg = await c.bot.send_message(
+            opp_id,
+            "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+        )
+        challenge_countdown_msgs[room_id] = {
+            'bot': c.bot,
+            'chat_id': opp_id,
+            'msg_id': cd_msg.message_id
+        }
         # بناء رسالة للاعب الأصلي مع أزرار أوراقه
         # بناء الكيبورد (الأوراق)
         kb = []
@@ -1376,6 +1450,19 @@ async def handle_challenge_decision(c: types.CallbackQuery):
         data = c.data.split("_")
         decision = data[1]  # y أو n
         room_id = data[2]
+        
+        # إلغاء تايمر التحدي
+        if room_id in challenge_timers:
+            challenge_timers[room_id].cancel()
+            del challenge_timers[room_id]
+        
+        # حذف رسالة العد التنازلي
+        if room_id in challenge_countdown_msgs:
+            cd_info = challenge_countdown_msgs.pop(room_id)
+            try:
+                await c.bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+            except:
+                pass
         
         # جلب بيانات الجوكر
         pending = pending_color_data.get(room_id)
