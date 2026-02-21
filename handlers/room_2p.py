@@ -1141,8 +1141,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                 return  # مهم جداً: نوقف تنفيذ الدالة هنا
                 
             elif "💧" in card:
-                # جوكر +1
-                await handle_wild_draw1_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players)
+                # جوكر +1 - نستخدم الدالة المبسطة
+                await handle_wild_draw1_card_simple(c, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players)
                 return
                 
             elif "🌊" in card:
@@ -1171,6 +1171,39 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         print(f"Error in handle_play: {e}")
         await c.answer("⚠️ حدث خطأ", show_alert=True)
+
+async def handle_wild_draw1_card_simple(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
+    """نسخة مبسطة جداً من جوكر +1 - بدون استخدام c.message"""
+    try:
+        # سحب ورقة للخصم
+        deck = safe_load(room['deck'])
+        opp_hand = safe_load(players[opp_idx]['hand'])
+        
+        if deck:
+            drawn_card = deck.pop(0)
+            opp_hand.append(drawn_card)
+            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                    (json.dumps(opp_hand), opp_id), commit=True)
+            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                    (json.dumps(deck), room_id), commit=True)
+        
+        # تحديث الغرفة
+        db_query("UPDATE rooms SET top_card = %s, current_color = 'ANY', turn_index = %s, discard_pile = %s WHERE room_id = %s", 
+                (card, p_idx, json.dumps(discard_pile), room_id), commit=True)
+        
+        # إعلام الخصم
+        await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1! تم سحب ورقة لك.")
+        
+        # إعلام اللاعب الأصلي
+        await c.bot.send_message(c.from_user.id, f"✅ لعبت جوكر +1! الخصم سحب ورقة.")
+        
+        # تحديث واجهة الجميع
+        await refresh_ui_2p(room_id, c.bot)
+        
+    except Exception as e:
+        print(f"Error in handle_wild_draw1_card_simple: {e}")
+        await c.bot.send_message(c.from_user.id, "⚠️ حدث خطأ في جوكر +1")
+        
 
 # =============== دوال معالجة الأوراق الخاصة ===============
 
