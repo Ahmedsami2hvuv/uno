@@ -481,17 +481,10 @@ async def color_timeout_2p(room_id, bot, player_id):
             return
             
         for step in range(20, 0, -1):
-            # التحقق من إلغاء المهمة
-            try:
-                await asyncio.sleep(0)  # يسمح بفحص الإلغاء
-            except asyncio.CancelledError:
-                # تم إلغاء التايمر
-                if cd_info:
-                    try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                    except: pass
-                raise
+            # السماح بالتحقق من الإلغاء في كل دورة
+            await asyncio.sleep(0)
             
-            # التحقق من الغرفة
+            # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
             if not room_data:
                 if cd_info:
@@ -506,18 +499,21 @@ async def color_timeout_2p(room_id, bot, player_id):
                     except: pass
                 return
             
-            # إذا تم إلغاء التايمر (إزالة من القاموس)
+            # إذا تم اختيار اللون قبل انتهاء الوقت (تم إلغاء التايمر)
             if room_id not in color_timers:
                 if cd_info:
                     try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
                     except: pass
                 return
             
+            # الوقت المتبقي = step (لأن step يبدأ من 20 إلى 1)
             remaining = step
+            # شريط التقدم: كل نقطتين تعادل ثانيتين، ليصبح المجموع 10 نقاط (تمثل 20 ثانية)
             filled = "🟢" * ((step + 1) // 2)
             empty = "⚫" * (10 - ((step + 1) // 2))
             bar = filled + empty
             
+            # تحديث نفس الرسالة
             try:
                 await bot.edit_message_text(
                     chat_id=cd_info['chat_id'],
@@ -525,6 +521,7 @@ async def color_timeout_2p(room_id, bot, player_id):
                     text=f"⏳ الوقت المتبقي: {remaining} ثانية لاختيار اللون\n{bar}"
                 )
             except Exception:
+                # إذا فشل التعديل (الرسالة محذوفة)، نرسل رسالة جديدة
                 try:
                     new_msg = await bot.send_message(
                         cd_info['chat_id'],
@@ -536,8 +533,72 @@ async def color_timeout_2p(room_id, bot, player_id):
             
             await asyncio.sleep(1)
         
-        # باقي الكود بعد انتهاء الوقت (نفسه)
-        # ... (من هنا إلى آخر الدالة كما هو)
+        # بعد انتهاء الوقت (لم يتم اختيار لون)، نحذف رسالة العداد
+        if cd_info:
+            try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+            except: pass
+            
+        color_timers.pop(room_id, None)
+        pdata = pending_color_data.pop(room_id, None)
+        if not pdata: return
+        
+        color_timed_out.add(room_id)
+        card = pdata['card_played']
+        p_idx = pdata['p_idx']
+        prev_color = pdata['prev_color']
+        chosen_color = random.choice(['🔴', '🔵', '🟡', '🟢'])
+        
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data: return
+        room = room_data[0]
+        if room['status'] != 'playing': return
+        
+        players = get_ordered_players(room_id)
+        opp_idx = (p_idx + 1) % 2
+        opp_id = players[opp_idx]['user_id']
+        p_name = players[p_idx].get('player_name') or "لاعب"
+        
+        if "🔥" in card:
+            db_query("UPDATE rooms SET top_card = %s, current_color = %s WHERE room_id = %s", (f"{card} {chosen_color}", chosen_color, room_id), commit=True)
+            kb = [[InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{prev_color}_{chosen_color}"), InlineKeyboardButton(text="✅ قبول", callback_data=f"rs_n_{room_id}_{chosen_color}")]]
+            msg_sent = await bot.send_message(opp_id, f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            cd_msg = await bot.send_message(opp_id, "⏳ باقي 20 ثانية للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
+            challenge_countdown_msgs[room_id] = {'bot': bot, 'chat_id': opp_id, 'msg_id': cd_msg.message_id}
+            challenge_timers[room_id] = asyncio.create_task(challenge_timeout_2p(room_id, bot, opp_id, chosen_color, msg_sent.message_id))
+            await bot.send_message(player_id, f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً. بانتظار رد الخصم...")
+            return
+            
+        deck = safe_load(room['deck'])
+        alerts = {}
+        penalty = 1 if "💧" in card else (2 if "🌊" in card else 0)
+        next_turn = p_idx  # القيمة الافتراضية (للجوكرات ذات العقوبة)
+        
+        if penalty > 0:
+            if not deck:
+                discard = safe_load(room['discard_pile'])
+                if discard:
+                    deck = discard
+                    random.shuffle(deck)
+                    db_query("UPDATE rooms SET discard_pile = '[]' WHERE room_id = %s", (room_id,), commit=True)
+                else:
+                    deck = generate_h2o_deck()
+            opp_h = safe_load(players[opp_idx]['hand'])
+            for _ in range(penalty):
+                if deck: opp_h.append(deck.pop(0))
+            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_h), opp_id), commit=True)
+            alerts[opp_id] = f"⏰ {p_name} ما اختار اللون بالوقت! تم اختيار {chosen_color} تلقائياً وسحبك {penalty} ورقة والدور رجع له!"
+            alerts[player_id] = f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً."
+        else:
+            next_turn = (p_idx + 1) % 2  # الجوكر الملون العادي: الدور يذهب للخصم
+            alerts[opp_id] = f"🎨 {p_name} اختار اللون {chosen_color} والدور رجع له!"
+            alerts[player_id] = f"🎨 اخترت اللون {chosen_color} والدور رجع لك!"
+            
+        db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, deck = %s WHERE room_id = %s", 
+                (f"{card} {chosen_color}", chosen_color, next_turn, json.dumps(deck), room_id), commit=True)
+        
+        turn_timers.pop(room_id, None)
+        countdown_msgs.pop(room_id, None)
+        await refresh_ui_2p(room_id, bot, alerts)
         
     except asyncio.CancelledError:
         cd_info = color_countdown_msgs.get(room_id)
@@ -1682,15 +1743,16 @@ async def handle_challenge_decision(c: types.CallbackQuery):
 async def handle_color(c: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
-        room_id, card, p_idx = data.get('room_id'), data.get('card_played'), data.get('p_idx')
+        room_id = data.get('room_id')
+        card = data.get('card_played')
+        p_idx = data.get('p_idx')
         chosen_color = c.data.split("_")[1]
         
         # إلغاء التايمر أولاً
         task = color_timers.pop(room_id, None)
         if task and not task.done():
             task.cancel()
-            # نعطي فرصة للمهمة لتلغي نفسها
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)  # انتظار قصير للإلغاء
         
         # حذف رسالة العداد
         cd = color_countdown_msgs.pop(room_id, None)
