@@ -870,15 +870,13 @@ async def background_auto_draw(room_id, bot, curr_idx):
         print(f"Error in background_auto_draw: {e}")
 
 async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
-    """العداد الذكي للتمرير التلقائي - يحدث النص فقط بدون رسائل جديدة"""
+    """العداد الذكي - يعرض الأوراق مع زر التمرير"""
     try:
         players = get_ordered_players(room_id)
         if expected_turn >= len(players): return
         
         p_id = players[expected_turn]['user_id']
-        last_msg_id = players[expected_turn].get('last_msg_id')
         
-        # عد تنازلي 12 ثانية (6 خطوات كل خطوة ثانيتين)
         for step in range(6, 0, -1):
             await asyncio.sleep(2)
             
@@ -886,48 +884,58 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
             room_res = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
             if not room_res or room_res[0]['turn_index'] != expected_turn or room_res[0]['status'] != 'playing':
                 return
+            room = room_res[0]
             
+            # جلب أوراق اللاعب الحالية لبناء الكيبورد
+            p_data = db_query("SELECT hand, last_msg_id FROM room_players WHERE user_id = %s", (p_id,))
+            if not p_data: return
+            hand = sort_hand(safe_load(p_data[0]['hand']))
+            last_msg_id = p_data[0]['last_msg_id']
+
+            # بناء أزرار الأوراق
+            hand_kb = []
+            row = []
+            for i, h_card in enumerate(hand):
+                row.append(InlineKeyboardButton(text=h_card, callback_data=f"pl_{room_id}_{i}"))
+                if len(row) == 3:
+                    hand_kb.append(row)
+                    row = []
+            if row: hand_kb.append(row)
+            
+            # إضافة زر التمرير في النهاية
             remaining = step * 2
             bar = ("🟢" * step) + ("⚫" * (6 - step))
+            hand_kb.append([InlineKeyboardButton(text=f"➡️ مرر الدور ({remaining}ث) {bar}", callback_data=f"pass_{room_id}")])
             
-            # تعديل النص فقط للرسالة الموجودة حالياً للاعب
             if last_msg_id:
                 try:
-                    # بناء نص التنبيه فقط
-                    alert_text = f"📥 سحبت ({drawn_card}) وما تشتغل ❌\n⏳ باقي {remaining} ثانية للتمرير التلقائي\n{bar}"
-                    
-                    # ملاحظة: هنا البوت راح يحاول يعدل الرسالة فقط، ما راح يدز شي جديد
-                    # وهذا يخلي زر "التمرير" ثابت بمكانه وميختفي
                     await bot.edit_message_text(
                         chat_id=p_id,
                         message_id=last_msg_id,
-                        text=f"📦 السحب: {len(safe_load(room_res[0]['deck']))} ورقة\n" + 
-                             f"──────────────\n📢 {alert_text}\n──────────────\n" +
-                             f"✅ دورك 👍🏻\n🃏 الورقة النازلة: [ {room_res[0]['top_card']} ]",
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="➡️ مرر الدور هسة", callback_data=f"pass_{room_id}")]
-                        ])
+                        text=f"📦 السحب: {len(safe_load(room['deck']))} ورقة\n" +
+                             f"──────────────\n" +
+                             f"📥 سحبت ({drawn_card}) وما تشتغل ❌\n" +
+                             f"⏳ تكدر تمرر يدوياً أو نمررلك تلقائي\n" +
+                             f"──────────────\n" +
+                             f"✅ دورك 👍🏻 | الورقة: [ {room['top_card']} ]",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=hand_kb)
                     )
-                except:
-                    pass # إذا فشل التعديل ننتظر الخطوة الجاية أو التمرير التلقائي
+                except: pass
 
-        # انتهاء الوقت -> تمرير الدور
+        # إذا خلص الوقت وما لعب ولا مرر.. نمرر تلقائي
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data or room_data[0]['turn_index'] != expected_turn: return
-        
-        next_idx = (expected_turn + 1) % 2
-        p_name = players[expected_turn].get('player_name') or "لاعب"
-        
-        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_idx, room_id), commit=True)
-        
-        alerts = {
-            p_id: f"⏱ انتهى الوقت! تم تمرير دورك (سحبت {drawn_card})",
-            players[next_idx]['user_id']: f"⏱ {p_name} خلص وقته وصار دورك!"
-        }
-        await refresh_ui_2p(room_id, bot, alerts)
-        
+        if room_data and room_data[0]['turn_index'] == expected_turn:
+            next_idx = (expected_turn + 1) % 2
+            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_idx, room_id), commit=True)
+            p_name = players[expected_turn].get('player_name') or "لاعب"
+            alerts = {
+                p_id: f"⏱ انتهى الوقت وتم تمرير دورك.",
+                players[next_idx]['user_id']: f"⏱ {p_name} خلص وقته، هسة دورك!"
+            }
+            await refresh_ui_2p(room_id, bot, alerts)
+            
     except Exception as e:
-        print(f"Error in auto_pass_with_countdown: {e}")
+        print(f"Error in countdown: {e}")
         
 async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
     """تمرير الدور تلقائياً بعد 12 ثانية من سحب ورقة لا تعمل"""
@@ -968,9 +976,10 @@ async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
         print(f"Error in auto_pass_after_auto_draw: {e}")
 
 @router.callback_query(F.data.startswith("pl_"))
+@router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
     try:
-        # 1. استخراج البيانات
+        # 1. استخراج البيانات من الكولباك
         parts = c.data.split("_")
         idx = int(parts[-1])
         room_id = "_".join(parts[1:-1])
@@ -985,29 +994,31 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         players = get_ordered_players(room_id)
         p_idx = room['turn_index']
         
+        # التحقق: هل اللاعب اللي ضغط هو اللي عليه الدور؟
         if players[p_idx]['user_id'] != c.from_user.id:
-            # هنا التعديل الجوهري: فقط نرسل التنبيه وننهي الدالة
-            # بدون استدعاء refresh_ui وبدون مسح أي شيء
+            # منع الخباثة: تنبيه فقط بدون تحديث الواجهة
             return await c.answer("❌ مو دورك! انتظر الخصم يلعب.", show_alert=True)
         
-        # --- إذا كان الدور صحيحاً، نكمل بقية الكود طبيعي ---
-        
-        # إلغاء التايمر لأن اللاعب لعب فعلاً
-        cancel_timer(room_id)
+        # --- إذا وصلنا هنا يعني الدور صحيح ---
+
+        # 4. إيقاف كل أنواع التايمرات فوراً
+        cancel_auto_draw_task(room_id) # إيقاف عداد السحب والتمرير التلقائي
+        cancel_timer(room_id)          # إيقاف عداد الـ 20 ثانية الأصلي
         await asyncio.sleep(0)
         
-        # جلب يد اللاعب
+        # 5. جلب يد اللاعب والورقة المختارة
         hand = sort_hand(safe_load(players[p_idx]['hand']))
         if idx >= len(hand):
-            return await c.answer("⚠️ حدث خطأ، حاول مرة أخرى", show_alert=True)
+            return await c.answer("⚠️ حدث خطأ في اختيار الورقة", show_alert=True)
         
         card = hand[idx]
         p_name = players[p_idx].get('player_name') or "لاعب"
         opp_idx = (p_idx + 1) % 2
         opp_id = players[opp_idx]['user_id']
         
-        # التحقق من قانونية الورقة
+        # 6. التحقق من قانونية الورقة (هل ترهم على النازلة؟)
         if not check_validity(card, room['top_card'], room['current_color']):
+            # عقوبة الورقة الخطأ: سحب ورقة واحدة
             deck = safe_load(room['deck'])
             penalty_cards = []
             if deck:
@@ -1024,7 +1035,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             }
             return await refresh_ui_2p(room_id, c.bot, alerts)
         
-        # تنفيذ اللعبة
+        # 7. تنفيذ اللعبة: حذف الورقة من اليد وتحديث الـ UNO
         hand.pop(idx)
         was_uno_said = str(players[p_idx].get('said_uno', False)).lower() in ['true', '1', 'true']
         updated_said_uno = was_uno_said if len(hand) == 1 else False
@@ -1032,32 +1043,40 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         db_query("UPDATE room_players SET hand = %s, said_uno = %s WHERE user_id = %s", 
                 (json.dumps(hand), updated_said_uno, c.from_user.id), commit=True)
         
+        # تحديث كومة الأوراق المرمية
         discard_pile = safe_load(room.get('discard_pile', '[]'))
         discard_pile.append(room['top_card'])
         
         alerts = {}
         
-        # فحص الفوز
+        # 8. فحص حالة الفوز
         if len(hand) == 0:
             opp_hand = safe_load(players[opp_idx]['hand'])
             points = calculate_points(opp_hand)
             current_points = players[p_idx].get('online_points', 0)
+            
+            # تحديث نقاط الفائز
             db_query("UPDATE users SET online_points = %s WHERE user_id = %s", 
                     (current_points + points, c.from_user.id), commit=True)
+            # تحديث الغرفة لآخر مرة
             db_query("UPDATE rooms SET discard_pile = %s, top_card = %s, current_color = %s WHERE room_id = %s", 
                     (json.dumps(discard_pile), card, card.split()[0], room_id), commit=True)
+            # حذف اللاعبين من الغرفة
             db_query("DELETE FROM room_players WHERE room_id = %s", (room_id,), commit=True)
             
-            win_text = f"🏆 {p_name} فاز بالجولة وحصل على {points} نقطة!"
+            win_text = f"🏆 **{p_name} فاز بالجولة!** 🏆\n📊 حصل على {points} نقطة."
             end_kb = make_end_kb(players, room, '2p')
             for p in players:
                 await c.bot.send_message(p['user_id'], win_text, reply_markup=end_kb)
+            
+            # حذف الغرفة
             db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
             return
 
-        # معالجة الأوراق الخاصة (الأكشن)
-        next_turn = (p_idx + 1) % 2
+        # 9. معالجة الأوراق الخاصة (Action Cards)
+        next_turn = (p_idx + 1) % 2  # الافتراضي: الدور ينتقل للخصم
         
+        # أوراق اختيار اللون (🌈 و 🔥)
         if "🌈" in card:
             await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
             return
@@ -1065,17 +1084,23 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
             return
             
+        # أوراق المنع والعكس
         if "🚫" in card:
             next_turn = await handle_skip_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
         elif "🔄" in card:
             next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
+            
+        # أوراق السحب (+1 و +2)
         elif "💧" in card:
             next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
+            return # الدالة أعلاه تقوم بالتحديث
         elif "🌊" in card:
             next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
+            return # الدالة أعلاه تقوم بالتحديث
         
+        # 10. تحديث الغرفة للأوراق العادية
         if not any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
             db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                     (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
@@ -1895,6 +1920,11 @@ async def cancel_exit(c: types.CallbackQuery):
 async def process_pass_turn(c: types.CallbackQuery):
     try:
         room_id = c.data.split("_")[1]
+        
+        # أهم سطر: نوقف أي عداد سحب أو تمرير تلقائي فوراً لأن اللاعب ضغط بنفسه
+        cancel_auto_draw_task(room_id)
+        cancel_timer(room_id)
+        
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return await c.answer("⚠️ الغرفة غير موجودة")
         room = room_data[0]
@@ -1911,13 +1941,13 @@ async def process_pass_turn(c: types.CallbackQuery):
         db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
         
         p_name = players[curr_idx].get('player_name') or "لاعب"
-        await c.answer("➡️ تم تمرير الدور")
+        # تنبيه للخصم إنو اللاعب مرر دورة
+        opp_id = players[next_turn]['user_id']
+        alerts = {opp_id: f"➡️ {p_name} مرر الدور، هسة دورك!"}
         
-        # تحديث الواجهة للجميع
-        await refresh_ui_2p(room_id, c.bot, {
-            players[curr_idx]['user_id']: "➡️ مررت دورك",
-            players[next_turn]['user_id']: f"➡️ {p_name} مرر دوره، صار دورك الآن ✅"
-        })
+        await refresh_ui_2p(room_id, c.bot, alerts)
+        await c.answer("تم تمرير الدور 👍")
         
     except Exception as e:
-        print(f"Pass Error: {e}")
+        print(f"Error in process_pass_turn: {e}")
+        await c.answer("⚠️ حدث خطأ")
