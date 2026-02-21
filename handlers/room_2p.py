@@ -654,7 +654,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         # --- بناء واجهة اللاعبين ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
-            turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "⏳ مو دورك"
+            turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "❌ مو دورك"
             
             # معلومات اللاعبين
             players_info = []
@@ -1163,6 +1163,55 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
 
 # =============== دوال الأكشن ===============
 
+async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
+    """معالجة جوكر +1 (💧) - كأكشن: يسحب الخصم ورقة واحدة"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    p_name = players[p_idx].get('player_name') or "لاعب"  # <--- أضف هذا السطر
+    
+    # سحب ورقة واحدة للخصم
+    drawn_cards = []
+    for _ in range(1):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    alerts[opp_id] = f"💧 {p_name} لعب جوكر +1 وسحبك ورقة! 🎯"
+    alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✅"
+    return next_turn
+    
+
+async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
+    """معالجة جوكر +2 (🌊) - كأكشن: يسحب الخصم ورقتين"""
+    next_turn = p_idx  # الدور يبقى عند اللاعب
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
+    p_name = players[p_idx].get('player_name') or "لاعب"  # <--- أضف هذا السطر
+    
+    # سحب ورقتين للخصم
+    drawn_cards = []
+    for _ in range(2):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+    
+    if drawn_cards:
+        opp_hand.extend(drawn_cards)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                (json.dumps(opp_hand), opp_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                (json.dumps(deck), room_id), commit=True)
+    
+    alerts[opp_id] = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎯"
+    alerts[c.from_user.id] = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! ✅"
+    return next_turn
+
 async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
     """معالجة ورقة منع (🚫) - تمنع اللاعب التالي"""
     next_turn = p_idx  # الدور يرجع للاعب نفسه
@@ -1200,51 +1249,7 @@ async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_i
     alerts[c.from_user.id] = f"💧 لعبت جوكر +1 وسحبت الخصم ورقة! ✅"
     return next_turn
     
-async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
-    """معالجة جوكر +2 (🌊) - كأكشن: يسحب الخصم ورقتين"""
-    next_turn = p_idx  # الدور يبقى عند اللاعب
-    deck = safe_load(room['deck'])
-    opp_hand = safe_load(players[opp_idx]['hand'])
-    
-    # سحب ورقتين للخصم
-    drawn_cards = []
-    for _ in range(2):
-        if deck:
-            drawn_cards.append(deck.pop(0))
-    
-    if drawn_cards:
-        opp_hand.extend(drawn_cards)
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                (json.dumps(opp_hand), opp_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                (json.dumps(deck), room_id), commit=True)
-    
-    alerts[opp_id] = f"🌊 {p_name} لعب جوكر +2 وسحبك ورقتين! 🎯"
-    alerts[c.from_user.id] = f"🌊 لعبت جوكر +2 وسحبت الخصم ورقتين! ✅"
-    return next_turn
 
-async def handle_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts):
-    """معالجة ورقة +2 العادية"""
-    next_turn = p_idx  # الدور يبقى عند اللاعب
-    deck = safe_load(room['deck'])
-    opp_hand = safe_load(players[opp_idx]['hand'])
-    
-    # سحب ورقتين للخصم
-    drawn_cards = []
-    for _ in range(2):
-        if deck:
-            drawn_cards.append(deck.pop(0))
-    
-    if drawn_cards:
-        opp_hand.extend(drawn_cards)
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                (json.dumps(opp_hand), opp_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                (json.dumps(deck), room_id), commit=True)
-    
-    alerts[opp_id] = f"⬆️2 {p_name} سحبك 2!"
-    alerts[c.from_user.id] = f"⬆️2 سحبت الخصم 2!"
-    return next_turn
 
 
 # =============== دوال الجوكرات ===============
