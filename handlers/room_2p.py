@@ -1007,11 +1007,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # التحقق من الدور
         p_idx = room['turn_index']
         if players[p_idx]['user_id'] != c.from_user.id:
+            # التعديل هنا: شلنا تحديث الواجهة حتى ما تصير خباثة وتختفي الأوراق
             await c.answer("❌ مو دورك!", show_alert=True)
-            try:
-                await refresh_ui_2p(room_id, c.bot)
-            except:
-                pass
             return
         
         # جلب يد اللاعب
@@ -1149,12 +1146,12 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # جوكر +1 (💧) - يعامل كأكشن
         elif "💧" in card:
             next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
-            await refresh_ui_2p(room_id, c.bot, alerts)  # <--- أضف هذا السطر
+            await refresh_ui_2p(room_id, c.bot, alerts)
 
         # جوكر +2 (🌊) - يعامل كأكشن
         elif "🌊" in card:
             next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
-            await refresh_ui_2p(room_id, c.bot, alerts)  # <--- أضف هذا السطر
+            await refresh_ui_2p(room_id, c.bot, alerts)
         
         # تحديث الغرفة (للأوراق التي لم تقم بالتحديث بنفسها)
         if not any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
