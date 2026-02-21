@@ -1056,7 +1056,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             cancel_color_timer(room_id)
             
             # التحقق من نوع الجوكر
-            if "🌈" in card:
+             if "🌈" in card:
                 # جوكر ألوان
                 await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
                 return
@@ -1064,15 +1064,17 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             elif "🔥" in card:
                 # جوكر +4
                 await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
+                return  # <-- هذا السطر مهم جداً
                 
             elif "💧" in card:
                 # جوكر +1
-                await handle_wild_draw1_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players, alerts)
-                return  # الدالة تقوم بالتحديث بنفسها
+                await handle_wild_draw1_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players)
+                return
                 
             elif "🌊" in card:
                 # جوكر +2
-                await handle_wild_draw2_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players, alerts)
+                await handle_wild_draw2_card(c, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players)
+                return
         
         # أوراق الأكشن
         if "🚫" in card:
