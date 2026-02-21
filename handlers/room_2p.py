@@ -1064,7 +1064,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             elif "🔥" in card:
                 # جوكر +4
                 await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
-                return
+                return  # مهم جداً: نوقف تنفيذ الدالة هنا
                 
             elif "💧" in card:
                 # جوكر +1
@@ -1243,9 +1243,12 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
         )
         
+        return  # إنهاء الدالة بنجاح
+        
     except Exception as e:
         print(f"Error in handle_wild_draw4_card: {e}")
-        await c.answer("⚠️ حدث خطأ", show_alert=True)
+        # لا نعرض رسالة خطأ للمستخدم، فقط نسجلها في السجل
+        return
         
 async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
     """معالجة جوكر +1 (💧) - الخصم يسحب ورقة واحدة تلقائياً والدور يعود للاعب"""
