@@ -1744,12 +1744,12 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
         room_id, card, p_idx = data.get('room_id'), data.get('card_played'), data.get('p_idx')
         chosen_color = c.data.split("_")[1]
         
-        # إلغاء التايمر أولاً وقبل كل شيء
+        # إلغاء التايمر أولاً
         task = color_timers.pop(room_id, None)
         if task and not task.done():
             task.cancel()
             # نعطي فرصة للمهمة لتلغي نفسها
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.1)
         
         # حذف رسالة العداد
         cd = color_countdown_msgs.pop(room_id, None)
@@ -1759,6 +1759,7 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
             except: 
                 pass
         
+        # إزالة البيانات المعلقة
         pending_color_data.pop(room_id, None)
         
         if room_id in color_timed_out:
@@ -1820,7 +1821,7 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
         
         await state.clear()
         
-        # تحديث الواجهة (استدعاء refresh_ui_2p بعد التحديث)
+        # تحديث الواجهة
         await refresh_ui_2p(room_id, c.bot, alerts)
         
     except Exception as e: 
