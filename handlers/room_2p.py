@@ -1261,9 +1261,10 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         
         await c.bot.send_message(
             opp_id,
-            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟",
+            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
             reply_markup=challenge_kb
         )
+        
         # بدء تايمر التحدي (10 ثواني)
         challenge_timers[room_id] = asyncio.create_task(
             challenge_timeout_2p(room_id, c.bot, opp_id)
@@ -1272,13 +1273,14 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         # إرسال رسالة العد التنازلي للخصم
         cd_msg = await c.bot.send_message(
             opp_id,
-            "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+            "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢"
         )
         challenge_countdown_msgs[room_id] = {
             'bot': c.bot,
             'chat_id': opp_id,
             'msg_id': cd_msg.message_id
         }
+        
         # بناء رسالة للاعب الأصلي مع أزرار أوراقه
         # بناء الكيبورد (الأوراق)
         kb = []
@@ -1311,9 +1313,9 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
         kb.append(extra_buttons)
         
-        # رسالة للاعب الأصلي مع أزراره
+        # رسالة للاعب الأصلي مع أزراره + رسالة انتظار
         await c.message.edit_text(
-            f"🔥 لعبت جوكر +4! بانتظار رد الخصم...\n\nيمكنك مشاهدة أوراقك بالأسفل",
+            f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
         )
         
