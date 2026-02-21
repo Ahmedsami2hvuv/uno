@@ -1168,9 +1168,9 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
 async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts):
     """معالجة جوكر +1 (💧) - كأكشن: يسحب الخصم ورقة واحدة"""
     next_turn = p_idx  # الدور يبقى عند اللاعب
+    p_name = players[p_idx].get('player_name') or "لاعب"  # <--- تعريف p_name أول شيء
     deck = safe_load(room['deck'])
     opp_hand = safe_load(players[opp_idx]['hand'])
-    p_name = players[p_idx].get('player_name') or "لاعب"
     
     # سحب ورقة واحدة للخصم
     drawn_cards = []
@@ -1193,9 +1193,9 @@ async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_i
 async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts):
     """معالجة جوكر +2 (🌊) - كأكشن: يسحب الخصم ورقتين"""
     next_turn = p_idx  # الدور يبقى عند اللاعب
+    p_name = players[p_idx].get('player_name') or "لاعب"  # <--- تعريف p_name أول شيء
     deck = safe_load(room['deck'])
     opp_hand = safe_load(players[opp_idx]['hand'])
-    p_name = players[p_idx].get('player_name') or "لاعب"
     
     # سحب ورقتين للخصم
     drawn_cards = []
