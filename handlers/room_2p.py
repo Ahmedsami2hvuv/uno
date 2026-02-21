@@ -1473,6 +1473,7 @@ async def handle_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_
 
     
 @router.callback_query(F.data.startswith("challenge_"))
+@router.callback_query(F.data.startswith("challenge_"))
 async def handle_challenge_decision(c: types.CallbackQuery):
     try:
         data = c.data.split("_")
@@ -1617,7 +1618,6 @@ async def handle_challenge_decision(c: types.CallbackQuery):
     except Exception as e:
         print(f"Challenge decision error: {e}")
         await c.answer("⚠️ حدث خطأ في معالجة التحدي.", show_alert=True)
-
 
 @router.callback_query(GameStates.choosing_color, F.data.startswith("cl_"))
 async def handle_color(c: types.CallbackQuery, state: FSMContext):
