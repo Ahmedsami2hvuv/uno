@@ -1063,8 +1063,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                 
             elif "🔥" in card:
                 # جوكر +4
-                await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile)
-                return
+                await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
                 
             elif "💧" in card:
                 # جوكر +1
@@ -1174,8 +1173,8 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
         color_timeout_2p(room_id, c.bot, c.from_user.id)
     )
 
-async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile):
-    """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم"""
+async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
+    """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم ويحافظ على أزرار اللاعب"""
     try:
         # تخزين معلومات الجوكر في الذاكرة
         pending_color_data[room_id] = {
@@ -1204,9 +1203,42 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             reply_markup=challenge_kb
         )
         
-        # إعلام اللاعب بأنه بانتظار رد الخصم
+        # بناء رسالة للاعب الأصلي مع أزرار أوراقه
+        # بناء الكيبورد (الأوراق)
+        kb = []
+        row = []
+        for card_idx, h_card in enumerate(hand):
+            row.append(InlineKeyboardButton(text=h_card, callback_data=f"pl_{room_id}_{card_idx}"))
+            if len(row) == 3: 
+                kb.append(row)
+                row = []
+        if row: 
+            kb.append(row)
+
+        # أزرار التحكم (بدون زر تمرير لأن اللاعب لعب ورقة)
+        controls = []
+        if len(hand) == 2:
+            controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+        
+        # إضافة زر الصيد إذا كان الخصم عنده ورقة وحدة
+        players = get_ordered_players(room_id)
+        opp = players[(p_idx + 1) % 2]
+        if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
+            controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
+        
+        if controls: 
+            kb.append(controls)
+        
+        # أزرار إضافية
+        extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
+        if c.from_user.id == room.get('creator_id'):
+            extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
+        kb.append(extra_buttons)
+        
+        # رسالة للاعب الأصلي مع أزراره
         await c.message.edit_text(
-            f"🔥 لعبت جوكر +4! بانتظار رد الخصم..."
+            f"🔥 لعبت جوكر +4! بانتظار رد الخصم...\n\nيمكنك مشاهدة أوراقك بالأسفل",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
         )
         
     except Exception as e:
