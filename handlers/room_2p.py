@@ -1513,36 +1513,36 @@ async def handle_challenge_decision(c: types.CallbackQuery):
         deck = safe_load(room['deck'])
         
         if decision == "n":  # قبل السحب
-            # الخصم قبل السحب - يسحب 4 ورقات
-            opp_hand = safe_load(players[(p_idx + 1) % 2]['hand'])
-            drawn_cards = []
-            for _ in range(4):
-                if deck:
-                    drawn_cards.append(deck.pop(0))
-                    opp_hand.append(drawn_cards[-1])
-            
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                    (json.dumps(opp_hand), opp_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                    (json.dumps(deck), room_id), commit=True)
-            
-            # تحديث current_color للسماح بلعب أي لون
-            db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
-                    (room_id,), commit=True)
-            
-            # حذف رسالة التحدي
-        try:
-            await c.message.delete()
-        except:
-            pass
-            
-        await c.bot.send_message(opp_id, "✅ قبلت السحب! سحبت 4 ورقات.")
-        await c.bot.send_message(players[p_idx]['user_id'], 
-                               f"✅ الخصم قبل السحب! دورك الآن ويمكنك لعب أي لون.")
-            
-            # تحديث turn_index للاعب الأول
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
-                    (p_idx, room_id), commit=True)
+    # الخصم قبل السحب - يسحب 4 ورقات
+    opp_hand = safe_load(players[(p_idx + 1) % 2]['hand'])
+    drawn_cards = []
+    for _ in range(4):
+        if deck:
+            drawn_cards.append(deck.pop(0))
+            opp_hand.append(drawn_cards[-1])
+    
+    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+            (json.dumps(opp_hand), opp_id), commit=True)
+    db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+            (json.dumps(deck), room_id), commit=True)
+    
+    # تحديث current_color للسماح بلعب أي لون
+    db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
+            (room_id,), commit=True)
+    
+    # حذف رسالة التحدي
+    try:
+        await c.message.delete()
+    except:
+        pass
+        
+    await c.bot.send_message(opp_id, "✅ قبلت السحب! سحبت 4 ورقات.")
+    await c.bot.send_message(players[p_idx]['user_id'], 
+                           f"✅ الخصم قبل السحب! دورك الآن ويمكنك لعب أي لون.")
+    
+    # تحديث turn_index للاعب الأول
+    db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
+            (p_idx, room_id), commit=True)
             
         else:  # تحدي
             # فحص أوراق اللاعب الأول
