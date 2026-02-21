@@ -156,7 +156,7 @@ def cancel_challenge_timer(room_id):
 async def challenge_timeout_2p(room_id, bot, expected_decision):
     """إذا انتهى الوقت بدون رد الخصم، يعتبر أنه قبل السحب تلقائياً"""
     try:
-        # انتظار 20 ثانية
+        # انتظار 10 ثانية
         await asyncio.sleep(10)
         
         # التحقق من الغرفة
@@ -196,7 +196,15 @@ async def challenge_timeout_2p(room_id, bot, expected_decision):
         db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s", 
                 (json.dumps(deck), p_idx, room_id), commit=True)
         
-        # إشعار اللاعبين
+        # حذف رسالة التحدي
+        if room_id in pending_color_data:
+            try:
+                # لا يمكن حذف رسالة التحدي بسهولة هنا لأنها رسالة الخصم
+                # سنكتفي بإرسال رسالة جديدة
+                pass
+            except:
+                pass
+                
         await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً وسحبت 4 ورقات.")
         await bot.send_message(players[p_idx]['user_id'], 
                              f"⏰ الخصم لم يرد! تم قبول السحب تلقائياً ودورك الآن.")
@@ -1522,9 +1530,15 @@ async def handle_challenge_decision(c: types.CallbackQuery):
             db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
                     (room_id,), commit=True)
             
-            await c.message.edit_text("✅ قبلت السحب! سحبت 4 ورقات.")
-            await c.bot.send_message(players[p_idx]['user_id'], 
-                                   f"✅ الخصم قبل السحب! دورك الآن ويمكنك لعب أي لون.")
+            # حذف رسالة التحدي
+        try:
+            await c.message.delete()
+        except:
+            pass
+            
+        await c.bot.send_message(opp_id, "✅ قبلت السحب! سحبت 4 ورقات.")
+        await c.bot.send_message(players[p_idx]['user_id'], 
+                               f"✅ الخصم قبل السحب! دورك الآن ويمكنك لعب أي لون.")
             
             # تحديث turn_index للاعب الأول
             db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
@@ -1555,7 +1569,12 @@ async def handle_challenge_decision(c: types.CallbackQuery):
                 db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", 
                         (json.dumps(deck), (p_idx + 1) % 2, room_id), commit=True)
                 
-                await c.message.edit_text("✅ نجح التحدي! الخصم غشاش وسحب 6 ورقات!")
+                try:
+                    await c.message.delete()
+                except:
+                    pass
+                    
+                await c.bot.send_message(opp_id, "✅ نجح التحدي! الخصم غشاش وسحب 6 ورقات!")
                 await c.bot.send_message(players[p_idx]['user_id'], 
                                        f"🕵️‍♂️ تم كشفك! سحبت 6 ورقات كعقوبة.")
             else:
@@ -1574,7 +1593,12 @@ async def handle_challenge_decision(c: types.CallbackQuery):
                 db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
                         (room_id,), commit=True)
                 
-                await c.message.edit_text("❌ فشل التحدي! اللاعب كان محقاً. سحبت 6 ورقات.")
+                try:
+                    await c.message.delete()
+                except:
+                    pass
+                    
+                await c.bot.send_message(opp_id, "❌ فشل التحدي! اللاعب كان محقاً. سحبت 6 ورقات.")
                 await c.bot.send_message(players[p_idx]['user_id'], 
                                        f"🎯 فشل تحدي الخصم! دورك الآن ويمكنك لعب أي لون.")
                 
