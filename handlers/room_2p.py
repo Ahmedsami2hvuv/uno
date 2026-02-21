@@ -1471,8 +1471,6 @@ async def handle_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_
     return next_turn\
 
 
-    
-@router.callback_query(F.data.startswith("challenge_"))
 @router.callback_query(F.data.startswith("challenge_"))
 async def handle_challenge_decision(c: types.CallbackQuery):
     try:
