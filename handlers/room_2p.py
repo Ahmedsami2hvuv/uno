@@ -1048,7 +1048,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             else:
                 alerts[opp_id] = f"⚠️ {p_name} بقتله ورقة وحدة ونسي يصيح اونو! صيده بسرعة! 🪤"
         
-        # معالجة الأوراق الخاصة
+          # معالجة الأوراق الخاصة
         next_turn = (p_idx + 1) % 2  # الدور ينتقل للخصم (القيمة الافتراضية)
         
         if any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
@@ -1056,7 +1056,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             cancel_color_timer(room_id)
             
             # التحقق من نوع الجوكر
-           if "🌈" in card:
+            if "🌈" in card:
                 # جوكر ألوان
                 await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
                 return
@@ -1064,7 +1064,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             elif "🔥" in card:
                 # جوكر +4
                 await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
-                return  # <-- هذا السطر مهم جداً
+                return
                 
             elif "💧" in card:
                 # جوكر +1
