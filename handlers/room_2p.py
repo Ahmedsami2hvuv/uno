@@ -1137,12 +1137,12 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
         
         # جوكر +1 (💧) - يعامل كأكشن
-        elif "💧" in card:
-            next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts)
+elif "💧" in card:
+    next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             
         # جوكر +2 (🌊) - يعامل كأكشن
-        elif "🌊" in card:
-            next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, p_name, card, room, players, alerts)
+elif "🌊" in card:
+    next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
         
         # ورقة +2 العادية
         elif "+2" in card:
@@ -1163,12 +1163,14 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
 
 # =============== دوال الأكشن ===============
 
-async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
+# =============== دوال الأكشن ===============
+
+async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts):
     """معالجة جوكر +1 (💧) - كأكشن: يسحب الخصم ورقة واحدة"""
     next_turn = p_idx  # الدور يبقى عند اللاعب
     deck = safe_load(room['deck'])
     opp_hand = safe_load(players[opp_idx]['hand'])
-    p_name = players[p_idx].get('player_name') or "لاعب"  # <--- أضف هذا السطر
+    p_name = players[p_idx].get('player_name') or "لاعب"
     
     # سحب ورقة واحدة للخصم
     drawn_cards = []
@@ -1188,12 +1190,12 @@ async def handle_draw1_card_action(c: types.CallbackQuery, room_id, p_idx, opp_i
     return next_turn
     
 
-async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, opp_name, card, room, players, alerts):
+async def handle_draw2_card_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts):
     """معالجة جوكر +2 (🌊) - كأكشن: يسحب الخصم ورقتين"""
     next_turn = p_idx  # الدور يبقى عند اللاعب
     deck = safe_load(room['deck'])
     opp_hand = safe_load(players[opp_idx]['hand'])
-    p_name = players[p_idx].get('player_name') or "لاعب"  # <--- أضف هذا السطر
+    p_name = players[p_idx].get('player_name') or "لاعب"
     
     # سحب ورقتين للخصم
     drawn_cards = []
