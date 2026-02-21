@@ -967,7 +967,6 @@ async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
         print(f"Error in auto_pass_after_auto_draw: {e}")
 
 @router.callback_query(F.data.startswith("pl_"))
-@router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
     try:
         # استخراج البيانات من callback
