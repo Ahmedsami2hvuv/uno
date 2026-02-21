@@ -477,11 +477,13 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
 async def color_timeout_2p(room_id, bot, player_id):
     try:
         cd_info = color_countdown_msgs.get(room_id)
+        if not cd_info:
+            return
+            
         for step in range(9, -1, -1):
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
             if not room_data:
-                # حذف رسالة العداد
                 if cd_info:
                     try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
                     except: pass
@@ -493,32 +495,40 @@ async def color_timeout_2p(room_id, bot, player_id):
                     try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
                     except: pass
                 return
-                
-            await asyncio.sleep(2)
+            
+            # إذا تم اختيار اللون قبل انتهاء الوقت (تم إلغاء التايمر)
+            if room_id not in color_timers:
+                if cd_info:
+                    try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
+                    except: pass
+                return
+            
             remaining = step * 2
             bar = "🟢" * step + "⚫" * (10 - step)
             
-            if cd_info:
+            # تحديث نفس الرسالة
+            try:
+                await bot.edit_message_text(
+                    chat_id=cd_info['chat_id'],
+                    message_id=cd_info['msg_id'],
+                    text=f"⏳ الوقت المتبقي: {remaining} ثانية لاختيار اللون\n{bar}"
+                )
+            except Exception:
+                # إذا فشل التعديل (الرسالة محذوفة)، نرسل رسالة جديدة
                 try:
-                    # حذف الرسالة القديمة
-                    await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
-                except:
-                    pass
-                
-                try:
-                    # إرسال رسالة جديدة
                     new_msg = await bot.send_message(
                         cd_info['chat_id'],
                         f"⏳ الوقت المتبقي: {remaining} ثانية لاختيار اللون\n{bar}"
                     )
                     cd_info['msg_id'] = new_msg.message_id
-                except Exception as e:
-                    print(f"Color countdown send error: {e}")
+                except:
+                    pass
+            
+            await asyncio.sleep(2)
         
-        # حذف رسالة العداد النهائية
-        cl_cd = color_countdown_msgs.pop(room_id, None)
-        if cl_cd:
-            try: await bot.delete_message(cl_cd['chat_id'], cl_cd['msg_id'])
+        # بعد انتهاء الوقت، نحذف رسالة العداد
+        if cd_info:
+            try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
             except: pass
             
         color_timers.pop(room_id, None)
@@ -554,9 +564,7 @@ async def color_timeout_2p(room_id, bot, player_id):
         deck = safe_load(room['deck'])
         alerts = {}
         penalty = 1 if "💧" in card else (2 if "🌊" in card else 0)
-        
-        # في جميع حالات جوكر السحب، الدور يرجع للاعب نفسه
-        next_turn = p_idx  # الدور يرجع للاعب نفسه
+        next_turn = p_idx  # القيمة الافتراضية (للجوكرات ذات العقوبة)
         
         if penalty > 0:
             if not deck:
@@ -574,6 +582,7 @@ async def color_timeout_2p(room_id, bot, player_id):
             alerts[opp_id] = f"⏰ {p_name} ما اختار اللون بالوقت! تم اختيار {chosen_color} تلقائياً وسحبك {penalty} ورقة والدور رجع له!"
             alerts[player_id] = f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً."
         else:
+            next_turn = (p_idx + 1) % 2  # الجوكر الملون العادي: الدور يذهب للخصم
             alerts[opp_id] = f"🎨 {p_name} اختار اللون {chosen_color} والدور رجع له!"
             alerts[player_id] = f"🎨 اخترت اللون {chosen_color} والدور رجع لك!"
             
@@ -585,7 +594,6 @@ async def color_timeout_2p(room_id, bot, player_id):
         await refresh_ui_2p(room_id, bot, alerts)
         
     except asyncio.CancelledError:
-        # حذف رسالة العداد عند الإلغاء
         cd_info = color_countdown_msgs.get(room_id)
         if cd_info:
             try: await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
