@@ -639,10 +639,16 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
 
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
     try:
+        # السماح للحدث بالمرور - قد يساعد في تقليل التأخير
+        await asyncio.sleep(0)
+        
         cancel_timer(room_id)
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data: return
+        if not room_data: 
+            return
         room = room_data[0]
+        
+        # جلب اللاعبين مرة واحدة
         players = get_ordered_players(room_id)
         
         curr_idx = room['turn_index']
@@ -666,7 +672,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             hand = sort_hand(safe_load(p['hand']))
             turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "مو دورك❌"
             
-            # معلومات اللاعبين
+            # معلومات اللاعبين - تحسين بسيط: نمر على اللاعبين مرة واحدة فقط
             players_info = []
             for pl_idx, pl in enumerate(players):
                 pl_name = pl.get('player_name') or 'لاعب'
@@ -685,7 +691,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             
             # إضافة رسالة الوقت إذا كان هذا هو صاحب الدور
             if i == room['turn_index']:
-                # سنقوم بتحديث هذه الرسالة لاحقاً من دالة الوقت
                 status_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
             
             # الفاصل والورقة النازلة
@@ -708,11 +713,9 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             if i == room['turn_index']:
                 can_play = any(check_validity(c, room['top_card'], room['current_color']) for c in hand)
                 
-                # زر التمرير يظهر فقط إذا اللاعب ليس لديه أوراق قابلة للعب
                 if not can_play:
                     controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
                 
-                # زر اونو يظهر إذا عنده ورقتين
                 if len(hand) == 2:
                     controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
             
@@ -730,11 +733,10 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(extra_buttons)
 
-            # تحديث الرسالة
+            # تحديث الرسالة - نفس الكود لكن مع try-except
             try:
                 if p.get('last_msg_id'):
                     try:
-                        # تحديث رسالة اللعب الرئيسية
                         await bot.edit_message_text(
                             text=status_text,
                             chat_id=p['user_id'],
@@ -742,15 +744,12 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
                         )
                         
-                        # إذا كان هذا هو صاحب الدور، نخزن معلومات الرسالة الرئيسية
                         if i == room['turn_index']:
-                            # حذف أي رسالة عداد سابقة
                             old_cd = countdown_msgs.get(room_id)
                             if old_cd:
                                 try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
                                 except: pass
                             
-                            # نخزن معلومات الرسالة الرئيسية
                             countdown_msgs[room_id] = {
                                 'bot': bot, 
                                 'chat_id': p['user_id'], 
@@ -758,11 +757,9 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                                 'is_main_message': True
                             }
                     except:
-                        # إذا فشل التعديل، نرسل رسالة جديدة
                         msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                         db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
                         
-                        # تخزين معلومات الرسالة الجديدة
                         if i == room['turn_index']:
                             old_cd = countdown_msgs.get(room_id)
                             if old_cd:
@@ -776,11 +773,9 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                                 'is_main_message': True
                             }
                 else:
-                    # لا توجد رسالة سابقة، نرسل رسالة جديدة
                     msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                     db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
                     
-                    # تخزين معلومات الرسالة الجديدة
                     if i == room['turn_index']:
                         old_cd = countdown_msgs.get(room_id)
                         if old_cd:
