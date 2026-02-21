@@ -1405,6 +1405,7 @@ async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         # إرسال رسالة خطأ للمستخدم
         await c.answer("⚠️ حدث خطأ في معالجة جوكر +1", show_alert=True)
 
+
 async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
     """معالجة جوكر +2 (🌊) - الخصم يسحب ورقتين تلقائياً والدور يعود للاعب"""
     try:
