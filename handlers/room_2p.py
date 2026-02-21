@@ -1391,81 +1391,18 @@ async def handle_wild_draw1_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         # إرسال إشعار للخصم فقط (بدون أزرار)
         await c.bot.send_message(opp_id, f"💧 {p_name} لعب جوكر +1! تم سحب ورقة واحدة لك.")
         
-        # ====== بناء واجهة اللاعب الأصلي يدوياً ======
-        # جلب أحدث بيانات اللاعب
-        players_updated = get_ordered_players(room_id)
-        curr_p = players_updated[p_idx]
-        curr_hand = sort_hand(safe_load(curr_p['hand']))
-        room_updated = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
+        # إرسال رسالة للاعب الأصلي (تأكيد)
+        await c.bot.send_message(
+            c.from_user.id,
+            f"✅ لعبت جوكر +1! الخصم سحب ورقة واحدة ودورك الآن (يمكنك لعب أي لون)"
+        )
         
-        # معلومات اللاعبين
-        players_info = []
-        for pl_idx, pl in enumerate(players_updated):
-            pl_name = pl.get('player_name') or 'لاعب'
-            pl_cards = len(safe_load(pl['hand']))
-            star = "✅" if pl_idx == p_idx else "⏳"
-            players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
-        
-        # بناء النص
-        status_text = f"📦 السحب: {len(safe_load(room_updated['deck']))} ورقات\n"
-        status_text += f"🗑 النازلة: {len(safe_load(room_updated.get('discard_pile', '[]')))+1} ورقات\n"
-        status_text += "\n".join(players_info)
-        status_text += f"\n──────────────\n{turn_status}"
-        status_text += f"\n🃏 الورقة النازلة: [ {room_updated['top_card']} ]"
-        
-        # بناء الكيبورد
-        kb = []
-        row = []
-        for card_idx, card in enumerate(curr_hand):
-            row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
-            if len(row) == 3: 
-                kb.append(row)
-                row = []
-        if row: 
-            kb.append(row)
-        
-        # أزرار التحكم
-        controls = []
-        can_play = any(check_validity(c, room_updated['top_card'], room_updated['current_color']) for c in curr_hand)
-        if not can_play:
-            controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
-        if len(curr_hand) == 2:
-            controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
-        
-        # زر الصيد
-        opp = players_updated[(p_idx + 1) % 2]
-        if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
-            controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
-        
-        if controls: 
-            kb.append(controls)
-        
-        # أزرار إضافية
-        extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
-        if c.from_user.id == room_updated.get('creator_id'):
-            extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
-        kb.append(extra_buttons)
-        
-        # تحديث رسالة اللاعب
-        try:
-            await c.message.edit_text(
-                text=status_text,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-            )
-        except:
-            # إذا فشل التعديل، نرسل رسالة جديدة
-            new_msg = await c.bot.send_message(
-                c.from_user.id,
-                status_text,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-            )
-            db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", 
-                    (new_msg.message_id, c.from_user.id), commit=True)
-        
-        # ===========================================
+        # تحديث واجهة اللاعب الأساسية
+        await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
         print(f"Error in handle_wild_draw1_card: {e}")
+        # إرسال رسالة خطأ للمستخدم
         await c.answer("⚠️ حدث خطأ في معالجة جوكر +1", show_alert=True)
 
 async def handle_wild_draw2_card(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, p_name, card, discard_pile, room, players):
