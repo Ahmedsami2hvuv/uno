@@ -1137,12 +1137,12 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
         
         # جوكر +1 (💧) - يعامل كأكشن
-elif "💧" in card:
-    next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
+        elif "💧" in card:
+            next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             
         # جوكر +2 (🌊) - يعامل كأكشن
-elif "🌊" in card:
-    next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
+        elif "🌊" in card:
+            next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
         
         # ورقة +2 العادية
         elif "+2" in card:
