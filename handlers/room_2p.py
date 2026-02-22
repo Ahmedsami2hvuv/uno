@@ -1288,7 +1288,71 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         # تحديث رسالة المعلومات للاعب الأصلي
         await update_info_message(room_id, c.bot, c.from_user.id, alert_text="🔥 لعبت جوكر +4! بانتظار رد الخصم...")
         
-        # تحديث الأزرار للاعب الأصلي (دون إرسال رسالة معلومات جديدة)
+        # ===== إرسال أزرار اللاعب الأصلي (مأخوذ من الدالة الثانية) =====
+        # بناء الكيبورد (الأوراق)
+        kb = []
+        row = []
+        for card_idx, h_card in enumerate(hand):
+            row.append(InlineKeyboardButton(text=h_card, callback_data=f"pl_{room_id}_{card_idx}"))
+            if len(row) == 3: 
+                kb.append(row)
+                row = []
+        if row: 
+            kb.append(row)
+
+        # أزرار التحكم
+        controls = []
+        if len(hand) == 2:
+            controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+        
+        # إضافة زر الصيد إذا كان الخصم عنده ورقة وحدة
+        players = get_ordered_players(room_id)
+        opp = players[(p_idx + 1) % 2]
+        if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
+            controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
+        
+        if controls: 
+            kb.append(controls)
+        
+        # أزرار إضافية
+        extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
+        if c.from_user.id == room.get('creator_id'):
+            extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
+        kb.append(extra_buttons)
+        
+        # إرسال أو تحديث رسالة الأزرار للاعب الأصلي
+        old_msgs = player_ui_msgs.get(c.from_user.id, {})
+        if old_msgs.get('buttons'):
+            try:
+                await c.bot.edit_message_text(
+                    text="🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏",
+                    chat_id=c.from_user.id,
+                    message_id=old_msgs['buttons'],
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+                )
+            except:
+                # إذا فشل التعديل، نرسل رسالة جديدة
+                new_buttons = await c.bot.send_message(
+                    c.from_user.id,
+                    "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+                )
+                player_ui_msgs[c.from_user.id] = {
+                    'info': old_msgs.get('info'),
+                    'buttons': new_buttons.message_id
+                }
+        else:
+            new_buttons = await c.bot.send_message(
+                c.from_user.id,
+                "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+            )
+            player_ui_msgs[c.from_user.id] = {
+                'info': old_msgs.get('info'),
+                'buttons': new_buttons.message_id
+            }
+        
+        # تحديث واجهة الخصم أيضاً (لكن بدون إرسال رسالة معلومات جديدة)
         await refresh_ui_2p(room_id, c.bot)
         
     except Exception as e:
