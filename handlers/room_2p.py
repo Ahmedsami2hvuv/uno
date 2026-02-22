@@ -1107,13 +1107,28 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
             return
             
-        # أوراق المنع والعكس
-        if "🚫" in card:
-            next_turn = await handle_skip_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
-            await refresh_ui_2p(room_id, c.bot, alerts)
-            return
-        elif "🔄" in card:
-            next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
+        # أوراق المنع 🚫 والعكس 🔄 (في 2p)
+        if "🚫" in card or "🔄" in card:
+            symbol = "🚫" if "🚫" in card else "🔄"
+            next_turn = p_idx # الدور يبقى إلك
+            db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
+                    (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
+            
+            alerts[c.from_user.id] = f"{symbol} منعت الخصم! الدور بقى إلك."
+            alerts[opp_id] = f"{symbol} {p_name} منعك! الدور لسة عنده."
+
+            can_play_next = False
+            for c_left in hand:
+                if check_validity(c_left, card, card.split()[0]):
+                    can_play_next = True
+                    break
+            
+            if not can_play_next:
+                cancel_timer(room_id)
+                cancel_auto_draw_task(room_id)
+                await refresh_ui_2p(room_id, c.bot, {c.from_user.id: f"⚠️ لعبت {symbol} وماعندك ورقة مناسبة! سحب تلقائي بعد 5 ثواني..."})
+                auto_draw_tasks[room_id] = asyncio.create_task(start_auto_draw_logic(room_id, c.bot))
+                return
             await refresh_ui_2p(room_id, c.bot, alerts)
             return
             
@@ -1130,6 +1145,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         
         # استدعاء الـ +2 الملونة (المستقل)
         elif "+2" in card:
+            db_query("UPDATE rooms SET top_card = %s, current_color = %s, discard_pile = %s WHERE room_id = %s", 
+                    (card, card.split()[0], json.dumps(discard_pile), room_id), commit=True)
             next_turn = await handle_colored_draw2_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
             return
