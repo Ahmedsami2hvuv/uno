@@ -2023,10 +2023,6 @@ async def process_pass_turn(c: types.CallbackQuery):
         await c.answer("⚠️ حدث خطأ")
 
     async def start_auto_draw_logic(room_id, bot):
-    """دالة السحب التلقائي اللي ردتها يبو الأكبر"""
-    if room_id in auto_draw_tasks: return # إذا اكو عداد شغال نعوفه
-    
-    async def start_auto_draw_logic(room_id, bot):
     if room_id in auto_draw_tasks: return
     
     async def _logic():
