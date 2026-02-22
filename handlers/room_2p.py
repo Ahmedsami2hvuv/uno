@@ -2032,10 +2032,18 @@ async def start_auto_draw_logic(room_id, bot):
     
     async def _logic():
         try:
-            # --- الـ 5 ثواني قبل السحب ---
+            # 1. إخفاء الأزرار فوراً حتى اللاعب ميمرر بيده قبل السحب
+            room_info = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
+            if room_info:
+                players_list = get_ordered_players(room_id)
+                u_id = players_list[room_info[0]['turn_index']]['user_id']
+                # تحديث الواجهة بدون أزرار سحب أو تمرير
+                await refresh_ui_2p(room_id, bot, {u_id: "⏳ انتظر جاري السحب..."})
+
+            # 2. الانتظار (5 ثواني)
             await asyncio.sleep(5) 
             
-            # (هنا كود سحب الورقة من الداتابيز - لا تغيره)
+            # 3. جلب بيانات الغرفة واللاعب للسحب
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
             if not room_data: return
             room = room_data[0]
@@ -2044,8 +2052,9 @@ async def start_auto_draw_logic(room_id, bot):
             user_id = players[p_idx]['user_id']
             
             deck = safe_load(room['deck'])
-            if not deck: return # حماية حتى ميوگف البوت إذا خلص الورق
+            if not deck: return # إذا خلص الورق
             
+            # تنفيذ السحب
             new_card = deck.pop(0)
             hand = safe_load(players[p_idx]['hand'])
             hand.append(new_card)
@@ -2053,26 +2062,28 @@ async def start_auto_draw_logic(room_id, bot):
             db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), user_id), commit=True)
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
 
-            # --- فحص الورقة المسحوبة ---
+            # 4. فحص الورقة الجديدة
             if check_validity(new_card, room['top_card'], room['current_color']):
-                # إذا تشتغل: نحدث الشاشة ونعطيه وقت يلعب
-                await refresh_ui_2p(room_id, bot, {user_id: f"📥 سحبت ({new_card}) وتشتغل! الك 20 ثانية."})
+                # إذا الورقة المسحوبة تشتغل، نفتحله أزرار اللعب ونلغي الـ 12 ثانية
+                await refresh_ui_2p(room_id, bot, {user_id: f"📥 سحبت ({new_card}) وتشتغل! عندك 20 ثانية تلعبها."})
             else:
-                # --- منطق الـ 12 ثانية يبدأ هنا ---
-                await refresh_ui_2p(room_id, bot, {user_id: f"📥 سحبت ({new_card}) وما تشتغل! الك 12 ثانية وتتمرر."})
+                # إذا ما تشتغل، هنا يله يطلع زر التمرير ونبدأ عداد الـ 12 ثانية
+                await refresh_ui_2p(room_id, bot, {user_id: f"📥 سحبت ({new_card}) وما ترهم! عندك 12 ثانية للتمرير."})
                 
-                await asyncio.sleep(12) # انتظار الـ 12 ثانية
+                await asyncio.sleep(12)
                 
-                # فحص إذا اللاعب بعده ما مرر بيده، البوت يمرر عنه
+                # التمرير التلقائي بعد انتهاء الـ 12 ثانية
                 room_check = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
                 if room_check and room_check[0]['turn_index'] == p_idx:
                     next_turn = (p_idx + 1) % 2
                     db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
-                    await refresh_ui_2p(room_id, bot, {user_id: "⏰ انتهى وقت التمرير (12 ثانية)!"})
+                    await refresh_ui_2p(room_id, bot, {user_id: "⏰ انتهى الوقت! تم التمرير تلقائياً."})
 
         finally:
-            if room_id in auto_draw_tasks: del auto_draw_tasks[room_id]
+            if room_id in auto_draw_tasks: 
+                del auto_draw_tasks[room_id]
 
+    auto_draw_tasks[room_id] = asyncio.create_task(_logic())
     auto_draw_tasks[room_id] = asyncio.create_task(_logic())
 
 
