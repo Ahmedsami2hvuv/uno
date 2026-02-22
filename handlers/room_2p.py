@@ -988,7 +988,6 @@ async def auto_pass_after_auto_draw(room_id, bot, expected_turn, drawn_card):
         print(f"Error in auto_pass_after_auto_draw: {e}")
 
 @router.callback_query(F.data.startswith("pl_"))
-@router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
     try:
         # 1. استخراج البيانات من الكولباك
@@ -1099,14 +1098,19 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # أوراق المنع والعكس
         if "🚫" in card:
             next_turn = await handle_skip_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
+             await refresh_ui_2p(room_id, c.bot, alerts)
+            return
         elif "🔄" in card:
             next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
+            await refresh_ui_2p(room_id, c.bot, alerts)
+            return
             
         # أوراق السحب (+1 و +2)
         elif "💧" in card:
             next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
             return # الدالة أعلاه تقوم بالتحديث
+        
         elif "🌊" in card:
             next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
