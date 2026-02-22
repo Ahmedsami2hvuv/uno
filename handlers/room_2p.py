@@ -702,7 +702,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             # 2. رسالة الأزرار
             buttons_msg = await bot.send_message(
                 user_id, 
-                "🎮 أوراقك:", 
+                "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏", 
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
             )
             
