@@ -614,20 +614,16 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         else:
             turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
 
-        # --- مسح الرسائل القديمة لكل لاعب ---
+        # --- مسح الرسائل القديمة للأزرار فقط (وليس المعلومات) ---
+        # لاحظ: نحذف أزرار كل لاعب عدا صاحب الدور؟ الأفضل نحذف الكل
         for user_id, msgs in player_ui_msgs.items():
             try:
-                if msgs.get('info'):
-                    await bot.delete_message(user_id, msgs['info'])
                 if msgs.get('buttons'):
                     await bot.delete_message(user_id, msgs['buttons'])
             except:
                 pass
         
-        # تفريغ القاموس
-        player_ui_msgs.clear()
-
-        # --- بناء وإرسال الرسائل الجديدة لكل لاعب ---
+        # --- بناء وإرسال/تحديث الرسائل لكل لاعب ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
             turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "⏳ مو دورك"
@@ -693,13 +689,28 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(extra_buttons)
 
-            # إرسال الرسالة الجديدة
+            # إرسال أو تحديث الرسائل
             user_id = p['user_id']
+            old_msgs = player_ui_msgs.get(user_id, {})
             
-            # 1. رسالة المعلومات
-            info_msg = await bot.send_message(user_id, info_text)
+            # 1. رسالة المعلومات - نحاول التعديل، وإذا ما موجودة نرسل جديدة
+            try:
+                if old_msgs.get('info'):
+                    await bot.edit_message_text(
+                        text=info_text,
+                        chat_id=user_id,
+                        message_id=old_msgs['info']
+                    )
+                    info_msg_id = old_msgs['info']
+                else:
+                    info_msg = await bot.send_message(user_id, info_text)
+                    info_msg_id = info_msg.message_id
+            except Exception:
+                # إذا فشل التعديل (الرسالة محذوفة)، نرسل جديدة
+                info_msg = await bot.send_message(user_id, info_text)
+                info_msg_id = info_msg.message_id
             
-            # 2. رسالة الأزرار
+            # 2. رسالة الأزرار - دائماً نرسل جديدة (لأننا حذفنا القديمة)
             buttons_msg = await bot.send_message(
                 user_id, 
                 "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏", 
@@ -708,7 +719,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             
             # تخزين المعرفات الجديدة
             player_ui_msgs[user_id] = {
-                'info': info_msg.message_id, 
+                'info': info_msg_id, 
                 'buttons': buttons_msg.message_id
             }
             
@@ -717,7 +728,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 countdown_msgs[room_id] = {
                     'bot': bot,
                     'chat_id': user_id,
-                    'msg_id': info_msg.message_id,
+                    'msg_id': info_msg_id,
                     'is_main_message': True
                 }
                 
