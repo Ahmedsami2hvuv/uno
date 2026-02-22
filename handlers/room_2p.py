@@ -1112,8 +1112,14 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await refresh_ui_2p(room_id, c.bot, alerts)
             return # الدالة أعلاه تقوم بالتحديث
         
-        # 10. تحديث الغرفة للأوراق العادية
-        if not any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
+        # استدعاء الـ +2 الملونة (المستقل)
+        elif "+2" in card:
+            next_turn = await handle_colored_draw2_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
+            await refresh_ui_2p(room_id, c.bot, alerts)
+            return
+        
+        # 7. تحديث الغرفة للأوراق العادية (إذا مو أكشن)
+        if not any(x in card for x in ["🌈", "🔥", "💧", "🌊", "🚫", "🔄", "+2"]):
             db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
                     (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
             await refresh_ui_2p(room_id, c.bot, alerts)
@@ -1191,7 +1197,48 @@ async def handle_reverse_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_
     alerts[opp_id] = f"🔄 {p_name} لعب ورقة عكس!"
     alerts[c.from_user.id] = f"🔄 لعبت ورقة عكس!"
     return next_turn
+
+async def handle_colored_draw2_action(c: types.CallbackQuery, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts):
+    """معالجة ورقة +2 الملونة - تسحب الخصم ورقتين والدور يبقى للاعب مع تثبيت لون الورقة"""
+    next_turn = p_idx  # الدور يبقى عند نفس اللاعب
+    p_name = players[p_idx].get('player_name') or "لاعب"
+    deck = safe_load(room['deck'])
+    opp_hand = safe_load(players[opp_idx]['hand'])
     
+    # 1. سحب ورقتين للخصم
+    drawn_cards = []
+    for _ in range(2):
+        if not deck:
+            # إذا خلص الورق نجدد السحب
+            from handlers.room_2p import generate_h2o_deck # تأكد من المسار حسب ملفك
+            deck = generate_h2o_deck()
+            random.shuffle(deck)
+        drawn_cards.append(deck.pop(0))
+    
+    opp_hand.extend(drawn_cards)
+    
+    # 2. استخراج اللون من الورقة (مثلاً من 🟡 +2 يأخذ 🟡)
+    card_color = card.split()[0]
+    
+    # 3. تحديث قاعدة البيانات
+    # تحديث يد الخصم
+    db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+            (json.dumps(opp_hand), opp_id), commit=True)
+    
+    # تحديث الغرفة (الورقة النازلة، اللون الحالي، الدور، وكومة السحب)
+    db_query("""
+        UPDATE rooms 
+        SET top_card = %s, current_color = %s, turn_index = %s, deck = %s 
+        WHERE room_id = %s
+    """, (card, card_color, next_turn, json.dumps(deck), room_id), commit=True)
+    
+    # 4. التنبيهات
+    alerts[opp_id] = f"🟡 {p_name} لعب +2 ملونة وسحبك ورقتين! 🎯"
+    alerts[c.from_user.id] = f"✅ لعبت +2 ملونة، سحبت الخصم وباقي دورك!"
+    
+    return next_turn
+
+
 # =============== دوال الجوكرات ===============
 
 
