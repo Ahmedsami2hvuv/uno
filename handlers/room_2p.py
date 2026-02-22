@@ -1098,7 +1098,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # أوراق المنع والعكس
         if "🚫" in card:
             next_turn = await handle_skip_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
-             await refresh_ui_2p(room_id, c.bot, alerts)
+            await refresh_ui_2p(room_id, c.bot, alerts)
             return
         elif "🔄" in card:
             next_turn = await handle_reverse_card(c, room_id, p_idx, opp_id, p_name, card, next_turn, alerts)
