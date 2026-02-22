@@ -702,7 +702,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             try:
                 if old_msgs.get('buttons'):
                     await bot.edit_message_text(
-                        text="🎮 أوراقك:",  # نص ثابت
+                        text=".........🎮 أوراقك.........:",  # نص ثابت
                         chat_id=user_id,
                         message_id=old_msgs['buttons'],
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
