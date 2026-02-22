@@ -223,9 +223,9 @@ def cancel_timer(room_id):
     if task and not task.done():
         task.cancel()
     
-    # إلغاء رسالة عداد الدور
+    # التعديل هنا: لا تمسح الرسالة إذا كانت هي واجهة اللعب الأساسية
     cd = countdown_msgs.pop(room_id, None)
-    if cd:
+    if cd and not cd.get('is_main_message'):
         asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
     
     # إلغاء تايمر اختيار اللون
@@ -247,6 +247,8 @@ def cancel_timer(room_id):
     challenge_cd = challenge_countdown_msgs.pop(room_id, None)
     if challenge_cd:
         asyncio.create_task(_delete_countdown(challenge_cd['bot'], challenge_cd['chat_id'], challenge_cd['msg_id']))
+
+
 async def _delete_countdown(bot, chat_id, msg_id):
     try: await bot.delete_message(chat_id, msg_id)
     except: pass
@@ -278,6 +280,9 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
             
         # العداد الأصلي (20 ثانية)
         for step in range(10, 0, -1):
+            # هنا التعديل: انتظار ثانيتين بكل دورة حتى يصير المجموع 20 ثانية
+            await asyncio.sleep(2)
+            
             # التحقق من الغرفة في كل دورة
             room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
             if not room_data:
@@ -397,7 +402,7 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                     print(f"خطأ في تعديل رسالة الوقت: {e}")
 
         # بعد انتهاء الوقت، نحذف رسالة العداد
-        if cd_info:
+        if cd_info and not cd_info.get('is_main_message'):
             try: 
                 await bot.delete_message(cd_info['chat_id'], cd_info['msg_id'])
             except: 
@@ -2022,8 +2027,8 @@ async def process_pass_turn(c: types.CallbackQuery):
         print(f"Error in process_pass_turn: {e}")
         await c.answer("⚠️ حدث خطأ")
 
-    async def start_auto_draw_logic(room_id, bot):
-        if room_id in auto_draw_tasks: return
+async def start_auto_draw_logic(room_id, bot):
+    if room_id in auto_draw_tasks: return
     
     async def _logic():
         try:
@@ -2037,10 +2042,14 @@ async def process_pass_turn(c: types.CallbackQuery):
             players = get_ordered_players(room_id)
             p_idx = room['turn_index']
             user_id = players[p_idx]['user_id']
+            
             deck = safe_load(room['deck'])
+            if not deck: return # حماية حتى ميوگف البوت إذا خلص الورق
+            
             new_card = deck.pop(0)
             hand = safe_load(players[p_idx]['hand'])
             hand.append(new_card)
+            
             db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), user_id), commit=True)
             db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
 
@@ -2065,6 +2074,7 @@ async def process_pass_turn(c: types.CallbackQuery):
             if room_id in auto_draw_tasks: del auto_draw_tasks[room_id]
 
     auto_draw_tasks[room_id] = asyncio.create_task(_logic())
+
 
 def cancel_auto_draw_task(room_id):
     if room_id in auto_draw_tasks:
