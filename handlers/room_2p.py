@@ -1237,8 +1237,16 @@ async def handle_colored_draw2_action(c: types.CallbackQuery, room_id, p_idx, op
 
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
+    """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم ويحافظ على أزرار اللاعب"""
     try:
-        # تخزين معلومات الجوكر
+        # ====== أولاً: نرسل رسالة للاعب الأول ======
+        await c.bot.send_message(
+            c.from_user.id,
+            "🔥 **جوكر +4!**\n⏳ بانتظار رد الخصم... (10 ثواني)"
+        )
+        # ==========================================
+        
+        # تخزين معلومات الجوكر في الذاكرة
         pending_color_data[room_id] = {
             'card_played': card,
             'p_idx': p_idx,
@@ -1247,10 +1255,11 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             'type': 'challenge'
         }
         
+        # تحديث الغرفة مؤقتاً
         db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, json.dumps(discard_pile), room_id), commit=True)
         
-        # إرسال رسالة للخصم مع خياري التحدي والقبول (كرسالة منفصلة مؤقتة)
+        # إرسال رسالة للخصم مع خياري التحدي والقبول
         challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
@@ -1258,51 +1267,82 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             ]
         ])
         
-        # حذف أي رسائل جانبية سابقة للخصم قبل إرسال الجديدة
-        await delete_temp_messages(opp_id, c.bot)
-        
-        msg = await c.bot.send_message(
+        await c.bot.send_message(
             opp_id,
             f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
             reply_markup=challenge_kb
         )
         
-        # تخزين معرف الرسالة في temp_messages للحذف لاحقاً
-        if opp_id not in temp_messages:
-            temp_messages[opp_id] = []
-        temp_messages[opp_id].append(msg.message_id)
-        
-        # بدء تايمر التحدي
+        # بدء تايمر التحدي (10 ثواني)
         challenge_timers[room_id] = asyncio.create_task(
             challenge_timeout_2p(room_id, c.bot, opp_id)
         )
         
-        # إرسال رسالة العد التنازلي للخصم (أيضاً رسالة منفصلة مؤقتة)
-        cd_msg = await c.bot.send_message(opp_id, "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢")
-        temp_messages[opp_id].append(cd_msg.message_id)
-        
+        # إرسال رسالة العد التنازلي للخصم
+        cd_msg = await c.bot.send_message(
+            opp_id,
+            "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢"
+        )
         challenge_countdown_msgs[room_id] = {
             'bot': c.bot,
             'chat_id': opp_id,
             'msg_id': cd_msg.message_id
         }
         
-        # رسالة للاعب الأصلي (كرسالة منفصلة مؤقتة أيضاً)
-        player_msg = await c.bot.send_message(
-            c.from_user.id,
-            f"🔥 لعبت جوكر +4! بانتظار رد الخصم..."
-        )
-        if c.from_user.id not in temp_messages:
-            temp_messages[c.from_user.id] = []
-        temp_messages[c.from_user.id].append(player_msg.message_id)
+        # بناء رسالة للاعب الأصلي مع أزرار أوراقه
+        # بناء الكيبورد (الأوراق)
+        kb = []
+        row = []
+        for card_idx, h_card in enumerate(hand):
+            row.append(InlineKeyboardButton(text=h_card, callback_data=f"pl_{room_id}_{card_idx}"))
+            if len(row) == 3: 
+                kb.append(row)
+                row = []
+        if row: 
+            kb.append(row)
+
+        # أزرار التحكم
+        controls = []
+        if len(hand) == 2:
+            controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
         
-        # تحديث واجهة اللعب (بدون تغيير رسالة المعلومات)
-        await refresh_ui_2p(room_id, c.bot)
+        # إضافة زر الصيد إذا كان الخصم عنده ورقة وحدة
+        players = get_ordered_players(room_id)
+        opp = players[(p_idx + 1) % 2]
+        if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
+            controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
         
-        return
+        if controls: 
+            kb.append(controls)
+        
+        # أزرار إضافية
+        extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
+        if c.from_user.id == room.get('creator_id'):
+            extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
+        kb.append(extra_buttons)
+        
+        # رسالة للاعب الأصلي مع أزراره
+        try:
+            await c.message.edit_text(
+                f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+            )
+        except Exception as msg_error:
+            # إذا فشل التعديل، نرسل رسالة جديدة
+            new_msg = await c.bot.send_message(
+                c.from_user.id,
+                f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+            )
+            # تحديث last_msg_id في قاعدة البيانات
+            db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", 
+                    (new_msg.message_id, c.from_user.id), commit=True)
+        
+        return  # إنهاء الدالة بنجاح
         
     except Exception as e:
         print(f"Error in handle_wild_draw4_card: {e}")
+        # لا نعرض رسالة خطأ للمستخدم، فقط نسجلها في السجل
         return
         
 
