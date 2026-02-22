@@ -546,7 +546,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         curr_hand = safe_load(curr_p['hand'])
         p_id = curr_p['user_id']
 
-        # فحص إذا كان اللاعب عنده ورقة قابلة للعب
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
 
         if not is_playable:
@@ -555,102 +554,72 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         else:
             turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
 
-        # --- تخزين معرفات الرسائل الجديدة لكل لاعب مؤقتاً ---
         new_player_msgs = {}
         
-        # --- بناء وإرسال الرسائل لكل لاعب ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
+            user_id = p['user_id']
+            old_msgs = player_ui_msgs.get(user_id, {})
             
-            # بناء نص المعلومات
-            players_info = []
-            for pl_idx, pl in enumerate(players):
-                pl_name = pl.get('player_name') or 'لاعب'
-                pl_cards = len(safe_load(pl['hand']))
-                star = "✅" if pl_idx == room['turn_index'] else "⏳"
-                players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
-
-            info_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقه\n"
-            info_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقه\n"
-            info_text += "\n".join(players_info)
-            
-            # إضافة رسالة التنبيه إن وجدت
-            if alert_msg_dict and p['user_id'] in alert_msg_dict:
-                info_text += f"\n──────────────\n📢 {alert_msg_dict[p['user_id']]}"
-            
-            # إضافة الوقت والشريط إذا كان هذا هو صاحب الدور
-            if i == room['turn_index']:
-                info_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+            # ===== 1. التأكد من وجود رسالة معلومات (إنشاء إذا لم توجد) =====
+            info_msg_id = None
+            if old_msgs.get('info'):
+                # تحديث المعلومات الموجودة
+                await update_info_message(room_id, bot, user_id, 
+                                         alert_text=alert_msg_dict.get(user_id) if alert_msg_dict else None)
+                info_msg_id = old_msgs['info']
             else:
-                info_text += f"\n──────────────"
+                # إنشاء رسالة معلومات جديدة
+                players_info = []
+                for pl_idx, pl in enumerate(players):
+                    pl_name = pl.get('player_name') or 'لاعب'
+                    pl_cards = len(safe_load(pl['hand']))
+                    star = "✅" if pl_idx == curr_idx else "⏳"
+                    players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
+                info_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقه\n"
+                info_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقه\n"
+                info_text += "\n".join(players_info)
+                if alert_msg_dict and user_id in alert_msg_dict:
+                    info_text += f"\n──────────────\n📢 {alert_msg_dict[user_id]}"
+                if i == curr_idx:
+                    info_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+                else:
+                    info_text += f"\n──────────────"
+                turn_status = "✅ دورك 👍🏻" if i == curr_idx else "⏳ مو دورك"
+                info_text += f"\n{turn_status}"
+                info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
+                
+                info_msg = await bot.send_message(user_id, info_text)
+                info_msg_id = info_msg.message_id
             
-            # حالة الدور
-            turn_status = "✅ دورك 👍🏻" if i == room['turn_index'] else "⏳ مو دورك"
-            info_text += f"\n{turn_status}"
-            info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
-
-            # بناء أزرار اللاعب
+            # ===== 2. بناء وإرسال رسالة الأزرار =====
             kb = []
             row = []
             for card_idx, card in enumerate(hand):
                 row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
-                if len(row) == 3: 
+                if len(row) == 3:
                     kb.append(row)
                     row = []
-            if row: 
+            if row:
                 kb.append(row)
 
-            # أزرار التحكم
             controls = []
-            if i == room['turn_index']:
-                # زر التمرير يظهر فقط في حالة وجود auto_draw_tasks (عداد 12 ثانية)
+            if i == curr_idx:
                 if room_id in auto_draw_tasks:
                     controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
-                
                 if len(hand) == 2:
                     controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
-            
-            # زر الصيد
             opp = players[(i+1)%2]
             if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
                 controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
-            
-            if controls: 
+            if controls:
                 kb.append(controls)
-            
-            # أزرار إضافية
             extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
             if p['user_id'] == room.get('creator_id'):
                 extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(extra_buttons)
 
-            user_id = p['user_id']
-            old_msgs = player_ui_msgs.get(user_id, {})
-            
-            # ==== ترتيب الإرسال: رسالة المعلومات أولاً، ثم رسالة الأزرار ====
-            
-            # 1. رسالة المعلومات - نحاول تعديلها إن وجدت
-            info_success = False
-            if old_msgs.get('info'):
-                try:
-                    await bot.edit_message_text(
-                        text=info_text,
-                        chat_id=user_id,
-                        message_id=old_msgs['info']
-                    )
-                    info_msg_id = old_msgs['info']
-                    info_success = True
-                except Exception as e:
-                    print(f"خطأ في تعديل رسالة المعلومات: {e}")
-                    # فشل التعديل، سنرسل جديدة
-                    info_success = False
-            
-            if not info_success:
-                # إرسال رسالة معلومات جديدة
-                info_msg = await bot.send_message(user_id, info_text)
-                info_msg_id = info_msg.message_id
-            
-            # 2. رسالة الأزرار - نحاول تعديلها إن وجدت
+            # محاولة تعديل الأزرار القديمة
             buttons_success = False
             if old_msgs.get('buttons'):
                 try:
@@ -664,46 +633,39 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                     buttons_success = True
                 except Exception as e:
                     print(f"خطأ في تعديل رسالة الأزرار: {e}")
-                    buttons_success = False
-            
             if not buttons_success:
-                # إرسال رسالة أزرار جديدة
                 buttons_msg = await bot.send_message(
-                    user_id, 
-                    "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏", 
+                    user_id,
+                    "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
                 )
                 buttons_msg_id = buttons_msg.message_id
-            
-            # تخزين المعرفات في القاموس المؤقت
+
             new_player_msgs[user_id] = {
                 'info': info_msg_id,
                 'buttons': buttons_msg_id
             }
-            
-            # إذا كان هذا هو صاحب الدور، نخزن رسالة المعلومات في countdown_msgs للتحديث اللاحق
-            if i == room['turn_index']:
+
+            if i == curr_idx:
                 countdown_msgs[room_id] = {
                     'bot': bot,
                     'chat_id': user_id,
                     'msg_id': info_msg_id,
                     'is_main_message': True
                 }
-        
-        # --- بعد إرسال جميع الرسائل، نمسك الأزرار القديمة (وليس المعلومات) ---
-        # هذا مهم: نمسك الأزرار القديمة فقط بعد إرسال الجديدة
+
+        # حذف الأزرار القديمة بعد التأكد من وجود الجديدة
         for user_id, old_msgs in player_ui_msgs.items():
-            try:
-                if old_msgs.get('buttons') and old_msgs['buttons'] != new_player_msgs.get(user_id, {}).get('buttons'):
+            if old_msgs.get('buttons') and old_msgs['buttons'] != new_player_msgs.get(user_id, {}).get('buttons'):
+                try:
                     await bot.delete_message(user_id, old_msgs['buttons'])
-            except:
-                pass
-        
-        # تحديث القاموس بالرسائل الجديدة
+                except:
+                    pass
+
         player_ui_msgs.clear()
         player_ui_msgs.update(new_player_msgs)
-            
-    except Exception as e: 
+
+    except Exception as e:
         print(f"UI Error: {e}")
 
 async def background_auto_draw(room_id, bot, curr_idx):
@@ -1978,16 +1940,12 @@ async def force_draw_and_pass(room_id, bot, p_idx):
     turn_timers[room_id] = asyncio.create_task(start_turn_timer(room_id, bot, next_t))
 
 async def update_info_message(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
-    """تحديث رسالة المعلومات فقط (السحب، النازلة، أسماء اللاعبين، الوقت، الورقة النازلة)"""
+    """تحديث رسالة المعلومات فقط - تعديل نفس الرسالة (لا ترسل جديدة)"""
     try:
-        # جلب بيانات الغرفة
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
-        
         players = get_ordered_players(room_id)
-        
-        # تحديد من هو صاحب الدور
         curr_idx = room['turn_index']
         
         # بناء معلومات اللاعبين
@@ -1997,24 +1955,19 @@ async def update_info_message(room_id, bot, user_id, remaining_seconds=None, ale
             pl_cards = len(safe_load(pl['hand']))
             star = "✅" if pl_idx == curr_idx else "⏳"
             players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
-        
-        # بناء النص الأساسي
+
         info_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقه\n"
         info_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقه\n"
         info_text += "\n".join(players_info)
         
-        # إضافة رسالة تنبيه إن وجدت
         if alert_text:
             info_text += f"\n──────────────\n📢 {alert_text}"
         
-        # إضافة الوقت والشريط إذا كان المستخدم هو صاحب الدور
         if user_id == players[curr_idx]['user_id']:
             if remaining_seconds is not None:
-                # حساب الشريط حسب الوقت المتبقي
                 remaining = remaining_seconds
                 total_steps = 10
-                steps_left = (remaining + 1) // 2  # 20 ثانية = 10 خطوات
-                
+                steps_left = (remaining + 1) // 2
                 bar_parts = []
                 for s in range(total_steps):
                     if s < steps_left:
@@ -2026,21 +1979,17 @@ async def update_info_message(room_id, bot, user_id, remaining_seconds=None, ale
                             bar_parts.append("🔴")
                     else:
                         bar_parts.append("⚫")
-                
                 bar = "".join(bar_parts)
                 info_text += f"\n──────────────\n⏳ باقي {remaining} ثانية\n{bar}"
             else:
-                # الشريط الافتراضي
                 info_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
         else:
             info_text += f"\n──────────────"
         
-        # حالة الدور
         turn_status = "✅ دورك 👍🏻" if user_id == players[curr_idx]['user_id'] else "⏳ مو دورك"
         info_text += f"\n{turn_status}"
         info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
         
-        # تحديث الرسالة
         old_msgs = player_ui_msgs.get(user_id, {})
         if old_msgs.get('info'):
             try:
@@ -2051,13 +2000,7 @@ async def update_info_message(room_id, bot, user_id, remaining_seconds=None, ale
                 )
             except Exception as e:
                 print(f"خطأ في تحديث رسالة المعلومات: {e}")
-                # إذا فشل التعديل، نرسل رسالة جديدة
-                msg = await bot.send_message(user_id, info_text)
-                player_ui_msgs[user_id]['info'] = msg.message_id
-        else:
-            # هذا لا should happen, but just in case
-            msg = await bot.send_message(user_id, info_text)
-            player_ui_msgs[user_id] = {'info': msg.message_id, 'buttons': old_msgs.get('buttons')}
-            
+                # لا ترسل رسالة جديدة هنا
+        # إذا لم توجد رسالة معلومات، لا تفعل شيئًا (سيتم إنشاؤها في refresh_ui_2p)
     except Exception as e:
         print(f"Error in update_info_message: {e}")
