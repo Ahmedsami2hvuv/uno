@@ -305,19 +305,22 @@ async def turn_timeout_2p(room_id, bot, expected_turn):
                 return
             
             remaining = step * 2
+            step_index = 10 - step  # 0 إلى 9
             
-            # تحديد لون الشريط حسب الوقت المتبقي
-            if remaining > 10:
-                filled = "🟢" * step
-                empty = "⚫" * (10 - step)
-            elif remaining > 5:
-                filled = "🟡" * step
-                empty = "⚫" * (10 - step)
-            else:
-                filled = "🔴" * step
-                empty = "⚫" * (10 - step)
+            # بناء الشريط حسب الوقت المتبقي
+            bar_parts = []
+            for s in range(10):
+                if s < step:  # الأجزاء المتبقية
+                    if remaining > 10:
+                        bar_parts.append("🟢")
+                    elif remaining > 5:
+                        bar_parts.append("🟡")
+                    else:
+                        bar_parts.append("🔴")
+                else:  # الأجزاء المنتهية
+                    bar_parts.append("⚫")
             
-            bar = filled + empty
+            bar = "".join(bar_parts)
             
             # جلب بيانات اللاعبين لبناء النص الكامل
             players = get_ordered_players(room_id)
@@ -611,12 +614,25 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         else:
             turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
 
-        # --- بناء محتوى الرسالتين لكل لاعب ---
+        # --- مسح الرسائل القديمة لكل لاعب ---
+        for user_id, msgs in player_ui_msgs.items():
+            try:
+                if msgs.get('info'):
+                    await bot.delete_message(user_id, msgs['info'])
+                if msgs.get('buttons'):
+                    await bot.delete_message(user_id, msgs['buttons'])
+            except:
+                pass
+        
+        # تفريغ القاموس
+        player_ui_msgs.clear()
+
+        # --- بناء وإرسال الرسائل الجديدة لكل لاعب ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
-            turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "مو دورك❌"
+            turn_status = "✅ دورك 👍🏻" if room['turn_index'] == i else "⏳ مو دورك"
             
-            # بناء نص المعلومات (لجميع اللاعبين متطابق)
+            # بناء نص المعلومات
             players_info = []
             for pl_idx, pl in enumerate(players):
                 pl_name = pl.get('player_name') or 'لاعب'
@@ -642,7 +658,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             info_text += f"\n{turn_status}"
             info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
 
-            # بناء أزرار اللاعب (الكيبورد)
+            # بناء أزرار اللاعب
             kb = []
             row = []
             for card_idx, card in enumerate(hand):
@@ -677,61 +693,31 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
             kb.append(extra_buttons)
 
-            # --- إرسال أو تحديث الرسالتين ---
+            # إرسال الرسالة الجديدة
             user_id = p['user_id']
-            old_msgs = player_ui_msgs.get(user_id, {})
             
             # 1. رسالة المعلومات
-            try:
-                if old_msgs.get('info'):
-                    await bot.edit_message_text(
-                        text=info_text,
-                        chat_id=user_id,
-                        message_id=old_msgs['info']
-                    )
-                    info_msg_id = old_msgs['info']
-                else:
-                    msg = await bot.send_message(user_id, info_text)
-                    info_msg_id = msg.message_id
-            except Exception:
-                # إذا فشل التعديل (مثلاً الرسالة محذوفة)، نرسل رسالة جديدة
-                msg = await bot.send_message(user_id, info_text)
-                info_msg_id = msg.message_id
+            info_msg = await bot.send_message(user_id, info_text)
             
             # 2. رسالة الأزرار
-            try:
-                if old_msgs.get('buttons'):
-                    await bot.edit_message_text(
-                        text="🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏",  # نص ثابت
-                        chat_id=user_id,
-                        message_id=old_msgs['buttons'],
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-                    )
-                    buttons_msg_id = old_msgs['buttons']
-                else:
-                    msg = await bot.send_message(
-                        user_id, 
-                        "🎮 أوراقك:", 
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-                    )
-                    buttons_msg_id = msg.message_id
-            except Exception:
-                msg = await bot.send_message(
-                    user_id, 
-                    "🎮 أوراقك:", 
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-                )
-                buttons_msg_id = msg.message_id
+            buttons_msg = await bot.send_message(
+                user_id, 
+                "🎮 أوراقك:", 
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+            )
             
             # تخزين المعرفات الجديدة
-            player_ui_msgs[user_id] = {'info': info_msg_id, 'buttons': buttons_msg_id}
+            player_ui_msgs[user_id] = {
+                'info': info_msg.message_id, 
+                'buttons': buttons_msg.message_id
+            }
             
             # إذا كان هذا هو صاحب الدور، نخزن رسالة المعلومات في countdown_msgs للتحديث اللاحق
             if i == room['turn_index']:
                 countdown_msgs[room_id] = {
                     'bot': bot,
                     'chat_id': user_id,
-                    'msg_id': info_msg_id,
+                    'msg_id': info_msg.message_id,
                     'is_main_message': True
                 }
                 
