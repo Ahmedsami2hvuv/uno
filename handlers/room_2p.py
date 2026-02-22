@@ -408,8 +408,6 @@ async def color_timeout_2p(room_id, bot, player_id):
                     message_id=cd_info['msg_id'],
                     text=f"⏳ الوقت المتبقي: {remaining} ثانية لاختيار اللون\n{bar}"
                 )
-            except:
-                pass
                 
             except Exception:
                 # إذا فشل التعديل (الرسالة محذوفة)، نرسل رسالة جديدة
