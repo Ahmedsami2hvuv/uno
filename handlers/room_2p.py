@@ -676,19 +676,12 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
 
         if not is_playable:
-            # 1. تهيئة قاموس التنبيهات إذا جان فارغ
-            if alert_msg_dict is None: 
-                alert_msg_dict = {}
-            
-            # 2. إضافة التنبيه اللي يظهر للمستخدم فوراً على الشاشة
-            if "سحب" not in str(alert_msg_dict.get(p_id, "")):
-                alert_msg_dict[p_id] = "⚠️ ما عندك ورقة ترهم! راح نسحبلك تلقائياً خلال 5 ثواني..."
-                
-                # 3. إطلاق مهمة السحب (التي ستنتظر 5 ثواني ثم تسحب)
-                asyncio.create_task(start_auto_draw_logic(room_id, bot))
+            # إطلاق مهمة السحب التلقائي
+            if not alert_msg_dict or ("سحب" not in str(alert_msg_dict.get(p_id, ""))):
+                asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
         else:
-            # إذا عنده ورقة، يشغل عداد الـ 20 ثانية الطبيعي
             turn_timers[room_id] = asyncio.create_task(turn_timeout_2p(room_id, bot, curr_idx))
+
         # --- بناء واجهة اللاعبين ---
         for i, p in enumerate(players):
             hand = sort_hand(safe_load(p['hand']))
@@ -713,7 +706,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             
             # إضافة رسالة الوقت إذا كان هذا هو صاحب الدور
             if i == room['turn_index']:
-                # سنقوم بتحديث هذه الرسالة لاحقاً من دالة الوقت
                 status_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
             
             # الفاصل والورقة النازلة
@@ -732,14 +724,15 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                 kb.append(row)
 
             # أزرار التحكم
-        controls = []
-        # زر أونو يظهر فقط إذا بيدك ورقتين حتى تصيح قبل لا تشمر
-        if len(hand) == 2:
-            controls.append(InlineKeyboardButton(text="🚨صيييييح اونو!", callback_data=f"un_{room_id}"))
-        
-        # زر التمرير (يظهر فقط في حالة الـ 12 ثانية)
-        if pass_seconds > 0:
-            controls.append(InlineKeyboardButton(text=f"⏭️ تمرير ({pass_seconds}ث)", callback_data=f"pass_{room_id}"))
+            controls = []
+            if i == room['turn_index']:
+                can_play = any(check_validity(c, room['top_card'], room['current_color']) for c in hand)
+                
+                if not can_play:
+                    controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
+                
+                if len(hand) == 2:
+                    controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
             
             # زر الصيد
             opp = players[(i+1)%2]
@@ -759,7 +752,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             try:
                 if p.get('last_msg_id'):
                     try:
-                        # تحديث رسالة اللعب الرئيسية
                         await bot.edit_message_text(
                             text=status_text,
                             chat_id=p['user_id'],
@@ -767,15 +759,12 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                             reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
                         )
                         
-                        # إذا كان هذا هو صاحب الدور، نخزن معلومات الرسالة الرئيسية
                         if i == room['turn_index']:
-                            # حذف أي رسالة عداد سابقة
                             old_cd = countdown_msgs.get(room_id)
                             if old_cd:
                                 try: await bot.delete_message(old_cd['chat_id'], old_cd['msg_id'])
                                 except: pass
                             
-                            # نخزن معلومات الرسالة الرئيسية
                             countdown_msgs[room_id] = {
                                 'bot': bot, 
                                 'chat_id': p['user_id'], 
@@ -783,11 +772,9 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                                 'is_main_message': True
                             }
                     except:
-                        # إذا فشل التعديل، نرسل رسالة جديدة
                         msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                         db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
                         
-                        # تخزين معلومات الرسالة الجديدة
                         if i == room['turn_index']:
                             old_cd = countdown_msgs.get(room_id)
                             if old_cd:
@@ -801,11 +788,9 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                                 'is_main_message': True
                             }
                 else:
-                    # لا توجد رسالة سابقة، نرسل رسالة جديدة
                     msg = await bot.send_message(p['user_id'], status_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
                     db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", (msg.message_id, p['user_id']), commit=True)
                     
-                    # تخزين معلومات الرسالة الجديدة
                     if i == room['turn_index']:
                         old_cd = countdown_msgs.get(room_id)
                         if old_cd:
@@ -818,21 +803,14 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                             'msg_id': msg.message_id,
                             'is_main_message': True
                         }
-                    
+                        
             except Exception as ui_err:
                 print(f"❌ ما قدرت أرسل الواجهة لـ {p['user_id']}: {ui_err}")
-                continue
+                # تم إزالة continue لأنه غير ضروري وقد يسبب مشاكل
                 
     except Exception as e: 
         print(f"UI Error: {e}")
 
-# ضيف هذا القاموس فوگ وية بقية التايمرات حتى نسيطر على المهام
-auto_draw_tasks = {}
-
-def cancel_auto_draw_task(room_id):
-    task = auto_draw_tasks.pop(room_id, None)
-    if task and not task.done():
-        task.cancel()
 
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي - معدلة لتجنب تكرار الرسائل"""
