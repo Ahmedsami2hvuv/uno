@@ -1099,7 +1099,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # 9. معالجة الأوراق الخاصة (Action Cards)
         next_turn = (p_idx + 1) % 2  # الافتراضي: الدور ينتقل للخصم
 
-        # --- أولاً: تحديث الساحة فوراً لكل أنواع الأوراق (عادية أو أكشن) ---
+        # --- أولاً: تحديث الساحة فوراً (حتى البوت يعرف الورقة النازلة الجديدة) ---
         new_color = card.split()[0]
         db_query("UPDATE rooms SET top_card = %s, current_color = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, new_color, json.dumps(discard_pile), room_id), commit=True)
@@ -1112,56 +1112,59 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await handle_wild_draw4_card(c, room_id, p_idx, opp_id, p_name, card, discard_pile, hand)
             return
             
-        # أوراق المنع 🚫 والعكس 🔄 (في 2p)
+        # أوراق المنع 🚫 والعكس 🔄 (في لاعبين اثنين العكس يمنع الخصم)
         if "🚫" in card or "🔄" in card:
             symbol = "🚫" if "🚫" in card else "🔄"
             next_turn = p_idx # الدور يبقى إلك
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
-            
             alerts[c.from_user.id] = f"{symbol} منعت الخصم! الدور بقى إلك."
-            alerts[opp_id] = f"{symbol} {p_name} منعك! الدور لسة عنده."
-            # شلنا الـ return من هنا حتى يكمل للفحص الجوه
+            alerts[opp_id] = f"{symbol} {p_name} منعك من اللعب!"
             
-        # أوراق السحب (+1 و +2)
+        # أوراق السحب (+1 و +2 و +2 الملونة)
         elif "💧" in card:
             next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
             return 
-        
         elif "🌊" in card:
             next_turn = await handle_draw2_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
             return 
-        
-        # استدعاء الـ +2 الملونة (المستقل)
         elif "+2" in card:
             next_turn = await handle_colored_draw2_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
             await refresh_ui_2p(room_id, c.bot, alerts)
             return
+
+        # --- 10. الفحص الذكي: هل اللاعب اللي عليه الدور هسة عنده لعب؟ ---
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
         
-        # --- 10. الفحص النهائي لليد (للمنع والعكس والأوراق العادية) ---
-        can_play_next = False
-        for c_left in hand:
-            if check_validity(c_left, card, new_color):
-                can_play_next = True
+        # نحدد منو اللاعب اللي صار عليه الدور هسة
+        current_id = c.from_user.id if next_turn == p_idx else opp_id
+        
+        # جلب يد اللاعب الحالي (اللي صار دوره) للتأكد
+        check_p = db_query("SELECT hand FROM room_players WHERE user_id = %s", (current_id,))
+        current_hand = safe_load(check_p[0]['hand']) if check_p else []
+
+        can_play_now = False
+        for c_check in current_hand:
+            # نشيك أوراقه على الورقة اللي هسة نزلت بالساحة
+            if check_validity(c_check, card, new_color):
+                can_play_now = True
                 break
         
-        if not can_play_next:
+        # إذا اللاعب (اللي صار دوره) ما عنده شي يرهم، نشغله السحب التلقائي
+        if not can_play_now:
             cancel_timer(room_id)
             cancel_auto_draw_task(room_id)
-            await refresh_ui_2p(room_id, c.bot, {c.from_user.id: "⚠️ ما عندك ورقة مناسبة! سحب تلقائي بعد 5 ثواني..."})
+            
+            # رسالة تنبيه للي راح ينسحبله
+            msg = "⚠️ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد 5 ثواني..."
+            await refresh_ui_2p(room_id, c.bot, {current_id: msg})
+            
+            # تشغيل مهمة السحب التلقائي (يجب تعريف auto_draw_tasks مسبقاً)
             auto_draw_tasks[room_id] = asyncio.create_task(start_auto_draw_logic(room_id, c.bot))
             return
 
-        # إذا الورقة عادية أو أكشن وبقى عنده لعب، نحدث الدور ونحدث الشاشة
-        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
+        # إذا عنده لعب، نحدث الشاشة للكل
         await refresh_ui_2p(room_id, c.bot, alerts)
-
-        # إذا لسة عنده لعب (أوراق عادية)، نحدث الغرفة طبيعي
-        if not any(x in card for x in ["🌈", "🔥", "💧", "🌊", "🚫", "🔄", "+2"]):
-            db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, discard_pile = %s WHERE room_id = %s", 
-                    (card, card.split()[0], next_turn, json.dumps(discard_pile), room_id), commit=True)
-            await refresh_ui_2p(room_id, c.bot, alerts)
         
     except Exception as e:
         print(f"Error in handle_play: {e}")
