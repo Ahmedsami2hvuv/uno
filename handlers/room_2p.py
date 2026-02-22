@@ -1239,11 +1239,15 @@ async def handle_colored_draw2_action(c: types.CallbackQuery, room_id, p_idx, op
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
     """معالجة جوكر +4 (🔥) - يظهر أزرار التحدي للخصم ويحافظ على أزرار اللاعب"""
     try:
-        # ====== أولاً: نرسل رسالة للاعب الأول ======
-        await c.bot.send_message(
+        # ====== أولاً: نرسل رسالة للاعب الأول (جانبية) ======
+        msg1 = await c.bot.send_message(
             c.from_user.id,
             "🔥 **جوكر +4!**\n⏳ بانتظار رد الخصم... (10 ثواني)"
         )
+        # تخزينها في temp_messages
+        if c.from_user.id not in temp_messages:
+            temp_messages[c.from_user.id] = []
+        temp_messages[c.from_user.id].append(msg1.message_id)
         # ==========================================
         
         # تخزين معلومات الجوكر في الذاكرة
@@ -1259,7 +1263,7 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
                 (card, json.dumps(discard_pile), room_id), commit=True)
         
-        # إرسال رسالة للخصم مع خياري التحدي والقبول
+        # إرسال رسالة للخصم مع خياري التحدي والقبول (جانبية)
         challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
@@ -1267,22 +1271,27 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             ]
         ])
         
-        await c.bot.send_message(
+        msg2 = await c.bot.send_message(
             opp_id,
             f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
             reply_markup=challenge_kb
         )
+        # تخزينها في temp_messages
+        if opp_id not in temp_messages:
+            temp_messages[opp_id] = []
+        temp_messages[opp_id].append(msg2.message_id)
         
         # بدء تايمر التحدي (10 ثواني)
         challenge_timers[room_id] = asyncio.create_task(
             challenge_timeout_2p(room_id, c.bot, opp_id)
         )
         
-        # إرسال رسالة العد التنازلي للخصم
+        # إرسال رسالة العد التنازلي للخصم (جانبية)
         cd_msg = await c.bot.send_message(
             opp_id,
             "⏳ باقي 10 ثواني للرد\n🟢🟢🟢🟢🟢"
         )
+        temp_messages[opp_id].append(cd_msg.message_id)
         challenge_countdown_msgs[room_id] = {
             'bot': c.bot,
             'chat_id': opp_id,
@@ -1334,9 +1343,29 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
                 f"🔥 لعبت جوكر +4!\n⏳ بانتظار رد الخصم... (لديه 10 ثواني)\n\nيمكنك مشاهدة أوراقك بالأسفل",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
             )
-            # تحديث last_msg_id في قاعدة البيانات
-            db_query("UPDATE room_players SET last_msg_id = %s WHERE user_id = %s", 
-                    (new_msg.message_id, c.from_user.id), commit=True)
+            # تحديث player_ui_msgs بالمعرف الجديد
+            old_msgs = player_ui_msgs.get(c.from_user.id, {})
+            player_ui_msgs[c.from_user.id] = {
+                'info': old_msgs.get('info'),
+                'buttons': new_msg.message_id
+            }
+        else:
+            # إذا نجح التعديل، نحتاج لتحديث معرف الأزرار في player_ui_msgs
+            old_msgs = player_ui_msgs.get(c.from_user.id, {})
+            player_ui_msgs[c.from_user.id] = {
+                'info': old_msgs.get('info'),
+                'buttons': c.message.message_id  # نفس معرف الرسالة التي عدلناها
+            }
+        
+        # ===== التعديل المهم: تحديث player_ui_msgs للحفاظ على رسالة المعلومات =====
+        old_msgs = player_ui_msgs.get(c.from_user.id, {})
+        player_ui_msgs[c.from_user.id] = {
+            'info': old_msgs.get('info'),  # نحافظ على نفس معرف المعلومات
+            'buttons': old_msgs.get('buttons')  # نحافظ على الأزرار المحدثة
+        }
+        
+        # تحديث واجهة الخصم أيضاً
+        await refresh_ui_2p(room_id, c.bot)
         
         return  # إنهاء الدالة بنجاح
         
@@ -2110,7 +2139,17 @@ async def update_info_message(room_id, bot, user_id, remaining_seconds=None, ale
                 )
             except Exception as e:
                 print(f"خطأ في تحديث رسالة المعلومات: {e}")
-                # لا ترسل رسالة جديدة هنا
-        # إذا لم توجد رسالة معلومات، لا تفعل شيئًا (سيتم إنشاؤها في refresh_ui_2p)
+                # إذا فشل التعديل، نرسل رسالة جديدة ونحدث المعرف
+                try:
+                    msg = await bot.send_message(user_id, info_text)
+                    if user_id in player_ui_msgs:
+                        player_ui_msgs[user_id]['info'] = msg.message_id
+                    else:
+                        player_ui_msgs[user_id] = {'info': msg.message_id}
+                except:
+                    pass
+        else:
+            # إذا لم توجد رسالة معلومات، لا تفعل شيئًا (سيتم إنشاؤها في refresh_ui_2p)
+            pass
     except Exception as e:
         print(f"Error in update_info_message: {e}")
