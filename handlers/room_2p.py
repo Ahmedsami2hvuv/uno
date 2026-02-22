@@ -857,60 +857,6 @@ async def auto_pass_with_countdown(room_id, bot, expected_turn, drawn_card):
         # إزالة المهمة من القاموس عند الانتهاء أو الإلغاء
         if room_id in auto_draw_tasks:
             del auto_draw_tasks[room_id]
-        
-async def background_auto_draw(room_id, bot, curr_idx):
-    """دالة السحب التلقائي - معدلة لتجنب تكرار الرسائل"""
-    try:
-        # إلغاء أي مهمة سحب قديمة لنفس الغرفة
-        cancel_auto_draw_task(room_id)
-        
-        players = get_ordered_players(room_id)
-        if curr_idx >= len(players): return
-            
-        p_id = players[curr_idx]['user_id']
-        p_name = players[curr_idx].get('player_name') or "لاعب"
-        
-        # نرسل تنبيه بسيط لمرة واحدة فقط داخل الواجهة
-        alerts = { p_id: "⏳ ما عندك ورق مناسب.. راح نسحبلك ورق خلال 5 ثواني" }
-        await refresh_ui_2p(room_id, bot, alerts)
-        
-        # انتظار السحب
-        await asyncio.sleep(5)
-        
-        # التأكد من الغرفة والدور بعد الانتظار
-        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data or room_data[0]['turn_index'] != curr_idx: return
-        room = room_data[0]
-        
-        # سحب الورقة
-        deck = safe_load(room['deck'])
-        if not deck:
-            deck = generate_h2o_deck()
-            random.shuffle(deck)
-        
-        curr_hand = safe_load(players[curr_idx]['hand'])
-        new_card = deck.pop(0)
-        curr_hand.append(new_card)
-        
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(curr_hand), p_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-        
-        # إذا الورقة المسحوبة تشتغل، نعطي اللاعب وقت يلعبها
-        if check_validity(new_card, room['top_card'], room['current_color']):
-            alerts = {
-                p_id: f"✅ سحبت ({new_card}) وتشتغل! عندك 20 ثانية تلعبها",
-                players[(curr_idx + 1) % 2]['user_id']: f"🎯 {p_name} سحب ورقة وتشتغل، منتظرين يلعبها"
-            }
-            await refresh_ui_2p(room_id, bot, alerts)
-        else:
-            # إذا ما تشتغل، نشغل العداد الذكي (12 ثانية) الذي يحدث رسالة المعلومات فقط
-            # هنا نستخدم الدالة الجديدة auto_pass_with_countdown
-            auto_draw_tasks[room_id] = asyncio.create_task(
-                auto_pass_with_countdown(room_id, bot, curr_idx, new_card)
-            )
-            
-    except Exception as e:
-        print(f"Error in background_auto_draw: {e}")
 
 @router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
