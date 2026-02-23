@@ -295,12 +295,6 @@ def cancel_color_timer(room_id):
     if cd: asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
     pending_color_data.pop(room_id, None)
 
-def cancel_challenge_timer(room_id):
-    task = challenge_timers.pop(room_id, None)
-    if task and not task.done(): task.cancel()
-    cd = challenge_countdown_msgs.pop(room_id, None)
-    if cd: asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
-
 def cancel_auto_draw_task(room_id):
     if room_id in auto_draw_tasks:
         auto_draw_tasks[room_id].cancel()
@@ -308,62 +302,48 @@ def cancel_auto_draw_task(room_id):
             del auto_draw_tasks[room_id]
         except:
             pass
-            
-        challenge_timeout_2p
-        room = room_data[0]
-        
-        if room['status'] != 'playing':
+
+
+async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color, msg_id):
+    """دالة تايمر التحدي - تم إصلاح الترتيب والـ try block"""
+    try:
+        await asyncio.sleep(20) # انتظار الخصم ليرد
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data or room_data[0]['status'] != 'playing': 
             return
             
+        room = room_data[0]
         # جلب بيانات التحدي
         pending = pending_color_data.get(room_id)
-        if not pending:
-            return
-            
-        if pending.get('type') != 'challenge':
+        if not pending or pending.get('type') != 'challenge':
             return
             
         players = get_ordered_players(room_id)
         p_idx = pending['p_idx']
-        opp_id = pending['opp_id']
-        p_name = pending['p_name']
         
         # تطبيق القبول التلقائي (الخصم يسحب 4 ورقات)
         deck = safe_load(room['deck'])
         opp_hand = safe_load(players[(p_idx + 1) % 2]['hand'])
-        drawn_cards = []
         
         for _ in range(4):
             if deck:
-                drawn_cards.append(deck.pop(0))
-                opp_hand.append(drawn_cards[-1])
+                opp_hand.append(deck.pop(0))
         
         db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
                 (json.dumps(opp_hand), opp_id), commit=True)
         db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s", 
                 (json.dumps(deck), p_idx, room_id), commit=True)
-        
-        # حذف رسالة التحدي
-        if room_id in pending_color_data:
-            try:
-                # لا يمكن حذف رسالة التحدي بسهولة هنا لأنها رسالة الخصم
-                # سنكتفي بإرسال رسالة جديدة
-                pass
-            except:
-                pass
                 
         await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً وسحبت 4 ورقات.")
         await bot.send_message(players[p_idx]['user_id'], 
                              f"⏰ الخصم لم يرد! تم قبول السحب تلقائياً ودورك الآن.")
         
-        # إلغاء البيانات المؤقتة
-        cancel_color_timer(room_id)
-        
-        # تحديث الواجهة
+        # إلغاء البيانات المؤقتة وتحديث الواجهة
+        if room_id in pending_color_data: del pending_color_data[room_id]
         await refresh_ui_2p(room_id, bot)
         
     except asyncio.CancelledError:
-        # تم إلغاء التايمر (الخصم رد قبل انتهاء الوقت)
+        # تم إلغاء التايمر لأن الخصم ضغط على زر قبل انتهاء الـ 20 ثانية
         pass
     except Exception as e:
         print(f"Challenge timeout error: {e}")
