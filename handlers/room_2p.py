@@ -647,12 +647,12 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
     except Exception as e: 
         print(f"Error in start_new_round: {e}")
 
+
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
     """تحديث واجهة المستخدم بالكامل (رسالة واحدة موحدة تحتوي على المعلومات والأزرار)."""
     try:
-        # 1. إيقاف المؤقتات
+        # 1. إيقاف مؤقتات الدور فقط (لا تلغي auto_draw_task!)
         cancel_timer(room_id)
-        cancel_auto_draw_task(room_id)
 
         # 2. جلب البيانات
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
@@ -684,13 +684,14 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
             else:
                 await send_or_update_game_ui(room_id, bot, user_id, alert_text=alert_text)
 
-        # 5. بدء التايمر الجديد
+        # 5. بدء التايمر الجديد (تايمر الدور أو تايمر السحب التلقائي)
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
 
         if not is_playable:
-            if room_id not in auto_draw_tasks:
+            # إذا لم يكن هناك مهمة سحب تلقائي أو المهمة منتهية
+            if room_id not in auto_draw_tasks or auto_draw_tasks[room_id].done():
                 auto_draw_tasks[room_id] = asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
         else:
             if room_id not in turn_timers:
