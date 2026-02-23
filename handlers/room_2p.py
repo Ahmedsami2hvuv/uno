@@ -690,7 +690,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
 
         if not is_playable:
-            # إذا لم يكن هناك مهمة سحب تلقائي أو المهمة منتهية
             if room_id not in auto_draw_tasks or auto_draw_tasks[room_id].done():
                 auto_draw_tasks[room_id] = asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
         else:
