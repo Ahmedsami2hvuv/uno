@@ -323,6 +323,8 @@ async def challenge_timeout_2p(room_id, bot):
         players = get_ordered_players(room_id)
         p_idx = pending['p_idx']
         opp_id = players[(p_idx + 1) % 2]['user_id']
+        # استخدام اللون المختار إذا كان موجوداً، وإلا 'ANY'
+        chosen_color = pending.get('chosen_color', 'ANY')
         
         # تنفيذ السحب التلقائي
         deck = safe_load(room_data[0]['deck'])
@@ -331,8 +333,8 @@ async def challenge_timeout_2p(room_id, bot):
             if deck: opp_hand.append(deck.pop(0))
             
         db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_hand), opp_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s",
-                 (json.dumps(deck), p_idx, room_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s, current_color = %s, turn_index = %s WHERE room_id = %s",
+                 (json.dumps(deck), chosen_color, p_idx, room_id), commit=True)
         
         await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً.")
         if room_id in pending_color_data: del pending_color_data[room_id]
@@ -572,6 +574,11 @@ async def color_timeout_2p(room_id, bot, player_id):
             kb = [[InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{prev_color}_{chosen_color}"), InlineKeyboardButton(text="✅ قبول", callback_data=f"rs_n_{room_id}_{chosen_color}")]]
             msg_sent = await bot.send_message(opp_id, f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
             cd_msg = await bot.send_message(opp_id, "⏳ باقي 20 ثانية للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
+            # حفظ بيانات التحدي لاستخدامها في challenge_timeout_2p
+            pending_color_data[room_id] = {
+                'card_played': card, 'p_idx': p_idx, 'opp_id': opp_id,
+                'p_name': p_name, 'type': 'challenge', 'chosen_color': chosen_color
+            }
             challenge_countdown_msgs[room_id] = {'bot': bot, 'chat_id': opp_id, 'msg_id': cd_msg.message_id}
             challenge_timers[room_id] = asyncio.create_task(challenge_timeout_2p(room_id, bot))
             await bot.send_message(player_id, f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً. بانتظار رد الخصم...")
@@ -884,24 +891,9 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
             return
         elif "🔥" in card:
-            # الخصم يسحب 4
-            opp_idx = (p_idx + 1) % 2
-            opp_id = players[opp_idx]['user_id']
-            deck = safe_load(room['deck'])
-            opp_h = safe_load(players[opp_idx]['hand'])
-            for _ in range(4):
-                if deck: opp_h.append(deck.pop(0))
-            
-            # تحديث الساحة وجعل اللون 'ANY' لفتح اللعب، وبقاء الدور عندك (p_idx)
-            db_query("""UPDATE rooms SET top_card = %s, current_color = 'ANY', 
-                        deck = %s, turn_index = %s WHERE room_id = %s""", 
-                     (card, json.dumps(deck), p_idx, room_id), commit=True)
-            
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                     (json.dumps(opp_h), opp_id), commit=True)
-            
-            # هنا لن يرسل البوت رسالة اختيار اللون، بل يحدث الواجهة مباشرة
-            return await refresh_ui_2p(room_id, c.bot, {user_id: "🔥 سحبت الخصم 4! الساحة مفتوحة العب أي ورقة تعجبك"})
+            # طلب اختيار اللون أولاً، ثم handle_color ترسل التحدي للخصم
+            await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
+            return
             
         # أوراق المنع 🚫 والعكس 🔄 (في لاعبين اثنين العكس يمنع الخصم)
         if "🚫" in card or "🔄" in card:
@@ -1331,6 +1323,7 @@ async def handle_challenge_decision(c: types.CallbackQuery):
         p_idx = pending['p_idx']
         opp_id = pending['opp_id']
         p_name = pending['p_name']
+        chosen_color = pending.get('chosen_color', 'ANY')
         
         if c.from_user.id != opp_id:
             return await c.answer("❌ هذا القرار ليس لك!", show_alert=True)
@@ -1346,14 +1339,14 @@ async def handle_challenge_decision(c: types.CallbackQuery):
                     drawn_cards.append(deck.pop(0))
                     opp_hand.append(drawn_cards[-1])
             
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s",
                     (json.dumps(opp_hand), opp_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s",
                     (json.dumps(deck), room_id), commit=True)
             
-            # تحديث current_color للسماح بلعب أي لون
-            db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
-                    (room_id,), commit=True)
+            # تحديث current_color باللون المختار
+            db_query("UPDATE rooms SET current_color = %s WHERE room_id = %s",
+                    (chosen_color, room_id), commit=True)
             
             # حذف رسالة التحدي
             try:
@@ -1361,12 +1354,12 @@ async def handle_challenge_decision(c: types.CallbackQuery):
             except:
                 pass
                 
-            await c.bot.send_message(opp_id, "✅ قبلت السحب! سحبت 4 ورقات.")
-            await c.bot.send_message(players[p_idx]['user_id'], 
-                                   f"✅ الخصم قبل السحب! دورك الآن ويمكنك لعب أي لون.")
+            await c.bot.send_message(opp_id, f"✅ قبلت السحب! سحبت 4 ورقات. اللون الحالي: {chosen_color}")
+            await c.bot.send_message(players[p_idx]['user_id'],
+                                   f"✅ الخصم قبل السحب! دورك الآن. اللون الحالي: {chosen_color}")
             
             # تحديث turn_index للاعب الأول
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
+            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s",
                     (p_idx, room_id), commit=True)
             
         else:  # تحدي
@@ -1415,9 +1408,9 @@ async def handle_challenge_decision(c: types.CallbackQuery):
                 db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
                         (json.dumps(deck), room_id), commit=True)
                 
-                # تحديث current_color للسماح بلعب أي لون
-                db_query("UPDATE rooms SET current_color = 'ANY' WHERE room_id = %s", 
-                        (room_id,), commit=True)
+                # تحديث current_color باللون المختار
+                db_query("UPDATE rooms SET current_color = %s WHERE room_id = %s",
+                        (chosen_color, room_id), commit=True)
                 
                 # حذف رسالة التحدي
                 try:
@@ -1425,16 +1418,17 @@ async def handle_challenge_decision(c: types.CallbackQuery):
                 except:
                     pass
                     
-                await c.bot.send_message(opp_id, "❌ فشل التحدي! اللاعب كان محقاً. سحبت 6 ورقات.")
-                await c.bot.send_message(players[p_idx]['user_id'], 
-                                       f"🎯 فشل تحدي الخصم! دورك الآن ويمكنك لعب أي لون.")
+                await c.bot.send_message(opp_id, f"❌ فشل التحدي! اللاعب كان محقاً. سحبت 6 ورقات. اللون الحالي: {chosen_color}")
+                await c.bot.send_message(players[p_idx]['user_id'],
+                                       f"🎯 فشل تحدي الخصم! دورك الآن. اللون الحالي: {chosen_color}")
                 
                 # تحديث turn_index للاعب الأول
-                db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
+                db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s",
                         (p_idx, room_id), commit=True)
         
         # إلغاء البيانات المؤقتة
         cancel_color_timer(room_id)
+        pending_color_data.pop(room_id, None)
         
         # تحديث الواجهة للجميع
         await refresh_ui_2p(room_id, c.bot)
@@ -1480,19 +1474,27 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
         
         # إذا كانت الورقة من نوع 🔥 جوكر+4
         if "🔥" in card:
+            # تحديث اللون المختار في قاعدة البيانات
+            db_query("UPDATE rooms SET current_color = %s, top_card = %s WHERE room_id = %s",
+                    (chosen_color, f"🔥 جوكر+4 {chosen_color}", room_id), commit=True)
             kb = [[
                 InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{data.get('prev_color')}_{chosen_color}"),
                 InlineKeyboardButton(text="✅ قبول", callback_data=f"rs_n_{room_id}_{chosen_color}")
             ]]
             msg_sent = await c.bot.send_message(
-                opp_id, 
-                f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!", 
+                opp_id,
+                f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
             )
             cd_msg = await c.bot.send_message(
-                opp_id, 
+                opp_id,
                 "⏳ باقي 20 ثانية للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
             )
+            # حفظ بيانات التحدي لاستخدامها في challenge_timeout_2p
+            pending_color_data[room_id] = {
+                'card_played': card, 'p_idx': p_idx, 'opp_id': opp_id,
+                'p_name': p_name, 'type': 'challenge', 'chosen_color': chosen_color
+            }
             challenge_countdown_msgs[room_id] = {'bot': c.bot, 'chat_id': opp_id, 'msg_id': cd_msg.message_id}
             challenge_timers[room_id] = asyncio.create_task(
                 challenge_timeout_2p(room_id, c.bot)
@@ -1574,6 +1576,7 @@ async def handle_challenge(c: types.CallbackQuery):
                 alerts[players[opp_idx]['user_id']] = "❌ فشل التحدي! سحبت 6 ورقات."
             final_col = chosen_col
         db_query("UPDATE rooms SET deck = %s, turn_index = %s, current_color = %s, top_card = %s WHERE room_id = %s", (json.dumps(deck), next_turn, final_col, f"🔥 جوكر+4 {final_col}", room_id), commit=True)
+        pending_color_data.pop(room_id, None)
         try: await c.message.delete()
         except: pass
         await refresh_ui_2p(room_id, c.bot, alerts)
