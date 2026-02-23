@@ -1129,7 +1129,7 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         }
 
         # تحديث الورقة النازلة ووضع اللون مؤقتاً كـ جوكر
-db_query("UPDATE rooms SET top_card = %s, discard_pile = %s, current_color = %s WHERE room_id = %s", 
+    db_query("UPDATE rooms SET top_card = %s, discard_pile = %s, current_color = %s WHERE room_id = %s", 
          (card, json.dumps(discard_pile), card.split()[0], room_id), commit=True)
 
         # رسالة مؤقتة للاعب الحالي
