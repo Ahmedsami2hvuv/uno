@@ -309,7 +309,7 @@ def cancel_auto_draw_task(room_id):
         except:
             pass
             
-challenge_timeout_2p
+        challenge_timeout_2p
         room = room_data[0]
         
         if room['status'] != 'playing':
