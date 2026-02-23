@@ -698,7 +698,16 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
 
     except Exception as e:
         print(f"Error in refresh_ui_2p: {e}")
-        
+
+async def send_temp_message_and_delete(bot, user_id, text, delay=1.5):
+    msg = await bot.send_message(user_id, text)
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(user_id, msg.message_id)
+    except:
+        pass
+
+
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع رسالة مؤقتة، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
     try:
@@ -753,7 +762,6 @@ async def background_auto_draw(room_id, bot, curr_idx):
             db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
                      (next_turn, room_id), commit=True)
             opp_id = players[next_turn]['user_id']
-            # تحديث واجهة الكل مع رسائل للاعبين
             alerts = {
                 p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌ تم تمرير دورك.",
                 opp_id: f"➡️ {p_name} سحب ورقة ({new_card}) وما اشتغلت، هسة دورك!"
@@ -761,7 +769,6 @@ async def background_auto_draw(room_id, bot, curr_idx):
             await refresh_ui_2p(room_id, bot, alerts)
 
     except asyncio.CancelledError:
-        # تم إلغاء المهمة (ربما لأن اللاعب لعب ورقة قبل انتهاء العد)
         pass
     except Exception as e:
         print(f"Error in background_auto_draw: {e}")
