@@ -1099,6 +1099,40 @@ async def handle_colored_draw2_action(c: types.CallbackQuery, room_id, p_idx, op
     
     return next_turn
 
+@router.callback_query(F.data.startswith("color_"))
+async def handle_color_selection(c: types.CallbackQuery):
+    """هذه هي الدالة المطلوبة، قمت بتسميتها وإصلاح منطق الإجبار فيها"""
+    try:
+        data = c.data.split("_")
+        chosen_color = data[1]  # الإيموجي (🔴, 🟡, 🟢, 🔵)
+        room_id = data[2]
+        
+        # 1. تحديث اللون في قاعدة البيانات (هنا السر لإجبار الخصم)
+        db_query("UPDATE rooms SET current_color = %s WHERE room_id = %s", 
+                 (chosen_color, room_id), commit=True)
+        
+        # 2. جلب بيانات اللاعبين والغرفة
+        players = get_ordered_players(room_id)
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        room = room_data[0]
+        
+        # 3. تمرير الدور للخصم
+        curr_idx = room['turn_index']
+        next_idx = (curr_idx + 1) % 2
+        db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_idx, room_id), commit=True)
+        
+        # مسح رسالة اختيار اللون وحذف التايمر الخاص بها
+        try: await c.message.delete()
+        except: pass
+        if room_id in color_timers: color_timers[room_id].cancel()
+
+        # 4. تحديث الواجهة للجميع لإخبارهم باللون الجديد
+        await c.answer(f"✅ اخترت اللون {chosen_color}")
+        await refresh_ui_2p(room_id, c.bot, {players[next_idx]['user_id']: f"📢 اختار الخصم اللون {chosen_color}!"})
+
+    except Exception as e:
+        print(f"Error in color selection: {e}")
+        
 
 # =============== دوال الجوكرات ===============
 
