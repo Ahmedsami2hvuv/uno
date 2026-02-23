@@ -231,7 +231,7 @@ async def delete_temp_messages(user_id, bot, exclude_ids=None):
 def check_validity(card, top_card, current_color):
     # إذا كان اللون ANY، يعني مسموح تلعب أي ورقة من يدك فوراً
     if current_color == "ANY":
-        return True السماح باللعب بعد الجوكر مباشرة
+        return True # السماح باللعب بعد الجوكر مباشرة
         
     # جوكر ألوان (🌈) - يختار لون
     if "🌈" in card:
