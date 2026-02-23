@@ -303,11 +303,17 @@ def cancel_auto_draw_task(room_id):
         except:
             pass
 
+def cancel_challenge_timer(room_id):
+    task = challenge_timers.pop(room_id, None)
+    if task and not task.done(): task.cancel()
+    cd = challenge_countdown_msgs.pop(room_id, None)
+    if cd: asyncio.create_task(_delete_countdown(cd['bot'], cd['chat_id'], cd['msg_id']))
 
-async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color=None, msg_id=None):
-    """دالة التوقيت المصححة بـ 5 متغيرات"""
+
+async def challenge_timeout_2p(room_id, bot):
+    """دالة التوقيت - توقيع مبسط (room_id, bot) فقط"""
     try:
-        await asyncio.sleep(20) 
+        await asyncio.sleep(20)
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data or room_data[0]['status'] != 'playing': return
         
@@ -316,6 +322,7 @@ async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color=None, msg_id=N
         
         players = get_ordered_players(room_id)
         p_idx = pending['p_idx']
+        opp_id = players[(p_idx + 1) % 2]['user_id']
         
         # تنفيذ السحب التلقائي
         deck = safe_load(room_data[0]['deck'])
@@ -324,7 +331,7 @@ async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color=None, msg_id=N
             if deck: opp_hand.append(deck.pop(0))
             
         db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_hand), opp_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s", 
+        db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s",
                  (json.dumps(deck), p_idx, room_id), commit=True)
         
         await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً.")
@@ -566,7 +573,7 @@ async def color_timeout_2p(room_id, bot, player_id):
             msg_sent = await bot.send_message(opp_id, f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
             cd_msg = await bot.send_message(opp_id, "⏳ باقي 20 ثانية للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢")
             challenge_countdown_msgs[room_id] = {'bot': bot, 'chat_id': opp_id, 'msg_id': cd_msg.message_id}
-            challenge_timers[room_id] = asyncio.create_task(challenge_timeout_2p(room_id, bot, opp_id, chosen_color, msg_sent.message_id))
+            challenge_timers[room_id] = asyncio.create_task(challenge_timeout_2p(room_id, bot))
             await bot.send_message(player_id, f"⏰ انتهى الوقت! تم اختيار اللون {chosen_color} تلقائياً. بانتظار رد الخصم...")
             return
             
@@ -1107,6 +1114,7 @@ async def handle_color_selection(c: types.CallbackQuery):
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
     """معالجة جوكر +4 وإرسال التحدي"""
     try:
+        cancel_challenge_timer(room_id)
         # حفظ البيانات
         pending_color_data[room_id] = {
             'card_played': card, 'p_idx': p_idx, 'opp_id': opp_id, 'p_name': p_name, 'type': 'challenge'
@@ -1129,9 +1137,9 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             reply_markup=challenge_kb
         )
 
-        # تشغيل التايمر بالـ 5 متغيرات المطلوبة
+        # تشغيل التايمر
         challenge_timers[room_id] = asyncio.create_task(
-            challenge_timeout_2p(room_id, c.bot, opp_id, "🔥", msg_to_opp.message_id)
+            challenge_timeout_2p(room_id, c.bot)
         )
         
         await c.answer("✅ تم لعب الجوكر، بانتظار الخصم")
@@ -1487,7 +1495,7 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
             )
             challenge_countdown_msgs[room_id] = {'bot': c.bot, 'chat_id': opp_id, 'msg_id': cd_msg.message_id}
             challenge_timers[room_id] = asyncio.create_task(
-                challenge_timeout_2p(room_id, c.bot, opp_id, chosen_color, msg_sent.message_id)
+                challenge_timeout_2p(room_id, c.bot)
             )
             await c.message.edit_text("⏳ بانتظار الخصم...")
             await state.clear()
