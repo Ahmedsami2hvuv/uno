@@ -24,68 +24,148 @@ color_timed_out = set()
 temp_messages = {}  # المفتاح: user_id, القيمة: list of message_ids
 
 class GameStates(StatesGroup):
+
     choosing_color = State()
 
-async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
-    """إرسال أو تحديث رسالة الأزرار مع ضمان عدم تكرار الرسائل في الشات."""
+
+def safe_load(data):
+    if data is None: return []
+    if isinstance(data, list): return data
+    try: return json.loads(data)
+    except: return []
+
+def get_ordered_players(room_id):
+    players = db_query("SELECT * FROM room_players WHERE room_id = %s", (room_id,))
+    players.sort(key=lambda x: (x.get('join_order') or 0, x['user_id']))
+    return players
+
+def make_end_kb(players, room, mode='2p', for_user_id=None):
+    from handlers.common import replay_data
+    replay_id = str(uuid.uuid4())[:8]
+    replay_data[replay_id] = {
+        'players': [(p['user_id'], p.get('player_name') or 'لاعب') for p in players],
+        'max_players': room.get('max_players', 2),
+        'score_limit': room.get('score_limit', 0),
+        'mode': mode,
+        'creator_id': room.get('creator_id')
+    }
+    kb = []
+    if for_user_id:
+        for p in players:
+            if p['user_id'] != for_user_id:
+                p_name = p.get('player_name') or 'لاعب'
+                kb.append([InlineKeyboardButton(text=f"➕ إضافة {p_name}", callback_data=f"addfrnd_{p['user_id']}")])
+    kb.append([InlineKeyboardButton(text="🔄 لعب مرة أخرى", callback_data=f"replay_{replay_id}")])
+    kb.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def generate_h2o_deck():
+    colors = ['🔴', '🟡', '🟢', '🔵']
+    deck = []
+    for color in colors:
+        deck.append(f"{color} 0")
+        for i in range(1, 10):
+            deck.extend([f"{color} {i}", f"{color} {i}"])
+        deck.extend([f"{color} 🚫", f"{color} 🚫"]) # منع
+        deck.extend([f"{color} 🔄", f"{color} 🔄"]) # تحويل
+        deck.extend([f"{color} +2", f"{color} +2"]) # سحب 2
+    
+    # أوراق الأكشن الخاصة (وليست جوكرات)
+    deck.append("💧 +1")  # جوكر +1 السابق - الآن ورقة أكشن عادية
+    deck.append("🌊 +2")  # جوكر +2 السابق - الآن ورقة أكشن عادية
+    
+    # الجوكرات الحقيقية (التي تفتح قائمة ألوان أو تحدٍ)
+    deck.extend(["🔥 جوكر+4"] * 4)      # جوكر +4 مع تحدي
+    deck.extend(["🌈 جوكر ألوان"] * 4)   # جوكر ألوان فقط
+    
+    random.shuffle(deck)
+    return deck
+
+
+async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
+    """إرسال أو تحديث رسالة المعلومات الثابتة للاعب مع حذف القديمة إذا فشل التعديل."""
     try:
-        # 1. بناء لوحة المفاتيح
-        kb = []
-        row = []
-        for card_idx, card in enumerate(hand):
-            row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
-            if len(row) == 3:
-                kb.append(row)
-                row = []
-        if row: kb.append(row)
+        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
+        if not room_data:
+            return
+        room = room_data[0]
+        players = get_ordered_players(room_id)
+        curr_idx = room['turn_index']
 
-        # 2. أزرار التحكم والاونو والصيدة
-        controls = []
-        if is_my_turn:
-            if room_id in auto_draw_tasks:
-                controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
-            if len(hand) == 2:
-                controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+        # بناء معلومات اللاعبين
+        players_info = []
+        for pl_idx, pl in enumerate(players):
+            pl_name = pl.get('player_name') or 'لاعب'
+            pl_cards = len(safe_load(pl['hand']))
+            star = "✅" if pl_idx == curr_idx else "⏳"
+            players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
 
-        opp = players[1] if players[0]['user_id'] == user_id else players[0]
-        opp_h = safe_load(opp.get('hand', '[]'))
-        if len(opp_h) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
-            controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
-        
-        if controls: kb.append(controls)
-        kb.append([InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")])
+        info_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقه\n"
+        info_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقه\n"
+        info_text += "\n".join(players_info)
 
-        buttons_text = "🃏🎮 اوراقك الحالية 🎮🃏"
-        markup = InlineKeyboardMarkup(inline_keyboard=kb)
+        if alert_text:
+            info_text += f"\n──────────────\n📢 {alert_text}"
 
-        # 3. المنطق الذكي للتحديث مع حذف القديمة عند الفشل
-        if user_id not in player_ui_msgs:
-            player_ui_msgs[user_id] = {}
+        # شريط التايمر
+        if user_id == players[curr_idx]['user_id']:
+            if remaining_seconds is not None:
+                remaining = remaining_seconds
+                total_steps = 10
+                steps_left = (remaining + 1) // 2
+                bar_parts = []
+                for s in range(total_steps):
+                    if s < steps_left:
+                        if remaining > 10:
+                            bar_parts.append("🟢")
+                        elif remaining > 5:
+                            bar_parts.append("🟡")
+                        else:
+                            bar_parts.append("🔴")
+                    else:
+                        bar_parts.append("⚫")
+                bar = "".join(bar_parts)
+                info_text += f"\n──────────────\n⏳ باقي {remaining} ثانية\n{bar}"
+            else:
+                info_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+        else:
+            info_text += f"\n──────────────"
 
-        msg_id = player_ui_msgs[user_id].get('buttons')
+        turn_status = "✅ دورك 👍🏻" if user_id == players[curr_idx]['user_id'] else "⏳ مو دورك"
+        info_text += f"\n{turn_status}"
+        info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
 
-        if msg_id:
+        # إرسال أو تحديث الرسالة
+        old_msgs = player_ui_msgs.get(user_id, {})
+        if old_msgs.get('info'):
             try:
                 await bot.edit_message_text(
-                    text=buttons_text,
+                    text=info_text,
                     chat_id=user_id,
-                    message_id=msg_id,
-                    reply_markup=markup
+                    message_id=old_msgs['info']
                 )
-            except Exception as e:
+            except Exception:
                 # فشل التعديل: نحذف القديمة ونرسل جديدة
                 try:
-                    await bot.delete_message(user_id, msg_id)
+                    await bot.delete_message(user_id, old_msgs['info'])
                 except:
                     pass
-                new_msg = await bot.send_message(user_id, buttons_text, reply_markup=markup)
-                player_ui_msgs[user_id]['buttons'] = new_msg.message_id
+                msg = await bot.send_message(user_id, info_text)
+                if user_id in player_ui_msgs:
+                    player_ui_msgs[user_id]['info'] = msg.message_id
+                else:
+                    player_ui_msgs[user_id] = {'info': msg.message_id}
         else:
-            new_msg = await bot.send_message(user_id, buttons_text, reply_markup=markup)
-            player_ui_msgs[user_id]['buttons'] = new_msg.message_id
+            msg = await bot.send_message(user_id, info_text)
+            if user_id in player_ui_msgs:
+                player_ui_msgs[user_id]['info'] = msg.message_id
+            else:
+                player_ui_msgs[user_id] = {'info': msg.message_id}
 
     except Exception as e:
-        print(f"Error in buttons update: {e}")
+        print(f"Error in send_or_update_info_message: {e}")
+
+
               
 async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
     try:
@@ -142,58 +222,6 @@ async def send_temp_message_and_delete(bot, chat_id, text, delay=5, reply_markup
         return None
 
 
-def safe_load(data):
-    if data is None: return []
-    if isinstance(data, list): return data
-    try: return json.loads(data)
-    except: return []
-
-def get_ordered_players(room_id):
-    players = db_query("SELECT * FROM room_players WHERE room_id = %s", (room_id,))
-    players.sort(key=lambda x: (x.get('join_order') or 0, x['user_id']))
-    return players
-
-def make_end_kb(players, room, mode='2p', for_user_id=None):
-    from handlers.common import replay_data
-    replay_id = str(uuid.uuid4())[:8]
-    replay_data[replay_id] = {
-        'players': [(p['user_id'], p.get('player_name') or 'لاعب') for p in players],
-        'max_players': room.get('max_players', 2),
-        'score_limit': room.get('score_limit', 0),
-        'mode': mode,
-        'creator_id': room.get('creator_id')
-    }
-    kb = []
-    if for_user_id:
-        for p in players:
-            if p['user_id'] != for_user_id:
-                p_name = p.get('player_name') or 'لاعب'
-                kb.append([InlineKeyboardButton(text=f"➕ إضافة {p_name}", callback_data=f"addfrnd_{p['user_id']}")])
-    kb.append([InlineKeyboardButton(text="🔄 لعب مرة أخرى", callback_data=f"replay_{replay_id}")])
-    kb.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
-    return InlineKeyboardMarkup(inline_keyboard=kb)
-
-def generate_h2o_deck():
-    colors = ['🔴', '🟡', '🟢', '🔵']
-    deck = []
-    for color in colors:
-        deck.append(f"{color} 0")
-        for i in range(1, 10):
-            deck.extend([f"{color} {i}", f"{color} {i}"])
-        deck.extend([f"{color} 🚫", f"{color} 🚫"]) # منع
-        deck.extend([f"{color} 🔄", f"{color} 🔄"]) # تحويل
-        deck.extend([f"{color} +2", f"{color} +2"]) # سحب 2
-    
-    # أوراق الأكشن الخاصة (وليست جوكرات)
-    deck.append("💧 +1")  # جوكر +1 السابق - الآن ورقة أكشن عادية
-    deck.append("🌊 +2")  # جوكر +2 السابق - الآن ورقة أكشن عادية
-    
-    # الجوكرات الحقيقية (التي تفتح قائمة ألوان أو تحدٍ)
-    deck.extend(["🔥 جوكر+4"] * 4)      # جوكر +4 مع تحدي
-    deck.extend(["🌈 جوكر ألوان"] * 4)   # جوكر ألوان فقط
-    
-    random.shuffle(deck)
-    return deck
 
 async def delete_temp_messages(user_id, bot, exclude_ids=None):
     """حذف جميع الرسائل الجانبية لمستخدم معين، مع استثناء معرفات معينة"""
