@@ -107,129 +107,75 @@ async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=N
         print(f"Error in send_or_update_info_message: {e}")
               
 async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
-
-    """إرسال أو تحديث رسالة الأزرار الثابتة للاعب."""
-
+    """إرسال أو تحديث رسالة الأزرار الثابتة للاعب بدون تكرار."""
     try:
-
-        # بناء الكيبورد
-
+        # 1. بناء الكيبورد (الأوراق)
         kb = []
-
         row = []
-
         for card_idx, card in enumerate(hand):
-
             row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
-
             if len(row) == 3:
-
                 kb.append(row)
-
                 row = []
-
         if row:
-
             kb.append(row)
 
-
-
-        # أزرار التحكم
-
+        # 2. أزرار التحكم (مرر، اونو، صيدة)
         controls = []
-
         if is_my_turn:
-
             if room_id in auto_draw_tasks:
-
                 controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
-
             if len(hand) == 2:
-
                 controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
 
-
-
-        # زر الصيد
-
+        # زر الصيدة (Check opponent hand)
         opp = players[1] if players[0]['user_id'] == user_id else players[0]
-
-        if len(safe_load(opp['hand'])) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
-
+        opp_hand = safe_load(opp.get('hand', '[]'))
+        opp_said_uno = str(opp.get('said_uno', 'false')).lower() in ['true', '1']
+        
+        if len(opp_hand) == 1 and not opp_said_uno:
             controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
 
-
-
         if controls:
-
             kb.append(controls)
 
-
-
-        # أزرار إضافية
-
+        # 3. أزرار إضافية (انسحاب، إعدادات)
         extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
-
         if user_id == room.get('creator_id'):
-
             extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
-
         kb.append(extra_buttons)
 
-
-
-        # إرسال أو تحديث الرسالة
-
+        buttons_text = "🃏🎮🃏🕹🃏🎮 اوراقك 🎮🃏🕹🃏🎮🃏"
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=kb)
+        
+        # 4. منطق الإرسال أو التعديل الذكي
         old_msgs = player_ui_msgs.get(user_id, {})
+        msg_id = old_msgs.get('buttons')
 
-        buttons_text = "🃏🎮🃏🕹🃏🎮اوراقك🎮🃏🕹🃏🎮🃏"
-
-
-
-        if old_msgs.get('buttons'):
-
+        if msg_id:
             try:
-
                 await bot.edit_message_text(
-
                     text=buttons_text,
-
                     chat_id=user_id,
-
-                    message_id=old_msgs['buttons'],
-
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-
+                    message_id=msg_id,
+                    reply_markup=reply_markup
                 )
-
-            except Exception:
-
-                msg = await bot.send_message(user_id, buttons_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-                if user_id in player_ui_msgs:
-
-                    player_ui_msgs[user_id]['buttons'] = msg.message_id
-
+            except Exception as e:
+                # إذا كانت الرسالة هي نفسها (لم تتغير) لا نفعل شيئاً
+                if "message is not modified" in str(e).lower():
+                    pass
                 else:
-
-                    player_ui_msgs[user_id] = {'buttons': msg.message_id}
-
+                    # إذا انحذفت الرسالة أو صار خطأ آخر، نرسل وحدة جديدة
+                    new_msg = await bot.send_message(user_id, buttons_text, reply_markup=reply_markup)
+                    if user_id not in player_ui_msgs: player_ui_msgs[user_id] = {}
+                    player_ui_msgs[user_id]['buttons'] = new_msg.message_id
         else:
-
-            msg = await bot.send_message(user_id, buttons_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-
-            if user_id in player_ui_msgs:
-
-                player_ui_msgs[user_id]['buttons'] = msg.message_id
-
-            else:
-
-                player_ui_msgs[user_id] = {'buttons': msg.message_id}
-
-
+            # أول مرة يرسل الأزرار
+            new_msg = await bot.send_message(user_id, buttons_text, reply_markup=reply_markup)
+            if user_id not in player_ui_msgs: player_ui_msgs[user_id] = {}
+            player_ui_msgs[user_id]['buttons'] = new_msg.message_id
 
     except Exception as e:
-
         print(f"Error in send_or_update_buttons_message: {e}")
 
 
