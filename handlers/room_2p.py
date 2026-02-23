@@ -104,7 +104,7 @@ async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=N
                 player_ui_msgs[user_id] = {'info': msg.message_id}
 
     except Exception as e:
-        print(f"Error in send_or_update_info_message: {e}"
+        print(f"Error in send_or_update_info_message: {e}")
               
 async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
 
