@@ -651,17 +651,14 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
     """تحديث واجهة المستخدم بالكامل (رسالة واحدة موحدة تحتوي على المعلومات والأزرار)."""
     try:
-        # 1. إيقاف مؤقتات الدور فقط (لا تلغي auto_draw_task!)
         cancel_timer(room_id)
 
-        # 2. جلب البيانات
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data: return
         room = room_data[0]
         players = get_ordered_players(room_id)
         curr_idx = room['turn_index']
 
-        # 3. حذف جميع الرسائل المؤقتة للاعبين
         for p in players:
             if p['user_id'] in temp_messages:
                 for msg_id in temp_messages[p['user_id']][:]:
@@ -671,26 +668,25 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                         pass
                 temp_messages[p['user_id']] = []
 
-        # 4. تحديث واجهة كل لاعب (رسالة واحدة موحدة)
         for i, p in enumerate(players):
             user_id = p['user_id']
             is_my_turn = (i == curr_idx)
             alert_text = alert_msg_dict.get(user_id) if alert_msg_dict else None
 
-            # تحديث الرسالة الموحدة
             if is_my_turn and room_id in countdown_msgs:
                 remaining = 20
                 await send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=remaining, alert_text=alert_text)
             else:
                 await send_or_update_game_ui(room_id, bot, user_id, alert_text=alert_text)
 
-        # 5. بدء التايمر الجديد (تايمر الدور أو تايمر السحب التلقائي)
         curr_p = players[curr_idx]
         curr_hand = safe_load(curr_p['hand'])
         is_playable = any(check_validity(c, room['top_card'], room['current_color']) for c in curr_hand)
 
         if not is_playable:
+            # إذا لم يوجد تايمر نشط، شغل السحب التلقائي
             if room_id not in auto_draw_tasks or auto_draw_tasks[room_id].done():
+                print(f"==== تشغيل السحب التلقائي لغرفة {room_id} لاعب {curr_idx} ====")
                 auto_draw_tasks[room_id] = asyncio.create_task(background_auto_draw(room_id, bot, curr_idx))
         else:
             if room_id not in turn_timers:
@@ -710,6 +706,7 @@ async def send_temp_message_and_delete(bot, user_id, text, delay=1.5):
 
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع رسالة مؤقتة، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
+    print("---- دخلنا background_auto_draw ----")
     try:
         # إلغاء أي مهمة سابقة
         cancel_auto_draw_task(room_id)
@@ -808,7 +805,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         # 5. جلب يد اللاعب والورقة المختارة
         hand = sort_hand(safe_load(players[p_idx]['hand']))
         if idx >= len(hand):
-            return await c.answer("⚠️ حدث خطأ في اختيار الورقة", show_alert=True)
+            return await c.answer("⚠️ حدث خ��أ في اختيار الورقة", show_alert=True)
         
         card = hand[idx]
         p_name = players[p_idx].get('player_name') or "لاعب"
@@ -854,13 +851,10 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             points = calculate_points(opp_hand)
             current_points = players[p_idx].get('online_points', 0)
             
-            # تحديث نقاط الفائز
             db_query("UPDATE users SET online_points = %s WHERE user_id = %s", 
                     (current_points + points, c.from_user.id), commit=True)
-            # تحديث الغرفة لآخر مرة
             db_query("UPDATE rooms SET discard_pile = %s, top_card = %s, current_color = %s WHERE room_id = %s", 
                     (json.dumps(discard_pile), card, card.split()[0], room_id), commit=True)
-            # حذف اللاعبين من الغرفة
             db_query("DELETE FROM room_players WHERE room_id = %s", (room_id,), commit=True)
             
             win_text = f"🏆 **{p_name} فاز بالجولة!** 🏆\n📊 حصل على {points} نقطة."
@@ -868,7 +862,6 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             for p in players:
                 await c.bot.send_message(p['user_id'], win_text, reply_markup=end_kb)
             
-            # حذف الغرفة
             db_query("DELETE FROM rooms WHERE room_id = %s", (room_id,), commit=True)
             return
 
@@ -890,18 +883,15 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
                 c, state, room_id, p_idx, opp_id, p_name, card, discard_pile, hand, room
             )
             return
-            
-        # أوراق المنع 🚫 والعكس 🔄 (في لاعبين اثنين العكس يمنع الخصم)
+        
         if "🚫" in card or "🔄" in card:
             symbol = "🚫" if "🚫" in card else "🔄"
-            next_turn = p_idx # الدور يبقى إلك
+            next_turn = p_idx
             alerts[c.from_user.id] = f"{symbol} منعت الخصم! الدور بقى إلك."
             alerts[opp_id] = f"{symbol} {p_name} منعك من اللعب!"
             
-        # أوراق السحب (+1 و +2 و +2 الملونة)
         elif "💧" in card:
             next_turn = await handle_draw1_card_action(c, room_id, p_idx, opp_id, opp_idx, card, room, players, alerts)
-            # بعد تنفيذ الإجراء، نحدث الواجهة ونبدأ التايمر للاعب الجديد (الذي هو نفس اللاعب)
             await refresh_ui_2p(room_id, c.bot, alerts)
             return 
         elif "🌊" in card:
@@ -913,38 +903,31 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await refresh_ui_2p(room_id, c.bot, alerts)
             return
 
-        # --- 10. الفحص الذكي: هل اللاعب اللي عليه الدور هسة عنده لعب؟ ---
-        # تحديث turn_index في قاعدة البيانات
         db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
         
-        # نحدد منو اللاعب اللي صار عليه الدور هسة
         current_id = c.from_user.id if next_turn == p_idx else opp_id
-        
-        # جلب يد اللاعب الحالي (اللي صار دوره) للتأكد
         check_p = db_query("SELECT hand FROM room_players WHERE user_id = %s", (current_id,))
         current_hand = safe_load(check_p[0]['hand']) if check_p else []
 
         can_play_now = False
         for c_check in current_hand:
-            # نشيك أوراقه على الورقة اللي هسة نزلت بالساحة
             if check_validity(c_check, card, new_color):
                 can_play_now = True
                 break
         
-        # إذا اللاعب (اللي صار دوره) ما عنده شي يرهم، نشغله السحب التلقائي
         if not can_play_now:
             cancel_timer(room_id)
             cancel_auto_draw_task(room_id)
-            
-            # رسالة تنبيه للي راح ينسحبله
             msg = "⚠️ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد 5 ثواني..."
             await refresh_ui_2p(room_id, c.bot, {current_id: msg})
-            
-            # تشغيل مهمة السحب التلقائي (يجب تعريف auto_draw_tasks مسبقاً)
-            auto_draw_tasks[room_id] = asyncio.create_task(start_auto_draw_logic(room_id, c.bot))
+
+            # هنا التعديل: نشغّل السحب التلقائي باللاعب الصحيح دائماً
+            for idx2, p2 in enumerate(players):
+                if p2['user_id'] == current_id:
+                    auto_draw_tasks[room_id] = asyncio.create_task(background_auto_draw(room_id, c.bot, idx2))
+                    break
             return
 
-        # إذا عنده لعب، نحدث الشاشة للكل (و refresh_ui_2p ستقوم ببدء التايمر الجديد)
         await refresh_ui_2p(room_id, c.bot, alerts)
         
     except Exception as e:
@@ -1627,69 +1610,6 @@ async def process_pass_turn(c: types.CallbackQuery):
     except Exception as e:
         print(f"Error in process_pass_turn: {e}")
         await c.answer("⚠️ حدث خطأ")
-
-async def start_auto_draw_logic(room_id, bot):
-    if room_id in auto_draw_tasks: return
-    
-    async def _logic():
-        try:
-            # 1. إخفاء الأزرار فوراً حتى اللاعب ينتظر السحب
-            room_info = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
-            if room_info:
-                players_list = get_ordered_players(room_id)
-                u_id = players_list[room_info[0]['turn_index']]['user_id']
-                await refresh_ui_2p(room_id, bot, {u_id: "⏳ انتظر جاري السحب..."})
-
-            # 2. الانتظار (5 ثواني) قبل السحب الفعلي
-            await asyncio.sleep(5) 
-            
-            # 3. جلب بيانات الغرفة واللاعب
-            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-            if not room_data: return
-            room = room_data[0]
-            players = get_ordered_players(room_id)
-            p_idx = room['turn_index']
-            user_id = players[p_idx]['user_id']
-            
-            deck = safe_load(room['deck'])
-            if not deck: return 
-            
-            # تنفيذ السحب وتحديث الداتابيز
-            new_card = deck.pop(0)
-            hand = safe_load(players[p_idx]['hand'])
-            hand.append(new_card)
-            
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), user_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-
-            # 4. فحص الورقة الجديدة
-            if check_validity(new_card, room['top_card'], room['current_color']):
-                # إذا تشتغل، نفتحله أزرار اللعب
-                await refresh_ui_2p(room_id, bot, {user_id: f"📥 سحبت ({new_card}) وترهم! الك 20 ثانية."})
-            else:
-                # إذا ما ترهم، نشغل عداد الـ 12 ثانية التنازلي على زر التمرير
-                for sec in range(12, 0, -1):
-                    await refresh_ui_2p(room_id, bot, {user_id: f"📥 سحبت ({new_card}) وما ترهم!"})
-                    await asyncio.sleep(1)
-                    
-                    # فحص إذا اللاعب مرر يدوي أو صار شي بالغرفة
-                    r_check = db_query("SELECT turn_index FROM rooms WHERE room_id = %s", (room_id,))
-                    if not r_check or r_check[0]['turn_index'] != p_idx:
-                        return
-
-                # تمرير تلقائي بعد انتهاء الـ 12 ثانية
-                next_t = (p_idx + 1) % 2
-                db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_t, room_id), commit=True)
-                await refresh_ui_2p(room_id, bot, {user_id: "⏰ انتهى وقت التمرير!"})
-
-        except asyncio.CancelledError:
-            pass # المهمة انلغت بشكل طبيعي
-        finally:
-            if room_id in auto_draw_tasks: 
-                del auto_draw_tasks[room_id]
-
-    # تشغيل المهمة وحفظها بالقاموس
-    auto_draw_tasks[room_id] = asyncio.create_task(_logic())
 
 async def start_turn_timer(room_id, bot, p_idx):
     try:
