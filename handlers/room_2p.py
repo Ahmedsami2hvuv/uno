@@ -168,11 +168,41 @@ async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=N
 
               
 async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
+    """إرسال أو تحديث رسالة الأزرار مع ضمان عدم تكرار الرسائل في الشات."""
     try:
-        # ... بناء kb و buttons_text ...
+        # 1. بناء لوحة المفاتيح
+        kb = []
+        row = []
+        for card_idx, card in enumerate(hand):
+            row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
+            if len(row) == 3:
+                kb.append(row)
+                row = []
+        if row: kb.append(row)
 
+        # 2. أزرار التحكم والاونو والصيدة
+        controls = []
+        if is_my_turn:
+            if room_id in auto_draw_tasks:
+                controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
+            if len(hand) == 2:
+                controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
+
+        opp = players[1] if players[0]['user_id'] == user_id else players[0]
+        opp_h = safe_load(opp.get('hand', '[]'))
+        if len(opp_h) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
+            controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
+        
+        if controls: kb.append(controls)
+        kb.append([InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")])
+
+        buttons_text = "🃏🎮 اوراقك الحالية 🎮🃏"
+        markup = InlineKeyboardMarkup(inline_keyboard=kb)
+
+        # 3. المنطق الذكي للتحديث مع حذف القديمة عند الفشل
         if user_id not in player_ui_msgs:
             player_ui_msgs[user_id] = {}
+
         msg_id = player_ui_msgs[user_id].get('buttons')
 
         if msg_id:
@@ -197,29 +227,6 @@ async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn
 
     except Exception as e:
         print(f"Error in buttons update: {e}")
-
-
-async def send_temp_message_and_delete(bot, chat_id, text, delay=5, reply_markup=None):
-    """إرسال رسالة مؤقتة ثم حذفها بعد فترة."""
-    try:
-        msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
-        if chat_id not in temp_messages:
-            temp_messages[chat_id] = []
-        temp_messages[chat_id].append(msg.message_id)
-
-        async def delete_after_delay():
-            await asyncio.sleep(delay)
-            try:
-                await bot.delete_message(chat_id, msg.message_id)
-                if chat_id in temp_messages and msg.message_id in temp_messages[chat_id]:
-                    temp_messages[chat_id].remove(msg.message_id)
-            except:
-                pass
-        asyncio.create_task(delete_after_delay())
-        return msg
-    except Exception as e:
-        print(f"Error in send_temp_message_and_delete: {e}")
-        return None
 
 
 
