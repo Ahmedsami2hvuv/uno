@@ -82,33 +82,41 @@ def generate_h2o_deck():
     return deck
 
 
-async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
-    """إرسال أو تحديث رسالة المعلومات الثابتة للاعب مع حذف القديمة إذا فشل التعديل."""
+async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
+    """إرسال أو تحديث رسالة واحدة موحدة تحتوي على معلومات اللعب + أزرار الأوراق."""
     try:
+        # جلب بيانات الغرفة واللاعبين
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data:
             return
         room = room_data[0]
         players = get_ordered_players(room_id)
         curr_idx = room['turn_index']
-
-        # بناء معلومات اللاعبين
+        
+        # العثور على اللاعب الحالي ويده
+        current_player = next((p for p in players if p['user_id'] == user_id), None)
+        if not current_player:
+            return
+        hand = sort_hand(safe_load(current_player['hand']))
+        is_my_turn = (user_id == players[curr_idx]['user_id'])
+        
+        # ========== بناء نص المعلومات ==========
         players_info = []
         for pl_idx, pl in enumerate(players):
             pl_name = pl.get('player_name') or 'لاعب'
             pl_cards = len(safe_load(pl['hand']))
             star = "✅" if pl_idx == curr_idx else "⏳"
             players_info.append(f"{star} {pl_name}: {pl_cards} ورقة")
-
+        
         info_text = f"📦 السحب: {len(safe_load(room['deck']))} ورقه\n"
         info_text += f"🗑 النازلة: {len(safe_load(room.get('discard_pile', '[]')))+1} ورقه\n"
         info_text += "\n".join(players_info)
-
+        
         if alert_text:
             info_text += f"\n──────────────\n📢 {alert_text}"
-
-        # شريط التايمر
-        if user_id == players[curr_idx]['user_id']:
+        
+        # شريط التايمر (يظهر فقط للاعب صاحب الدور)
+        if is_my_turn:
             if remaining_seconds is not None:
                 remaining = remaining_seconds
                 total_steps = 10
@@ -130,47 +138,14 @@ async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=N
                 info_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
         else:
             info_text += f"\n──────────────"
-
-        turn_status = "✅ دورك 👍🏻" if user_id == players[curr_idx]['user_id'] else "⏳ مو دورك"
+        
+        turn_status = "✅ دورك 👍🏻" if is_my_turn else "⏳ مو دورك"
         info_text += f"\n{turn_status}"
         info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
-
-        # إرسال أو تحديث الرسالة
-        old_msgs = player_ui_msgs.get(user_id, {})
-        if old_msgs.get('info'):
-            try:
-                await bot.edit_message_text(
-                    text=info_text,
-                    chat_id=user_id,
-                    message_id=old_msgs['info']
-                )
-            except Exception:
-                # فشل التعديل: نحذف القديمة ونرسل جديدة
-                try:
-                    await bot.delete_message(user_id, old_msgs['info'])
-                except:
-                    pass
-                msg = await bot.send_message(user_id, info_text)
-                if user_id in player_ui_msgs:
-                    player_ui_msgs[user_id]['info'] = msg.message_id
-                else:
-                    player_ui_msgs[user_id] = {'info': msg.message_id}
-        else:
-            msg = await bot.send_message(user_id, info_text)
-            if user_id in player_ui_msgs:
-                player_ui_msgs[user_id]['info'] = msg.message_id
-            else:
-                player_ui_msgs[user_id] = {'info': msg.message_id}
-
-    except Exception as e:
-        print(f"Error in send_or_update_info_message: {e}")
-
-
-              
-async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
-    """إرسال أو تحديث رسالة الأزرار مع ضمان عدم تكرار الرسائل في الشات."""
-    try:
-        # 1. بناء لوحة المفاتيح
+        info_text += f"\n\n════════════════════\n"
+        info_text += f"🃏 **أوراقك:**\n"
+        
+        # ========== بناء الأزرار ==========
         kb = []
         row = []
         for card_idx, card in enumerate(hand):
@@ -178,56 +153,56 @@ async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn
             if len(row) == 3:
                 kb.append(row)
                 row = []
-        if row: kb.append(row)
-
-        # 2. أزرار التحكم والاونو والصيدة
+        if row: 
+            kb.append(row)
+        
+        # أزرار التحكم
         controls = []
         if is_my_turn:
             if room_id in auto_draw_tasks:
                 controls.append(InlineKeyboardButton(text="➡️ مرر الدور", callback_data=f"pass_{room_id}"))
             if len(hand) == 2:
                 controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
-
+        
+        # زر الصيدة (إذا كانت متاحة)
         opp = players[1] if players[0]['user_id'] == user_id else players[0]
         opp_h = safe_load(opp.get('hand', '[]'))
         if len(opp_h) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
             controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
         
-        if controls: kb.append(controls)
+        if controls: 
+            kb.append(controls)
         kb.append([InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")])
-
-        buttons_text = "🃏🎮 اوراقك الحالية 🎮🃏"
+        
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
-
-        # 3. المنطق الذكي للتحديث مع حذف القديمة عند الفشل
-        if user_id not in player_ui_msgs:
-            player_ui_msgs[user_id] = {}
-
-        msg_id = player_ui_msgs[user_id].get('buttons')
-
-        if msg_id:
+        
+        # ========== إرسال أو تحديث الرسالة ==========
+        old_msgs = player_ui_msgs.get(user_id, {})
+        
+        if old_msgs.get('game_ui'):
+            # محاولة تعديل الرسالة الموجودة
             try:
                 await bot.edit_message_text(
-                    text=buttons_text,
+                    text=info_text,
                     chat_id=user_id,
-                    message_id=msg_id,
+                    message_id=old_msgs['game_ui'],
                     reply_markup=markup
                 )
-            except Exception as e:
+            except Exception:
                 # فشل التعديل: نحذف القديمة ونرسل جديدة
                 try:
-                    await bot.delete_message(user_id, msg_id)
+                    await bot.delete_message(user_id, old_msgs['game_ui'])
                 except:
                     pass
-                new_msg = await bot.send_message(user_id, buttons_text, reply_markup=markup)
-                player_ui_msgs[user_id]['buttons'] = new_msg.message_id
+                msg = await bot.send_message(user_id, info_text, reply_markup=markup)
+                player_ui_msgs.setdefault(user_id, {})['game_ui'] = msg.message_id
         else:
-            new_msg = await bot.send_message(user_id, buttons_text, reply_markup=markup)
-            player_ui_msgs[user_id]['buttons'] = new_msg.message_id
-
+            # لا توجد رسالة قديمة، نرسل جديدة
+            msg = await bot.send_message(user_id, info_text, reply_markup=markup)
+            player_ui_msgs.setdefault(user_id, {})['game_ui'] = msg.message_id
+            
     except Exception as e:
-        print(f"Error in buttons update: {e}")
-
+        print(f"Error in send_or_update_game_ui: {e}")
 
 
 async def delete_temp_messages(user_id, bot, exclude_ids=None):
@@ -702,7 +677,7 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
         print(f"Error in start_new_round: {e}")
 
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
-    """تحديث واجهة المستخدم بالكامل (رسالة معلومات + رسالة أزرار)."""
+    """تحديث واجهة المستخدم بالكامل (رسالة واحدة موحدة تحتوي على المعلومات والأزرار)."""
     try:
         # 1. إيقاف المؤقتات
         cancel_timer(room_id)
@@ -725,22 +700,18 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
                         pass
                 temp_messages[p['user_id']] = []
 
-        # 4. تحديث واجهة كل لاعب
+        # 4. تحديث واجهة كل لاعب (رسالة واحدة موحدة)
         for i, p in enumerate(players):
             user_id = p['user_id']
-            hand = sort_hand(safe_load(p['hand']))
             is_my_turn = (i == curr_idx)
             alert_text = alert_msg_dict.get(user_id) if alert_msg_dict else None
 
-            # تحديث رسالة المعلومات
+            # تحديث الرسالة الموحدة
             if is_my_turn and room_id in countdown_msgs:
                 remaining = 20
-                await send_or_update_info_message(room_id, bot, user_id, remaining_seconds=remaining, alert_text=alert_text)
+                await send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=remaining, alert_text=alert_text)
             else:
-                await send_or_update_info_message(room_id, bot, user_id, alert_text=alert_text)
-
-            # تحديث رسالة الأزرار
-            await send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room)
+                await send_or_update_game_ui(room_id, bot, user_id, alert_text=alert_text)
 
         # 5. بدء التايمر الجديد
         curr_p = players[curr_idx]
@@ -1182,7 +1153,7 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
         )
 
         players = get_ordered_players(room_id)
-        await send_or_update_buttons_message(room_id, c.bot, c.from_user.id, hand, True, players, room)
+        await send_or_update_game_ui(room_id, c.bot, c.from_user.id, hand, True, players, room)
 
     except Exception as e:
         print(f"Error in handle_wild_draw4_card: {e}")
