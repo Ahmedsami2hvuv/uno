@@ -107,9 +107,9 @@ async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=N
         print(f"Error in send_or_update_info_message: {e}")
               
 async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn, players, room):
-    """إرسال أو تحديث رسالة الأزرار الثابتة للاعب بدون تكرار."""
+    """إرسال أو تحديث رسالة الأزرار مع ضمان عدم تكرار الرسائل في الشات."""
     try:
-        # 1. بناء الكيبورد (الأوراق)
+        # 1. بناء لوحة المفاتيح
         kb = []
         row = []
         for card_idx, card in enumerate(hand):
@@ -117,10 +117,9 @@ async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn
             if len(row) == 3:
                 kb.append(row)
                 row = []
-        if row:
-            kb.append(row)
+        if row: kb.append(row)
 
-        # 2. أزرار التحكم (مرر، اونو، صيدة)
+        # 2. أزرار التحكم والاونو والصيدة
         controls = []
         if is_my_turn:
             if room_id in auto_draw_tasks:
@@ -128,55 +127,46 @@ async def send_or_update_buttons_message(room_id, bot, user_id, hand, is_my_turn
             if len(hand) == 2:
                 controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
 
-        # زر الصيدة (Check opponent hand)
         opp = players[1] if players[0]['user_id'] == user_id else players[0]
-        opp_hand = safe_load(opp.get('hand', '[]'))
-        opp_said_uno = str(opp.get('said_uno', 'false')).lower() in ['true', '1']
-        
-        if len(opp_hand) == 1 and not opp_said_uno:
+        opp_h = safe_load(opp.get('hand', '[]'))
+        if len(opp_h) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
             controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
-
-        if controls:
-            kb.append(controls)
-
-        # 3. أزرار إضافية (انسحاب، إعدادات)
-        extra_buttons = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")]
-        if user_id == room.get('creator_id'):
-            extra_buttons.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
-        kb.append(extra_buttons)
-
-        buttons_text = "🃏🎮🃏🕹🃏🎮 اوراقك 🎮🃏🕹🃏🎮🃏"
-        reply_markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
-        # 4. منطق الإرسال أو التعديل الذكي
-        old_msgs = player_ui_msgs.get(user_id, {})
-        msg_id = old_msgs.get('buttons')
+        if controls: kb.append(controls)
+        kb.append([InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")])
+
+        buttons_text = "🃏🎮 اوراقك الحالية 🎮🃏"
+        markup = InlineKeyboardMarkup(inline_keyboard=kb)
+
+        # 3. المنطق الذكي للتحديث (السر هنا)
+        if user_id not in player_ui_msgs:
+            player_ui_msgs[user_id] = {'info': None, 'buttons': None}
+
+        msg_id = player_ui_msgs[user_id].get('buttons')
 
         if msg_id:
             try:
+                # محاولة تعديل الرسالة الموجودة
                 await bot.edit_message_text(
                     text=buttons_text,
                     chat_id=user_id,
                     message_id=msg_id,
-                    reply_markup=reply_markup
+                    reply_markup=markup
                 )
             except Exception as e:
-                # إذا كانت الرسالة هي نفسها (لم تتغير) لا نفعل شيئاً
-                if "message is not modified" in str(e).lower():
-                    pass
-                else:
-                    # إذا انحذفت الرسالة أو صار خطأ آخر، نرسل وحدة جديدة
-                    new_msg = await bot.send_message(user_id, buttons_text, reply_markup=reply_markup)
-                    if user_id not in player_ui_msgs: player_ui_msgs[user_id] = {}
+                # إذا كانت الرسالة ممسوحة أو قديمة جداً، نحذف الـ ID ونرسل وحدة جديدة
+                if "message to edit not found" in str(e).lower() or "message can't be edited" in str(e).lower():
+                    new_msg = await bot.send_message(user_id, buttons_text, reply_markup=markup)
                     player_ui_msgs[user_id]['buttons'] = new_msg.message_id
+                elif "message is not modified" in str(e).lower():
+                    pass # الرسالة هي نفسها، لا نحتاج لفعل شيء
         else:
-            # أول مرة يرسل الأزرار
-            new_msg = await bot.send_message(user_id, buttons_text, reply_markup=reply_markup)
-            if user_id not in player_ui_msgs: player_ui_msgs[user_id] = {}
+            # إذا لم يكن هناك ID مخزن من الأساس
+            new_msg = await bot.send_message(user_id, buttons_text, reply_markup=markup)
             player_ui_msgs[user_id]['buttons'] = new_msg.message_id
 
     except Exception as e:
-        print(f"Error in send_or_update_buttons_message: {e}")
+        print(f"Error in buttons update: {e}")
 
 
 async def send_temp_message_and_delete(bot, chat_id, text, delay=5, reply_markup=None):
