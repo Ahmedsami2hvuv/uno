@@ -1091,8 +1091,48 @@ async def handle_colored_draw2_action(c: types.CallbackQuery, room_id, p_idx, op
 # =============== دوال الجوكرات ===============
 
 
-handle_wild_draw4_card
-        
+async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
+    """معالجة جوكر +4 (🔥)"""
+    try:
+        pending_color_data[room_id] = {
+            'card_played': card,
+            'p_idx': p_idx,
+            'opp_id': opp_id,
+            'p_name': p_name,
+            'type': 'challenge'
+        }
+
+        db_query("UPDATE rooms SET top_card = %s, discard_pile = %s WHERE room_id = %s", 
+                (card, json.dumps(discard_pile), room_id), commit=True)
+
+        await send_temp_message_and_delete(
+            c.bot, c.from_user.id,
+            "🔥 **جوكر +4!**\n⏳ بانتظار رد الخصم... (10 ثواني)",
+            delay=10
+        )
+
+        challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
+                InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
+            ]
+        ])
+
+        await send_temp_message_and_delete(
+            c.bot, opp_id,
+            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
+            delay=10,
+            reply_markup=challenge_kb
+        )
+
+        challenge_timers[room_id] = asyncio.create_task(
+            challenge_timeout_2p(room_id, c.bot, opp_id)
+        )
+
+    except Exception as e:
+        print(f"Error in handle_wild_draw4_card: {e}")
+
+
 
 # =============== دوال معالجة الأوراق الخاصة ===============
 
