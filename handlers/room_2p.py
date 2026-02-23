@@ -1118,8 +1118,9 @@ async def handle_color_selection(c: types.CallbackQuery):
 
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
-    """معالجة جوكر +4 (🔥)"""
+    """معالجة جوكر +4 (🔥) - النسخة المصححة بالكامل"""
     try:
+        # 1. تخزين بيانات التحدي
         pending_color_data[room_id] = {
             'card_played': card,
             'p_idx': p_idx,
@@ -1128,18 +1129,11 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             'type': 'challenge'
         }
 
-        # تحديث الورقة النازلة ووضع اللون مؤقتاً كـ جوكر
+        # 2. تحديث الساحة فوراً (هذا يحل مشكلة تحديث الورقة)
         db_query("UPDATE rooms SET top_card = %s, discard_pile = %s, current_color = %s WHERE room_id = %s", 
-             (card, json.dumps(discard_pile), card.split()[0], room_id), commit=True)
+                 (card, json.dumps(discard_pile), card.split()[0], room_id), commit=True)
 
-        # رسالة مؤقتة للاعب الحالي
-        await send_temp_message_and_delete(
-            c.bot, c.from_user.id,
-            "🔥 **جوكر +4!**\n⏳ بانتظار رد الخصم... (10 ثواني)",
-            delay=10
-        )
-
-        # أزرار التحدي للخصم
+        # 3. إنشاء أزرار التحدي للخصم
         challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
@@ -1147,32 +1141,25 @@ async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id,
             ]
         ])
 
-        # رسالة للخصم مع الأزرار (مؤقتة)
-        await send_temp_message_and_delete(
-            c.bot, opp_id,
-            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 10 ثواني للرد",
-            delay=10,
+        # 4. إرسال رسالة التحدي للخصم (هنا ستظهر الأزرار للخصم)
+        msg_to_opp = await c.bot.send_message(
+            opp_id,
+            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 20 ثانية للرد",
             reply_markup=challenge_kb
         )
 
-        # بدء تايمر التحدي
-        challenge_timers[room_id] = asyncio.create_task(
-            challenge_timeout_2p(room_id, c.bot, opp_id)
-        )
+        # 5. إبلاغ اللاعب الحالي بالانتظار
+        await c.message.answer(f"🔥 لعبت جوكر +4! بانتظار رد {p_name}...")
 
-        # ===== إضافة مهمة: إزالة أزرار اللاعب الحالي =====
-        # نرسل رسالة جديدة بدون أزرار ونحدث المعرف في player_ui_msgs
-        waiting_msg = await c.bot.send_message(
-            c.from_user.id,
-            "⏳ **بانتظار رد الخصم على التحدي...**\nلا يمكنك اللعب حتى يرد الخصم."
+        # 6. بدء التايمر (تم تعديل المدخلات لتطابق الدالة)
+        # أرسلنا (room_id, bot, opp_id, None, msg_to_opp.message_id)
+        challenge_timers[room_id] = asyncio.create_task(
+            challenge_timeout_2p(room_id, c.bot, opp_id, "🔥", msg_to_opp.message_id)
         )
-        # تحديث معرف الرسالة الرئيسية للاعب
-        if c.from_user.id not in player_ui_msgs:
-            player_ui_msgs[c.from_user.id] = {}
-        player_ui_msgs[c.from_user.id]['game_ui'] = waiting_msg.message_id
 
     except Exception as e:
         print(f"Error in handle_wild_draw4_card: {e}")
+        await c.answer("❌ حدث خطأ أثناء معالجة الجوكر", show_alert=True)
 
 
 
