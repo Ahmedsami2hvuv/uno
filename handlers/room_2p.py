@@ -1296,11 +1296,13 @@ async def handle_draw1_card_joker(c: types.CallbackQuery, room_id, p_idx, opp_id
 @router.callback_query(F.data.startswith("challenge_"))
 async def handle_challenge_decision(c: types.CallbackQuery):
     try:
-        # استخراج القرار ومعرّف الغرفة
+        # --- LOG ---
+        print("challenge_decision callback data:", c.data)
+        
         data = c.data.split("_")
         decision = data[1]   # y أو n
         room_id = data[2]
-
+        
         # إلغاء المؤقتات
         if room_id in challenge_timers:
             challenge_timers[room_id].cancel()
@@ -1313,17 +1315,24 @@ async def handle_challenge_decision(c: types.CallbackQuery):
         # معلومات الجوكر المُعلّقة
         pending = pending_color_data.pop(room_id, None)
         if not pending or pending.get('type') != 'challenge':
+            print("pending data missing or not a challenge!", pending)
             return await c.answer("⚠️ انتهت صلاحية التحدي.", show_alert=True)
+        
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data:
+            print("room not found in DB!! room_id:", room_id)
             return await c.answer("⚠️ الغرفة غير موجودة.", show_alert=True)
+        
         room = room_data[0]
         players = get_ordered_players(room_id)
+        if len(players) < 2:
+            print("players length < 2", players)
+            return await c.answer("⚠️ حدث خطأ في بيانات اللاعبين.", show_alert=True)
+        
         p_idx = pending['p_idx']
         opp_idx = (p_idx + 1) % 2
         opp_id = players[opp_idx]['user_id']
-        user_id = players[p_idx]['user_id']   # اللاعب الذي لعب الورقة
-
+        user_id = players[p_idx]['user_id']
         deck = safe_load(room['deck'])
         # القرار: قبول السحب
         if decision == "n":
@@ -1339,43 +1348,38 @@ async def handle_challenge_decision(c: types.CallbackQuery):
             p_hand = safe_load(players[p_idx]['hand'])
             prev_top_card = pending.get('prev_top_card', room['top_card'])
             prev_color = pending.get('prev_color', room['current_color'])
-            # تحقق: هل كان لدى اللاعب ورقة صالحة للعب بدل الجوكر؟
             cheated = False
             for check_card in p_hand:
-                # يتجاهل الجوكرات
                 if any(x in check_card for x in ["🌈", "🔥", "💧", "🌊"]):
                     continue
                 if check_validity(check_card, prev_top_card, prev_color):
                     cheated = True
                     break
             if cheated:
-                # اللاعب غش = يسحب 6 كروت، ويصبح دور الخصم
+                # اللاعب غشاش - عقوبة
                 for _ in range(6):
                     if deck: p_hand.append(deck.pop(0))
                 db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(p_hand), user_id), commit=True)
                 db_query("UPDATE rooms SET deck = %s, turn_index = %s WHERE room_id = %s", (json.dumps(deck), opp_idx, room_id), commit=True)
-                await c.bot.send_message(user_id, "🕵️‍♂️ كشف الغش! سحبت 6 أوراق عقوبة والخصم يأخذ الدور!")
-                await c.bot.send_message(opp_id, "✅ نجح التحدي! الخصم كان لديه ورقة مناسبة غير الجوكر.")
+                await c.bot.send_message(user_id, "🕵️‍♂️ كشف الغش! سحبت 6 أوراق عقوبة.")
+                await c.bot.send_message(opp_id, "✅ نجح التحدي! الخصم كان عنده ورقة مناسبة غير الجوكر.")
             else:
-                # الخصم أخطأ في التحدي = هو يسحب 6 كروت ويظل الدور لِلأول
                 opp_hand = safe_load(players[opp_idx]['hand'])
                 for _ in range(6):
                     if deck: opp_hand.append(deck.pop(0))
                 db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_hand), opp_id), commit=True)
                 db_query("UPDATE rooms SET deck = %s, turn_index = %s, current_color = 'ANY' WHERE room_id = %s", (json.dumps(deck), p_idx, room_id), commit=True)
-                await c.bot.send_message(opp_id, "❌ فشل التحدي! أنت تسحب 6 أوراق والعقاب لك.")
+                await c.bot.send_message(opp_id, "❌ فشل التحدي! أنت تسحب 6 أوراق.")
                 await c.bot.send_message(user_id, "🎯 الخصم فشل في التحدي – العب بأي لون.")
 
-        # حذف رسالة زر التحدي إذا لم تُحذف
-        try:
-            await c.message.delete()
+        # حذف رسال�� التحدي
+        try: await c.message.delete()
         except: pass
-        # تحديث الواجهة للجميع
+        # تحديث واجهات الجميع
         await refresh_ui_2p(room_id, c.bot)
     except Exception as e:
         print(f"[handle_challenge_decision] Error: {e}")
         await c.answer("⚠️ خطأ أثناء معالجة قرار التحدي.", show_alert=True)
-
 
 @router.callback_query(GameStates.choosing_color, F.data.startswith("cl_"))
 async def handle_color(c: types.CallbackQuery, state: FSMContext):
