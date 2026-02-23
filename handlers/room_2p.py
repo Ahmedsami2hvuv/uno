@@ -304,46 +304,33 @@ def cancel_auto_draw_task(room_id):
             pass
 
 
-async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color, msg_id):
-    """دالة تايمر التحدي - تم إصلاح الترتيب والـ try block"""
+async def challenge_timeout_2p(room_id, bot, opp_id, chosen_color=None, msg_id=None):
+    """دالة التوقيت المصححة بـ 5 متغيرات"""
     try:
-        await asyncio.sleep(20) # انتظار الخصم ليرد
+        await asyncio.sleep(20) 
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data or room_data[0]['status'] != 'playing': 
-            return
-            
-        room = room_data[0]
-        # جلب بيانات التحدي
+        if not room_data or room_data[0]['status'] != 'playing': return
+        
         pending = pending_color_data.get(room_id)
-        if not pending or pending.get('type') != 'challenge':
-            return
-            
+        if not pending or pending.get('type') != 'challenge': return
+        
         players = get_ordered_players(room_id)
         p_idx = pending['p_idx']
         
-        # تطبيق القبول التلقائي (الخصم يسحب 4 ورقات)
-        deck = safe_load(room['deck'])
+        # تنفيذ السحب التلقائي
+        deck = safe_load(room_data[0]['deck'])
         opp_hand = safe_load(players[(p_idx + 1) % 2]['hand'])
-        
         for _ in range(4):
-            if deck:
-                opp_hand.append(deck.pop(0))
-        
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                (json.dumps(opp_hand), opp_id), commit=True)
+            if deck: opp_hand.append(deck.pop(0))
+            
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_hand), opp_id), commit=True)
         db_query("UPDATE rooms SET deck = %s, current_color = 'ANY', turn_index = %s WHERE room_id = %s", 
-                (json.dumps(deck), p_idx, room_id), commit=True)
-                
-        await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً وسحبت 4 ورقات.")
-        await bot.send_message(players[p_idx]['user_id'], 
-                             f"⏰ الخصم لم يرد! تم قبول السحب تلقائياً ودورك الآن.")
+                 (json.dumps(deck), p_idx, room_id), commit=True)
         
-        # إلغاء البيانات المؤقتة وتحديث الواجهة
+        await bot.send_message(opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً.")
         if room_id in pending_color_data: del pending_color_data[room_id]
         await refresh_ui_2p(room_id, bot)
-        
     except asyncio.CancelledError:
-        # تم إلغاء التايمر لأن الخصم ضغط على زر قبل انتهاء الـ 20 ثانية
         pass
     except Exception as e:
         print(f"Challenge timeout error: {e}")
@@ -1118,48 +1105,41 @@ async def handle_color_selection(c: types.CallbackQuery):
 
 
 async def handle_wild_draw4_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, discard_pile, hand):
-    """معالجة جوكر +4 (🔥) - النسخة المصححة بالكامل"""
+    """معالجة جوكر +4 وإرسال التحدي"""
     try:
-        # 1. تخزين بيانات التحدي
+        # حفظ البيانات
         pending_color_data[room_id] = {
-            'card_played': card,
-            'p_idx': p_idx,
-            'opp_id': opp_id,
-            'p_name': p_name,
-            'type': 'challenge'
+            'card_played': card, 'p_idx': p_idx, 'opp_id': opp_id, 'p_name': p_name, 'type': 'challenge'
         }
 
-        # 2. تحديث الساحة فوراً (هذا يحل مشكلة تحديث الورقة)
+        # تحديث الأرضية فوراً
         db_query("UPDATE rooms SET top_card = %s, discard_pile = %s, current_color = %s WHERE room_id = %s", 
                  (card, json.dumps(discard_pile), card.split()[0], room_id), commit=True)
 
-        # 3. إنشاء أزرار التحدي للخصم
-        challenge_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
-                InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
-            ]
-        ])
+        # أزرار التحدي
+        challenge_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
+            InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")
+        ]])
 
-        # 4. إرسال رسالة التحدي للخصم (هنا ستظهر الأزرار للخصم)
+        # إرسال الرسالة للخصم وحفظ الـ ID مالها
         msg_to_opp = await c.bot.send_message(
-            opp_id,
-            f"🔥 {p_name} لعب جوكر +4! هل تريد تحدي أنه كان لديه ورقة مناسبة؟\n\n⏳ لديك 20 ثانية للرد",
+            opp_id, 
+            f"🔥 {p_name} لعب جوكر +4! هل تريد التحدي؟\n⏳ أمامك 20 ثانية", 
             reply_markup=challenge_kb
         )
 
-        # 5. إبلاغ اللاعب الحالي بالانتظار
-        await c.message.answer(f"🔥 لعبت جوكر +4! بانتظار رد {p_name}...")
-
-        # 6. بدء التايمر (تم تعديل المدخلات لتطابق الدالة)
-        # أرسلنا (room_id, bot, opp_id, None, msg_to_opp.message_id)
+        # تشغيل التايمر بالـ 5 متغيرات المطلوبة
         challenge_timers[room_id] = asyncio.create_task(
             challenge_timeout_2p(room_id, c.bot, opp_id, "🔥", msg_to_opp.message_id)
         )
+        
+        await c.answer("✅ تم لعب الجوكر، بانتظار الخصم")
+        await refresh_ui_2p(room_id, c.bot)
 
     except Exception as e:
-        print(f"Error in handle_wild_draw4_card: {e}")
-        await c.answer("❌ حدث خطأ أثناء معالجة الجوكر", show_alert=True)
+        print(f"Error: {e}")
+        await c.answer("❌ حدث خطأ في النظام")
 
 
 
