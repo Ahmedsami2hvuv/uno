@@ -26,7 +26,7 @@ temp_messages = {}  # المفتاح: user_id, القيمة: list of message_ids
 class GameStates(StatesGroup):
     choosing_color = State()
 
-sync def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
+async def send_or_update_info_message(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
     try:
         # ... (نفس الكود السابق لبناء info_text) ...
 
