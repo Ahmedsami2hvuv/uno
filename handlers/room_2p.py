@@ -1316,7 +1316,7 @@ async def handle_wild_color_card(c: types.CallbackQuery, state: FSMContext, room
     temp_messages[c.from_user.id].append(cd_msg.message_id)
     
     color_timers[room_id] = asyncio.create_task(
-        color_timeout_2p(room_id, c.bot, c.from_user.id)
+        color_timeout_2p(room_id, c.bot, c.from_user.id))
         
 
 async def handle_skip_card(c: types.CallbackQuery, room_id, p_idx, opp_id, p_name, card, next_turn, alerts):
