@@ -736,7 +736,7 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         print(f"Error in refresh_ui_2p: {e}")
         
 async def background_auto_draw(room_id, bot, curr_idx):
-    """دالة السحب التلقائي: تنتظر 5 ثوانٍ، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
+    """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع رسالة مؤقتة، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
     try:
         # إلغاء أي مهمة سابقة
         cancel_auto_draw_task(room_id)
@@ -747,9 +747,13 @@ async def background_auto_draw(room_id, bot, curr_idx):
         p_id = players[curr_idx]['user_id']
         p_name = players[curr_idx].get('player_name') or "لاعب"
 
-        # عد تنازلي 5 ثوانٍ مع تحديث رسالة هذا اللاعب فقط
+        # إرسال رسالة مؤقتة للعد التنازلي (5 ثوانٍ)
         for sec in range(5, 0, -1):
-            await send_or_update_game_ui(room_id, bot, p_id, alert_text=f"⏳ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد {sec} ثواني...")
+            await send_temp_message_and_delete(
+                bot, p_id,
+                f"⏳ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد {sec} ثواني...",
+                delay=1.5  # تبقى الرسالة ظاهرة ثم تحذف بعد ثانية ونصف
+            )
             await asyncio.sleep(1)
 
         # التحقق من أن اللاعب لا يزال في نفس الدور
@@ -777,7 +781,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
 
         # التحقق من صلاحية الورقة الجديدة
         if check_validity(new_card, room['top_card'], room['current_color']):
-            # الورقة صالحة: تحديث واجهة الكل (لأنه قد بدأ دوره مع ورقة جديدة)
+            # الورقة صالحة: تحديث واجهة الكل مع رسالة
             await refresh_ui_2p(room_id, bot, {p_id: f"✅ سحبت ({new_card}) وتشتغل! الك 20 ثانية."})
         else:
             # الورقة غير صالحة: نمرر الدور للخصم فوراً
@@ -785,7 +789,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
             db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
                      (next_turn, room_id), commit=True)
             opp_id = players[next_turn]['user_id']
-            # تحديث واجهة الكل مع رسائل مناسبة
+            # تحديث واجهة الكل مع رسائل للاعبين
             alerts = {
                 p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌ تم تمرير دورك.",
                 opp_id: f"➡️ {p_name} سحب ورقة ({new_card}) وما اشتغلت، هسة دورك!"
@@ -800,7 +804,6 @@ async def background_auto_draw(room_id, bot, curr_idx):
     finally:
         if room_id in auto_draw_tasks:
             del auto_draw_tasks[room_id]
-
 
 @router.callback_query(F.data.startswith("pl_"))
 async def handle_play(c: types.CallbackQuery, state: FSMContext):
