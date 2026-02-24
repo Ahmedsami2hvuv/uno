@@ -93,6 +93,7 @@ async def on_play_friends(c: types.CallbackQuery):
 
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
+    print("DEBUG: وصلت رسالة اليوزر نيم")
     user_id = message.from_user.id
     username = message.text.strip().lower()
 
