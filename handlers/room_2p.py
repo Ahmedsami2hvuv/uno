@@ -573,7 +573,7 @@ async def force_draw_and_pass(room_id, bot, p_idx):
 
 
 async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
-    """تحديث رسالة اللعب الموجودة فقط - لا ترسل رسالة جديدة أبداً"""
+    """إرسال رسالة جديدة أو تحديث الموجودة - بدون مسح."""
     try:
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data:
@@ -661,11 +661,11 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
         
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
-        # فقط تحديث الرسالة الموجودة - لا ترسل جديدة أبداً
         old_msgs = player_ui_msgs.get(user_id, {})
         old_msg_id = old_msgs.get('game_ui')
         
         if old_msg_id:
+            # تحديث الرسالة الموجودة
             try:
                 await bot.edit_message_text(
                     text=info_text,
@@ -673,16 +673,17 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
                     message_id=old_msg_id,
                     reply_markup=markup
                 )
+                return
             except Exception:
-                # إذا فشل التحديث، نسجل الخطأ فقط ولا نفعل شيء
-                print(f"فشل تحديث الرسالة للمستخدم {user_id} - ربما تم حذفها")
-        else:
-            # إذا لم توجد رسالة قديمة، نسجل هذا فقط
-            print(f"لا توجد رسالة سابقة للمستخدم {user_id} لتحديثها")
+                # إذا فشل التحديث (الرسالة محذوفة) -> سنرسل رسالة جديدة
+                pass
+        
+        # إرسال رسالة جديدة (إذا لم توجد رسالة سابقة أو فشل التحديث)
+        msg = await bot.send_message(user_id, info_text, reply_markup=markup)
+        player_ui_msgs.setdefault(user_id, {})['game_ui'] = msg.message_id
             
     except Exception as e:
         print(f"Error in send_or_update_game_ui: {e}")
-
 
 
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
