@@ -1787,21 +1787,21 @@ async def notify_followers_game_started(player_id, player_name, bot):
             )
         except:
             continue
+
+
 @router.callback_query(F.data == "rules")
 async def show_rules(c: types.CallbackQuery):
-    uid = c.from_user.id
-    text = (
-        "📜 **قوانين أونو (مختصر)**\n\n"
-        "• لازم تلعب نفس اللون أو نفس الرقم.\n"
-        "• +2: اللي بعدك يسحب ورقتين ويتجاوز دوره.\n"
-        "• 🔄: ينعكس/يتغير اتجاه اللعب (حسب نظام لعبتكم).\n"
-        "• 🚫: يتجاوز دور اللاعب التالي.\n"
-        "• 🌈 جوكر: تختار لون.\n"
-        "• 🔥 +4: تختار لون والخصم يسحب 4.\n\n"
-        "إذا تحب أكتب القوانين كاملة وبصيغة لعبتك بالضبط قلّي."
+    rules_text = (
+        "📜 **قوانين أونو العراق 🇮🇶**\n\n"
+        "1️⃣ لازم تخلص أوراقك قبل الكل.\n"
+        "2️⃣ الـ +2 والـ +4 تراكمية (تكدر تردها).\n"
+        "3️⃣ إذا بقت ورقة وحدة وما كلت أونو، تسحب عقوبة.\n"
+        "4️⃣ التحدي متاح على ورقة الـ +4 فقط.\n\n"
+        "🎮 العب بذكاء وفوز على أصدقائك!"
     )
-    kb = [[InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]]
-    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    kb = [[InlineKeyboardButton(text="🔙 عودة", callback_data="home")]]
+    await c.message.edit_text(rules_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await c.answer()
 
 # --- 1. دالة إرسال الطلب (عندما تضغط على "إرسال دعوة") ---
 @router.callback_query(F.data.startswith("invite_"))
