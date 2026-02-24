@@ -660,28 +660,23 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
         
         old_msgs = player_ui_msgs.get(user_id, {})
+        old_msg_id = old_msgs.get('game_ui')
         
-        if old_msgs.get('game_ui'):
+        # محاولة تعديل الرسالة إذا كانت موجودة
+        if old_msg_id:
             try:
                 await bot.edit_message_text(
                     text=info_text,
                     chat_id=user_id,
-                    message_id=old_msgs['game_ui'],
+                    message_id=old_msg_id,
                     reply_markup=markup
                 )
                 return
             except Exception:
+                # فشل التعديل -> نرسل رسالة جديدة
                 pass
         
-        try:
-            if old_msgs.get('game_ui'):
-                try:
-                    await bot.delete_message(user_id, old_msgs['game_ui'])
-                except:
-                    pass
-        except:
-            pass
-        
+        # إرسال رسالة جديدة
         msg = await bot.send_message(user_id, info_text, reply_markup=markup)
         player_ui_msgs.setdefault(user_id, {})['game_ui'] = msg.message_id
             
