@@ -92,10 +92,11 @@ async def on_play_friends(c: types.CallbackQuery):
 
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
+    print(f"[DEBUG] دخلت دالة يوزرنيم: {message.text}")
     user_id = message.from_user.id
     username = message.text.strip().lower()
 
-    # التحقق من شروط اليوزرنيم
+    # تحقق من شروط اليوزرنيم
     if not username.isalnum() or len(username) < 3:
         await message.answer("❌ اليوزر نيم يجب أن يكون حروف إنجليزية وأرقام فقط (3 أحرف على الأقل):")
         return
@@ -105,16 +106,13 @@ async def process_username_step(message: types.Message, state: FSMContext):
         await message.answer("❌ هذا اليوزر نيم مستخدم من قبل، اختر غيره.")
         return
 
-    # تحديث في القاعدة
     db_query("UPDATE users SET username_key = %s WHERE user_id = %s", (username, user_id), commit=True)
 
-    # جلب الاسم للترحيب والمينيو
     user_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
     p_name = user_info[0]['player_name'] if user_info else "لاعب"
 
     await message.answer(f"✅ تم اختيار اليوزر: {username}\n🎉 تم تفعيل حسابك!")
     await state.clear()
-    # إظهار القائمة الرئيسية تلقائياً بعد النجاح
     await show_main_menu(message, p_name, user_id=user_id)
 
 @router.message(RoomStates.upgrade_password)
