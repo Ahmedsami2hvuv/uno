@@ -838,18 +838,18 @@ async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
                        
 
 async def show_main_menu(message, name, user_id, cleanup=False, state=None):
-    # 1. تنظيف الحالة (حتى البوت ما يعلق بحالة قديمة)
+    # 1. تنظيف الحالة
     if state:
         await state.clear()
     
-    # 2. جلب بيانات المستخدم من قاعدة البيانات (ضروري لليوزر نيم واللغة)
+    # 2. جلب بيانات المستخدم
     user_rows = db_query("SELECT * FROM users WHERE user_id = %s", (user_id,))
     if not user_rows:
-        return # إذا المستخدم مو موجود بالقاعدة نوقف
+        return 
 
-    uid = user_id # تعريف الـ uid حتى ما يطلع خطأ بالكود
+    uid = user_id 
 
-    # 3. شرط اليوزر نيم (إذا ما عنده يوزر نيم نطلب منه يسوي واحد)
+    # 3. شرط اليوزر نيم
     if not user_rows[0].get('username_key'):
         target_msg = message.message if isinstance(message, types.CallbackQuery) else message
         await target_msg.answer("⚠️ يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط):")
@@ -857,22 +857,21 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
             await state.set_state(RoomStates.upgrade_username)
         return
 
-    # 4. بناء الكيبورد (كل الأزرار اللي بالدالة الكبيرة وزيادة)
+    # 4. بناء الكيبورد (تم تعديل سطر الحاسبة هنا ✅)
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
         [InlineKeyboardButton(text="👥 الأصدقاء", callback_data="social_menu")],
         [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_profile"),
-         InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
+         InlineKeyboardButton(text="🧮 حاسبة أونو", callback_data="mode_calc")], # عدلت الكول باك هنا
         [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
         [InlineKeyboardButton(text="🌍 تغيير اللغة", callback_data="change_lang")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # نص المنيو الرئيسي باستخدام نظام الترجمة (t)
     msg_text = t(uid, "main_menu", name=name)
 
-    # 5. وظيفة تنظيف الرسائل (cleanup)
+    # 5. وظيفة تنظيف الرسائل
     async def _cleanup_last_messages(msg_obj, limit=15):
         if not cleanup: return
         try:
@@ -882,7 +881,7 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
                 except: pass
         except: pass
 
-    # 6. إرسال الرسالة النهائية للمستخدم
+    # 6. إرسال الرسالة النهائية
     if isinstance(message, types.CallbackQuery):
         await _cleanup_last_messages(message.message, limit=15)
         try:
@@ -893,7 +892,6 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
     else:
         await _cleanup_last_messages(message, limit=15)
         await message.answer(msg_text, reply_markup=markup)
-
 
 @router.callback_query(F.data.startswith("switch_lang_"))
 async def switch_lang(c: types.CallbackQuery):
