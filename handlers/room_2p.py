@@ -1107,7 +1107,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await refresh_ui_2p(room_id, c.bot, {current_id: msg})
             for idx2, p2 in enumerate(players):
                 if p2['user_id'] == current_id:
-                    auto_draw_tasks[room_id] = asyncio.create_task((room_id, c.bot, idx2))
+                    auto_draw_tasks[room_id] = asyncio.create_task(background_auto_draw(room_id, c.bot, idx2))
                     break
             return
 
