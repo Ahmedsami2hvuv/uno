@@ -950,6 +950,14 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
         room_res = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_res: return
         players = get_ordered_players(room_id)
+        
+        # 🔴🔴🔴 أضف هذه الأسطر هنا 🔴🔴🔴
+        # مسح معرفات الرسائل القديمة للاعبين
+        for p in players:
+            if p['user_id'] in player_ui_msgs:
+                player_ui_msgs[p['user_id']] = {}
+        # 🔴🔴🔴 نهاية الإضافة 🔴🔴🔴
+
         deck = generate_h2o_deck()
         
         # توزيع الأوراق على كل اللاعبين
