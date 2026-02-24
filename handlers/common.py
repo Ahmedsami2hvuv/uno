@@ -579,28 +579,34 @@ async def room_create_menu(c: types.CallbackQuery):
     await c.message.edit_text("👥 اختر عدد اللاعبين:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
     @router.callback_query(F.data.startswith("setp_"))
-    async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
-        p_count = int(c.data.split("_")[1])
-        await state.update_data(p_count=p_count)
+async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
+    # استخراج عدد اللاعبين من الـ callback
+    p_count = int(c.data.split("_")[1])
+    await state.update_data(p_count=p_count)
 
-        limits = [100, 150, 200, 250, 300, 350, 400, 450, 500]
+    # قائمة النقاط
+    limits = [100, 150, 200, 250, 300, 350, 400, 450, 500]
 
-        kb = []
-        row = []
-        for val in limits:
-            row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"limit_{val}"))
-            if len(row) == 3:
-                kb.append(row)
-                row = []
-        if row: kb.append(row)
+    kb = []
+    row = []
+    for val in limits:
+        # التصحيح هنا: غيرنا limit_ إلى setl_ لكي تتطابق مع الـ Handler
+        row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"setl_{val}"))
+        if len(row) == 3:
+            kb.append(row)
+            row = []
+    if row: kb.append(row)
 
-        kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="limit_0")])
-        kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="room_create_start")])
+    # زر جولة واحدة (أيضاً حولناه إلى setl_0)
+    kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="setl_0")])
+    
+    # زر الرجوع (يرجعنا لاختيار عدد اللاعبين)
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="room_create_start")])
 
-        await c.message.edit_text(
-            f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط للفوز (Score Limit):", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-        )
+    await c.message.edit_text(
+        f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط للفوز (Score Limit):", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
 
 @router.callback_query(F.data.startswith("limit_"))
 async def finalize_room(c: types.CallbackQuery, state: FSMContext):
@@ -1997,3 +2003,27 @@ async def home_callback(c: types.CallbackQuery, state: FSMContext):
     # تشغيل المنيو الرئيسي عند الضغط على عودة
     await show_main_menu(c.message, name, user_id=c.from_user.id, state=state)
     await c.answer()
+
+
+@router.callback_query(F.data == "my_account")
+async def show_profile(c: types.CallbackQuery):
+    user_data = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
+    if not user_data:
+        return await c.answer("⚠️ لم يتم العثور على حسابك.")
+    
+    user = user_data[0]
+    txt = (
+        f"👤 **معلومات حسابك**\n\n"
+        f"📛 الاسم: {user['player_name']}\n"
+        f"🔑 الرمز: `{user.get('password', 'لا يوجد')}`\n"
+        f"⭐ النقاط: {user.get('online_points', 0)}\n"
+        f"🆔 معرفك: `{user['user_id']}`"
+    )
+    
+    kb = [
+        # الزر اللي طلبته يكون داخل قسم حسابي
+        [InlineKeyboardButton(text="✏️ تعديل الاسم أو الرمز", callback_data="edit_account_options")],
+        [InlineKeyboardButton(text="🔙 رجوع للقائمة الرئيسية", callback_data="home")]
+    ]
+    
+    await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
