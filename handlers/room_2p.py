@@ -573,22 +573,22 @@ async def force_draw_and_pass(room_id, bot, p_idx):
 
 
 async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
-    """إرسال رسالة جديدة أو تحديث الموجودة - مع حذف القديمة إذا فشل التعديل"""
+    """النسخة الكاملة: تجمع بين تفاصيلك القديمة وإصلاح مشكلة تحديث الرسالة"""
     try:
+        # جلب بيانات الغرفة واللاعبين
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data:
-            return
+        if not room_data: return
         room = room_data[0]
         players = get_ordered_players(room_id)
         curr_idx = room['turn_index']
         
         current_player = next((p for p in players if p['user_id'] == user_id), None)
-        if not current_player:
-            return
+        if not current_player: return
+        
         hand = sort_hand(safe_load(current_player['hand']))
         is_my_turn = (user_id == players[curr_idx]['user_id'])
         
-        # ========== بناء نص المعلومات ==========
+        # 1. بناء نص معلومات اللاعبين
         players_info = []
         for pl_idx, pl in enumerate(players):
             pl_name = pl.get('player_name') or 'لاعب'
@@ -603,45 +603,35 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
         if alert_text:
             info_text += f"\n──────────────\n📢 {alert_text}"
         
+        # 2. بناء شريط الوقت (🟢🟡🔴) - حافظنا على منطقك القديم
         if is_my_turn:
-            if remaining_seconds is not None:
-                remaining = remaining_seconds
-                total_steps = 10
-                steps_left = (remaining + 1) // 2
-                bar_parts = []
-                for s in range(total_steps):
-                    if s < steps_left:
-                        if remaining > 10:
-                            bar_parts.append("🟢")
-                        elif remaining > 5:
-                            bar_parts.append("🟡")
-                        else:
-                            bar_parts.append("🔴")
-                    else:
-                        bar_parts.append("⚫")
-                bar = "".join(bar_parts)
-                info_text += f"\n──────────────\n⏳ باقي {remaining} ثانية\n{bar}"
-            else:
-                info_text += f"\n──────────────\n⏳ باقي 20 ثانية\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢"
+            remaining = remaining_seconds if remaining_seconds is not None else 20
+            total_steps = 10
+            steps_left = (remaining + 1) // 2
+            bar_parts = []
+            for s in range(total_steps):
+                if s < steps_left:
+                    if remaining > 10: bar_parts.append("🟢")
+                    elif remaining > 5: bar_parts.append("🟡")
+                    else: bar_parts.append("🔴")
+                else:
+                    bar_parts.append("⚫")
+            bar = "".join(bar_parts)
+            info_text += f"\n──────────────\n⏳ باقي {remaining} ثانية\n{bar}\n✅ دورك 👍🏻"
         else:
-            info_text += f"\n──────────────"
-        
-        turn_status = "✅ دورك 👍🏻" if is_my_turn else "⏳ مو دورك"
-        info_text += f"\n{turn_status}"
+            info_text += f"\n──────────────\n⏳ مو دورك"
+            
         info_text += f"\n🃏 الورقة النازلة: [ {room['top_card']} ]"
-        info_text += f"\n\n════════════════════\n"
-        info_text += f"🃏 **أوراقك:**\n"
-        
-        # ========== بناء الأزرار ==========
+        info_text += f"\n\n════════════════════\n🃏 **أوراقك:**"
+
+        # 3. بناء الأزرار
         kb = []
         row = []
         for card_idx, card in enumerate(hand):
             row.append(InlineKeyboardButton(text=card, callback_data=f"pl_{room_id}_{card_idx}"))
             if len(row) == 3:
-                kb.append(row)
-                row = []
-        if row: 
-            kb.append(row)
+                kb.append(row); row = []
+        if row: kb.append(row)
         
         controls = []
         if is_my_turn:
@@ -650,44 +640,42 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
             if len(hand) == 2:
                 controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
         
+        # منطق الصيدة
         opp = players[1] if players[0]['user_id'] == user_id else players[0]
         opp_h = safe_load(opp.get('hand', '[]'))
         if len(opp_h) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
             controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
         
-        if controls: 
-            kb.append(controls)
+        if controls: kb.append(controls)
         kb.append([InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")])
-        
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
-        
-        old_msgs = player_ui_msgs.get(user_id, {})
-        old_msg_id = old_msgs.get('game_ui')
+
+        # 4. التحديث الذكي (الجزء الأهم لثبات الرسالة)
+        old_msg_id = player_ui_msgs.get(user_id, {}).get('game_ui')
         
         if old_msg_id:
-            # محاولة تحديث الرسالة الموجودة
             try:
+                # نحاول نعدل الرسالة فقط
                 await bot.edit_message_text(
-                    text=info_text,
-                    chat_id=user_id,
-                    message_id=old_msg_id,
+                    text=info_text, 
+                    chat_id=user_id, 
+                    message_id=old_msg_id, 
                     reply_markup=markup
                 )
-                return  # نجح التعديل، نخرج
-            except Exception:
-                # فشل التعديل (الرسالة محذوفة) → نحذف المعرف القديم
-                try:
-                    await bot.delete_message(user_id, old_msg_id)
-                except:
-                    pass
-                # ونكمل لإرسال رسالة جديدة
-        
-        # إرسال رسالة جديدة (إذا لم توجد رسالة سابقة أو فشل التعديل)
-        msg = await bot.send_message(user_id, info_text, reply_markup=markup)
-        player_ui_msgs.setdefault(user_id, {})['game_ui'] = msg.message_id
-            
+                return # التحديث نجح، نطلع من الدالة
+            except Exception as e:
+                # إذا الخطأ هو أن النص لم يتغير، نتجاهله ولا نفعل شيئاً
+                if "message is not modified" in str(e).lower():
+                    return
+                # أي خطأ آخر (مثل الرسالة انحذفت من قبل المستخدم)، نكمل عشان نرسل وحدة جديدة
+                pass
+
+        # إرسال رسالة جديدة فقط عند الضرورة القصوى
+        new_msg = await bot.send_message(user_id, info_text, reply_markup=markup)
+        player_ui_msgs.setdefault(user_id, {})['game_ui'] = new_msg.message_id
+
     except Exception as e:
-        print(f"Error in send_or_update_game_ui: {e}")
+        print(f"UI Error: {e}")
 
 
 async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
