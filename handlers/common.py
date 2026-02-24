@@ -339,13 +339,12 @@ async def register_password(message: types.Message, state: FSMContext):
     else:
         db_query("INSERT INTO users (user_id, username, player_name, password, is_registered, language) VALUES (%s, %s, %s, %s, TRUE, %s)", (uid, message.from_user.username or '', name, password, lang), commit=True)
     pending_join = data.get('pending_join')
+    # لا تعرض القائمة الآن! أطلب من المستخدم ادخال اليوزر نيم أولاً
     await state.clear()
     await message.answer(t(uid, "register_success", name=name, password=password))
-    if pending_join:
-        user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
-        if user_data:
-            await _join_room_by_code(message, pending_join, user_data[0])
-            return
+    await message.answer("يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
+    await state.set_state(RoomStates.upgrade_username)
+    return
     
 
 @router.callback_query(F.data == "auth_login")
@@ -797,19 +796,27 @@ async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
                        
 
 @router.callback_query(F.data == "home")
-async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
+async def show_main_menu(message, name, user_id=None, cleanup: bool = False, state=None):
     uid = user_id or (message.from_user.id if hasattr(message, "from_user") else 0)
-    # --- شرط منع الدخول للقائمة بدون تسجيل ---
+    # جلب بيانات المستخدم
     user = db_query("SELECT * FROM users WHERE user_id = %s AND is_registered = TRUE", (uid,))
+
+    # شرط: إذا لا يوجد مستخدم مسجل، اعرض اختيار اللغة
     if not user:
-        langs = [("ar", "🇸🇦 عربي"), ("en", "🇬🇧 English")]  # عدّل أو أضف لغاتك حسب الحاجة
+        langs = [("ar", "🇸🇦 عربي"), ("en", "🇬🇧 English")]
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=label, callback_data=f"set_lang_{code}")]
             for code, label in langs
         ])
         await message.answer("👋 مرحباً بك! يرجى اختيار اللغة للمتابعة:", reply_markup=kb)
         return
-    # --- نهاية الشرط ---
+
+    # شرط: إذا عنده حساب لكن ما عنده username_key لازم نعطيه الخطوة هذي
+    if not user[0].get('username_key'):
+        await message.answer("يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
+        if state:
+            await state.set_state(RoomStates.upgrade_username)
+        return
 
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
