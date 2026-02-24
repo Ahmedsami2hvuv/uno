@@ -573,7 +573,7 @@ async def force_draw_and_pass(room_id, bot, p_idx):
 
 
 async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, alert_text=None):
-    """إرسال رسالة جديدة أو تحديث الموجودة - بدون مسح."""
+    """إرسال رسالة جديدة أو تحديث الموجودة - مع حذف القديمة إذا فشل التعديل"""
     try:
         room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
         if not room_data:
@@ -665,7 +665,7 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
         old_msg_id = old_msgs.get('game_ui')
         
         if old_msg_id:
-            # تحديث الرسالة الموجودة
+            # محاولة تحديث الرسالة الموجودة
             try:
                 await bot.edit_message_text(
                     text=info_text,
@@ -673,12 +673,16 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
                     message_id=old_msg_id,
                     reply_markup=markup
                 )
-                return
+                return  # نجح التعديل، نخرج
             except Exception:
-                # إذا فشل التحديث (الرسالة محذوفة) -> سنرسل رسالة جديدة
-                pass
+                # فشل التعديل (الرسالة محذوفة) → نحذف المعرف القديم
+                try:
+                    await bot.delete_message(user_id, old_msg_id)
+                except:
+                    pass
+                # ونكمل لإرسال رسالة جديدة
         
-        # إرسال رسالة جديدة (إذا لم توجد رسالة سابقة أو فشل التحديث)
+        # إرسال رسالة جديدة (إذا لم توجد رسالة سابقة أو فشل التعديل)
         msg = await bot.send_message(user_id, info_text, reply_markup=markup)
         player_ui_msgs.setdefault(user_id, {})['game_ui'] = msg.message_id
             
