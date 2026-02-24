@@ -70,18 +70,16 @@ def generate_room_code():
 
 @router.message(F.text.in_(["ستارت", "/start"]))
 async def quick_start_button(message: types.Message, state: FSMContext):
-    # يمسح رسالة المستخدم حتى يبقى الشات نظيف
     try:
         await message.delete()
     except:
         pass
 
-    # جلب اسم اللاعب من قاعدة البيانات إذا موجود، وإذا لا نأخذ اسم التليجرام
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     name = user[0]['player_name'] if user else message.from_user.full_name
 
-    # إظهار القائمة الرئيسية فوراً
-    await show_main_menu(message, name, user_id=message.from_user.id, cleanup=True, state=state)
+    # استدعاء دالة المنيو اللي راح نضيفها جوه
+    await show_main_menu(message, name, user_id=message.from_user.id, state=state)
 
 @router.callback_query(F.data == "play_friends")
 async def on_play_friends(c: types.CallbackQuery):
@@ -800,69 +798,61 @@ async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
                        
 
 async def show_main_menu(message, name, user_id, cleanup=False, state=None):
-    # إذا كان اكو حالة قديمة للبوت نمسحها حتى يرجع للبداية
+    # 1. تنظيف الحالة (حتى البوت ما يعلق بحالة قديمة)
     if state:
         await state.clear()
     
-    msg_text = f"اهلا بك يا {name} في بوت أونو العراق 🇮🇶\nاختر من القائمة أدناه للبدء:"
-    
-    # أزرار القائمة الرئيسية
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 اللعب مع الأصدقاء", callback_data="play_friends")],
-        [InlineKeyboardButton(text="🏆 قائمة المتصدرين", callback_data="leaderboard")],
-        [InlineKeyboardButton(text="👤 حسابي الشخصي", callback_data="my_profile")],
-        [InlineKeyboardButton(text="🧮 حاسبة أونو", callback_data="calc_start")]
-    ])
-    
-    # إرسال الرسالة للمستخدم
-    if isinstance(message, types.Message):
-        await message.answer(msg_text, reply_markup=markup)
-    elif isinstance(message, types.CallbackQuery):
-        await message.message.edit_text(msg_text, reply_markup=markup)
-    # شرط: إذا عنده حساب لكن ما عنده username_key لازم نعطيه الخطوة هذي
-    if not user[0].get('username_key'):
-        await message.answer("يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
+    # 2. جلب بيانات المستخدم من قاعدة البيانات (ضروري لليوزر نيم واللغة)
+    user_rows = db_query("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    if not user_rows:
+        return # إذا المستخدم مو موجود بالقاعدة نوقف
+
+    uid = user_id # تعريف الـ uid حتى ما يطلع خطأ بالكود
+
+    # 3. شرط اليوزر نيم (إذا ما عنده يوزر نيم نطلب منه يسوي واحد)
+    if not user_rows[0].get('username_key'):
+        target_msg = message.message if isinstance(message, types.CallbackQuery) else message
+        await target_msg.answer("⚠️ يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط):")
         if state:
             await state.set_state(RoomStates.upgrade_username)
         return
 
+    # 4. بناء الكيبورد (كل الأزرار اللي بالدالة الكبيرة وزيادة)
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
-        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")],
-        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
+        [InlineKeyboardButton(text="👥 الأصدقاء", callback_data="social_menu")],
+        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_profile"),
          InlineKeyboardButton(text=t(uid, "btn_calculator"), callback_data="calc_start")],
-        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
-        [InlineKeyboardButton(text=t(uid, "btn_language"), callback_data="change_lang")],
+        [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
+        [InlineKeyboardButton(text="🌍 تغيير اللغة", callback_data="change_lang")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    
+    # نص المنيو الرئيسي باستخدام نظام الترجمة (t)
     msg_text = t(uid, "main_menu", name=name)
 
+    # 5. وظيفة تنظيف الرسائل (cleanup)
     async def _cleanup_last_messages(msg_obj, limit=15):
-        if not cleanup:
-            return
+        if not cleanup: return
         try:
             last_id = msg_obj.message_id
             for mid in range(last_id, max(last_id - limit, 1), -1):
-                try:
-                    await msg_obj.bot.delete_message(msg_obj.chat.id, mid)
-                except:
-                    pass
-        except:
-            pass
+                try: await msg_obj.bot.delete_message(msg_obj.chat.id, mid)
+                except: pass
+        except: pass
 
+    # 6. إرسال الرسالة النهائية للمستخدم
     if isinstance(message, types.CallbackQuery):
         await _cleanup_last_messages(message.message, limit=15)
         try:
             await message.message.edit_text(msg_text, reply_markup=markup)
-            await message.message.answer("تم تحديث القائمة 🎮", reply_markup=persistent_kb)
         except:
             await message.message.answer(msg_text, reply_markup=markup)
-            await message.message.answer("تم تحديث القائمة 🎮", reply_markup=persistent_kb)
+        await message.answer("تم تحديث القائمة 🎮")
     else:
         await _cleanup_last_messages(message, limit=15)
-        await message.answer(msg_text, reply_markup=persistent_kb)
-        await message.answer("اختر من القائمة أدناه:", reply_markup=markup)
+        await message.answer(msg_text, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith("switch_lang_"))
@@ -1934,3 +1924,14 @@ async def reject_game_invite(c: types.CallbackQuery):
         await c.answer("تم رفض الطلب بنجاح.")
     except:
         await c.message.edit_text("❌ تم رفض الطلب.")
+
+
+@router.callback_query(F.data == "home")
+async def home_callback(c: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
+    name = user[0]['player_name'] if user else c.from_user.full_name
+    
+    # تشغيل المنيو الرئيسي عند الضغط على عودة
+    await show_main_menu(c.message, name, user_id=c.from_user.id, state=state)
+    await c.answer()
