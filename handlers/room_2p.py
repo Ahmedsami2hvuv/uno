@@ -527,73 +527,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
     finally:
         if room_id in auto_draw_tasks:
             del auto_draw_tasks[room_id]
-
-async def background_auto_draw(room_id, bot, curr_idx):
-    """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع رسالة مؤقتة، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
-    try:
-        cancel_auto_draw_task(room_id)
-
-        players = get_ordered_players(room_id)
-        if curr_idx >= len(players): 
-            return
-        p_id = players[curr_idx]['user_id']
-        p_name = players[curr_idx].get('player_name') or "لاعب"
-
-        # إرسال رسالة مؤقتة للعد التنازلي (5 ثوانٍ)
-        for sec in range(5, 0, -1):
-            await send_temp_message_and_delete(
-                bot, p_id,
-                f"⏳ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد {sec} ثواني...",
-                delay=1.5
-            )
-            await asyncio.sleep(1)
-
-        # التحقق من أن اللاعب لا يزال في نفس الدور
-        room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-        if not room_data: 
-            return
-        room = room_data[0]
-        if room['turn_index'] != curr_idx:
-            return  # تغير الدور أثناء الانتظار
-
-        deck = safe_load(room['deck'])
-        if not deck:
-            deck = generate_h2o_deck()
-            random.shuffle(deck)
-
-        curr_hand = safe_load(players[curr_idx]['hand'])
-        new_card = deck.pop(0)
-        curr_hand.append(new_card)
-
-        # تحديث قاعدة البيانات
-        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
-                 (json.dumps(curr_hand), p_id), commit=True)
-        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
-                 (json.dumps(deck), room_id), commit=True)
-
-        # التحقق من صلاحية الورقة الجديدة
-        if check_validity(new_card, room['top_card'], room['current_color']):
-            await refresh_ui_2p(room_id, bot, {p_id: f"✅ سحبت ({new_card}) وتشتغل! الك 20 ثانية."})
-        else:
-            # الورقة غير صالحة: نمرر الدور للخصم فوراً
-            next_turn = (curr_idx + 1) % 2
-            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
-                     (next_turn, room_id), commit=True)
-            opp_id = players[next_turn]['user_id']
-            alerts = {
-                p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌ تم تمرير دورك.",
-                opp_id: f"➡️ {p_name} سحب ورقة ({new_card}) وما اشتغلت، هسة دورك!"
-            }
-            await refresh_ui_2p(room_id, bot, alerts)
-
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        print(f"Error in background_auto_draw: {e}")
-    finally:
-        if room_id in auto_draw_tasks:
-            del auto_draw_tasks[room_id]
-
+            
 async def send_temp_message_and_delete(bot, user_id, text, delay=1.5):
     msg = await bot.send_message(user_id, text)
     await asyncio.sleep(delay)
@@ -763,15 +697,6 @@ async def refresh_ui_2p(room_id, bot, alert_msg_dict=None):
         room = room_data[0]
         players = get_ordered_players(room_id)
         curr_idx = room['turn_index']
-
-        for p in players:
-            if p['user_id'] in temp_messages:
-                for msg_id in temp_messages[p['user_id']][:]:
-                    try:
-                        await bot.delete_message(p['user_id'], msg_id)
-                    except:
-                        pass
-                temp_messages[p['user_id']] = []
 
         for i, p in enumerate(players):
             user_id = p['user_id']
@@ -1181,7 +1106,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             await refresh_ui_2p(room_id, c.bot, {current_id: msg})
             for idx2, p2 in enumerate(players):
                 if p2['user_id'] == current_id:
-                    auto_draw_tasks[room_id] = asyncio.create_task(background_auto_draw(room_id, c.bot, idx2))
+                    auto_draw_tasks[room_id] = asyncio.create_task((room_id, c.bot, idx2))
                     break
             return
 
