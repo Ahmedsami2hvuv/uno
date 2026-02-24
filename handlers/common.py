@@ -77,7 +77,7 @@ async def quick_start_button(message: types.Message):
         pass
 
     # تنظيف + منيو جديد
-    await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True)
+    await show_main_menu(message, message.from_user.full_name, user_id=message.from_user.id, cleanup=True, state=state)
 
 @router.callback_query(F.data == "play_friends")
 async def on_play_friends(c: types.CallbackQuery):
