@@ -99,7 +99,7 @@ async def process_username_step(message: types.Message, state: FSMContext):
 
     # التحقق من شروط اليوزرنيم
     if not username.isalnum() or len(username) < 3:
-        await message.answer("❌ اليوزر نيم يجب أن يكون حروف إنجليزية وأرقام فقط (3 أحرف على الأقل).")
+           await message.answer("✍️ يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
         return
 
     check = db_query("SELECT user_id FROM users WHERE username_key = %s", (username,))
