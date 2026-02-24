@@ -113,7 +113,7 @@ async def process_username_step(message: types.Message, state: FSMContext):
 
     await message.answer(f"✅ تم اختيار اليوزر: {username}\n🎉 تم تفعيل حسابك!")
     await state.clear()
-    await show_main_menu(message, p_name, user_id=user_id)
+    await show_main_menu(message, p_name, user_id=user_id, state=state)
 
 @router.message(RoomStates.upgrade_password)
 async def process_password_step(message: types.Message, state: FSMContext):
