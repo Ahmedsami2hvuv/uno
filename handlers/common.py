@@ -580,30 +580,38 @@ async def room_create_menu(c: types.CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("setp_"))
+@router.callback_query(F.data.startswith("setp_"))
 async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
-    # هذا السطر يجب أن يكون مسبوقاً بـ 4 مسافات
-    p_count = int(c.data.split("_")[1])
-    await state.update_data(p_count=p_count)
+    # استخراج عدد اللاعبين وتخزينه في الـ State
+    try:
+        p_count = int(c.data.split("_")[1])
+        await state.update_data(p_count=p_count)
+    except:
+        p_count = 2 # افتراضي
 
-    limits = [100, 150, 200, 250, 300, 350, 400, 450, 500]
+    # قائمة حدود النقاط
+    limits = [100, 150, 200, 250, 300, 400, 500]
 
     kb = []
     row = []
     for val in limits:
+        # ملاحظة: استخدمنا setl_ لكي تتطابق مع الهاندلر الموجود بملفك
         row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"setl_{val}"))
-        if len(row) == 3:
+        if len(row) == 2:
             kb.append(row)
             row = []
     if row: kb.append(row)
 
     kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="setl_0")])
-    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="room_create_start")])
+    
+    # زر الرجوع المهم جداً
+    kb.append([InlineKeyboardButton(text="🔙 رجوع للبداية", callback_data="room_create_start")])
 
     await c.message.edit_text(
-        f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط للفوز (Score Limit):", 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        f"🔢 تم اختيار {p_count} لاعبين.\nالآن حدد **سقف النقاط** لإنهاء اللعبة:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        parse_mode="Markdown"
     )
-
 @router.callback_query(F.data == "my_account")
 async def show_profile(c: types.CallbackQuery):
     user_data = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
@@ -621,7 +629,7 @@ async def show_profile(c: types.CallbackQuery):
     
     kb = [
         [InlineKeyboardButton(text="✏️ تعديل الاسم أو الرمز", callback_data="edit_account_options")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        [InlineKeyboardButton(text="🔙 رجوع للقائمة الرئيسية", callback_data="home")]
     ]
     
     await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
