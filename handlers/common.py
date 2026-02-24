@@ -92,13 +92,12 @@ async def on_play_friends(c: types.CallbackQuery):
 
 @router.message(RoomStates.upgrade_username)
 async def process_username_step(message: types.Message, state: FSMContext):
-    print(f"[DEBUG] دخلت دالة يوزرنيم: {message.text}")
     user_id = message.from_user.id
     username = message.text.strip().lower()
 
-    # تحقق من شروط اليوزرنيم
+    # التحقق من شروط اليوزرنيم
     if not username.isalnum() or len(username) < 3:
-        await message.answer("❌ اليوزر نيم يجب أن يكون حروف إنجليزية وأرقام فقط (3 أحرف على الأقل):")
+        await message.answer("❌ اليوزر نيم يجب أن يكون حروف إنجليزية وأرقام فقط (3 أحرف على الأقل).")
         return
 
     check = db_query("SELECT user_id FROM users WHERE username_key = %s", (username,))
@@ -107,7 +106,6 @@ async def process_username_step(message: types.Message, state: FSMContext):
         return
 
     db_query("UPDATE users SET username_key = %s WHERE user_id = %s", (username, user_id), commit=True)
-
     user_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
     p_name = user_info[0]['player_name'] if user_info else "لاعب"
 
@@ -341,13 +339,10 @@ async def register_password(message: types.Message, state: FSMContext):
         db_query("UPDATE users SET player_name = %s, password = %s, is_registered = TRUE, language = %s WHERE user_id = %s", (name, password, lang, uid), commit=True)
     else:
         db_query("INSERT INTO users (user_id, username, player_name, password, is_registered, language) VALUES (%s, %s, %s, %s, TRUE, %s)", (uid, message.from_user.username or '', name, password, lang), commit=True)
-    pending_join = data.get('pending_join')
-    # لا تعرض القائمة الآن! أطلب من المستخدم ادخال اليوزر نيم أولاً
     await state.clear()
     await message.answer(t(uid, "register_success", name=name, password=password))
     await message.answer("يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
     await state.set_state(RoomStates.upgrade_username)
-    return
     
 
 @router.callback_query(F.data == "auth_login")
