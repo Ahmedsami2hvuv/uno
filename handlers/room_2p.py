@@ -463,7 +463,7 @@ async def color_timeout_2p(room_id, bot, player_id):
 
 
 async def background_auto_draw(room_id, bot, curr_idx):
-    """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع رسالة مؤقتة، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
+    """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع تحديث واجهة اللعب، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
     try:
         cancel_auto_draw_task(room_id)
 
@@ -473,12 +473,13 @@ async def background_auto_draw(room_id, bot, curr_idx):
         p_id = players[curr_idx]['user_id']
         p_name = players[curr_idx].get('player_name') or "لاعب"
 
-        # إرسال رسالة مؤقتة للعد التنازلي (5 ثوانٍ)
+        # العد التنازلي من خلال تحديث واجهة اللعب فقط
         for sec in range(5, 0, -1):
-            await send_temp_message_and_delete(
-                bot, p_id,
-                f"⏳ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد {sec} ثواني...",
-                delay=1.5
+            # تحديث واجهة اللاعب مع رسالة العد التنازلي
+            await send_or_update_game_ui(
+                room_id, bot, p_id,
+                remaining_seconds=None,
+                alert_text=f"⏳ ما عندك ورقة مناسبة! راح اسحبلك تلقائياً بعد {sec} ثواني..."
             )
             await asyncio.sleep(1)
 
