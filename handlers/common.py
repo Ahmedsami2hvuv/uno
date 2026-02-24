@@ -10,6 +10,10 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 router = Router()
 
+@router.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer("✅ البوت يعمل! مرحباً.")
+    
 replay_data = {}
 pending_invites = {}
 pending_next_round = {}
