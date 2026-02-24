@@ -797,15 +797,20 @@ async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
                        
 
 @router.callback_query(F.data == "home")
-async def go_home(c: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    uid = c.from_user.id
-    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
-    name = user[0]["player_name"] if user else (c.from_user.full_name or "لاعب")
-    await show_main_menu(c, name, user_id=uid, cleanup=True)
-    
 async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     uid = user_id or (message.from_user.id if hasattr(message, "from_user") else 0)
+    # --- شرط منع الدخول للقائمة بدون تسجيل ---
+    user = db_query("SELECT * FROM users WHERE user_id = %s AND is_registered = TRUE", (uid,))
+    if not user:
+        langs = [("ar", "🇸🇦 عربي"), ("en", "🇬🇧 English")]  # عدّل أو أضف لغاتك حسب الحاجة
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=label, callback_data=f"set_lang_{code}")]
+            for code, label in langs
+        ])
+        await message.answer("👋 مرحباً بك! يرجى اختيار اللغة للمتابعة:", reply_markup=kb)
+        return
+    # --- نهاية الشرط ---
+
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
@@ -834,19 +839,17 @@ async def show_main_menu(message, name, user_id=None, cleanup: bool = False):
     if isinstance(message, types.CallbackQuery):
         await _cleanup_last_messages(message.message, limit=15)
         try:
-            # نرسل الأزرار السفلية مع تعديل النص
             await message.message.edit_text(msg_text, reply_markup=markup)
-            # إرسال رسالة بسيطة لتفعيل الأزرار السفلية
             await message.message.answer("تم تحديث القائمة 🎮", reply_markup=persistent_kb)
         except:
             await message.message.answer(msg_text, reply_markup=markup)
             await message.message.answer("تم تحديث القائمة 🎮", reply_markup=persistent_kb)
     else:
         await _cleanup_last_messages(message, limit=15)
-        # هنا نرسل الـ persistent_kb مع رسالة المنيو الأساسية مباشرة
-        await message.answer(msg_text, reply_markup=persistent_kb) # أضفناها هنا
-        # ونرسل أزرار الـ Inline (القائمة) في رسالة منفصلة أو نفس الرسالة
+        await message.answer(msg_text, reply_markup=persistent_kb)
         await message.answer("اختر من القائمة أدناه:", reply_markup=markup)
+
+
 @router.callback_query(F.data.startswith("switch_lang_"))
 async def switch_lang(c: types.CallbackQuery):
     uid = c.from_user.id
