@@ -81,6 +81,46 @@ async def quick_start_button(message: types.Message, state: FSMContext):
     # استدعاء دالة المنيو اللي راح نضيفها جوه
     await show_main_menu(message, name, user_id=message.from_user.id, state=state)
 
+@router.message(RoomStates.upgrade_username)
+async def process_upgrade_username(message: types.Message, state: FSMContext):
+    new_username = message.text.strip().lower()
+
+    # التأكد من الطول وشكل اليوزر
+    if len(new_username) < 3 or not new_username.isalnum():
+        return await message.answer("❌ اليوزر نيم يجب أن يكون 3 أحرف أو أكثر (إنجليزي وأرقام فقط):")
+
+    # التأكد إذا اليوزر محجوز لغير لاعب
+    check = db_query("SELECT user_id FROM users WHERE username_key = %s", (new_username,))
+    if check:
+        return await message.answer("❌ هذا اليوزر نيم محجوز لشخص آخر، اختر غيره:")
+
+    # حفظ اليوزر مؤقتاً بالـ state والانتقال لطلب كلمة السر
+    await state.update_data(temp_username=new_username)
+    await message.answer("✅ يوزر رائع! الآن أرسل كلمة السر التي تريدها (4 أحرف أو أكثر):")
+    await state.set_state(RoomStates.upgrade_password)
+
+@router.message(RoomStates.upgrade_password)
+async def process_upgrade_password(message: types.Message, state: FSMContext):
+    password = message.text.strip()
+    if len(password) < 4:
+        return await message.answer("❌ كلمة السر ضعيفة، أرسل 4 أحرف أو أكثر:")
+
+    data = await state.get_data()
+    username = data.get('temp_username')
+
+    # تحديث قاعدة البيانات بشكل نهائي
+    db_query("UPDATE users SET username_key = %s, password_key = %s WHERE user_id = %s",
+             (username, password, message.from_user.id), commit=True)
+
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
+    name = user[0]['player_name'] if user else message.from_user.full_name
+
+    await message.answer(f"🎉 مبارك! تم تحديث حسابك بنجاح.\n👤 يوزرك: @{username}\n🔑 كلمة السر: {password}")
+    
+    # نرجعه للمنيو الرئيسي
+    await show_main_menu(message, name, user_id=message.from_user.id, state=state)
+
+
 @router.callback_query(F.data == "play_friends")
 async def on_play_friends(c: types.CallbackQuery):
     uid = c.from_user.id
