@@ -488,7 +488,7 @@ async def background_auto_draw(room_id, bot, curr_idx):
             return
         room = room_data[0]
         if room['turn_index'] != curr_idx:
-            return  # تغير الدور أثناء الانتظار
+            return
 
         deck = safe_load(room['deck'])
         if not deck:
@@ -500,7 +500,33 @@ async def background_auto_draw(room_id, bot, curr_idx):
         curr_hand.append(new_card)
 
         # تحديث قاعدة البيانات
-        db_query("UPDATE room_players SET*
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", 
+                 (json.dumps(curr_hand), p_id), commit=True)
+        db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", 
+                 (json.dumps(deck), room_id), commit=True)
+
+        # التحقق من صلاحية الورقة الجديدة
+        if check_validity(new_card, room['top_card'], room['current_color']):
+            await refresh_ui_2p(room_id, bot, {p_id: f"✅ سحبت ({new_card}) وتشتغل! الك 20 ثانية."})
+        else:
+            # الورقة غير صالحة: نمرر الدور للخصم فوراً
+            next_turn = (curr_idx + 1) % 2
+            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", 
+                     (next_turn, room_id), commit=True)
+            opp_id = players[next_turn]['user_id']
+            alerts = {
+                p_id: f"📥 سحبت ({new_card}) وما تشتغل ❌ تم تمرير دورك.",
+                opp_id: f"➡️ {p_name} سحب ورقة ({new_card}) وما اشتغلت، هسة دورك!"
+            }
+            await refresh_ui_2p(room_id, bot, alerts)
+
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Error in background_auto_draw: {e}")
+    finally:
+        if room_id in auto_draw_tasks:
+            del auto_draw_tasks[room_id]
 
 async def background_auto_draw(room_id, bot, curr_idx):
     """دالة السحب التلقائي: تنتظر 5 ثوانٍ مع رسالة مؤقتة، تسحب ورقة، ثم تتصرف حسب صلاحيتها."""
