@@ -579,7 +579,7 @@ async def room_create_menu(c: types.CallbackQuery):
     await c.message.edit_text("👥 اختر عدد اللاعبين:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
     @router.callback_query(F.data.startswith("setp_"))
-async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
+    async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
     # استخراج عدد اللاعبين من الـ callback
     p_count = int(c.data.split("_")[1])
     await state.update_data(p_count=p_count)
