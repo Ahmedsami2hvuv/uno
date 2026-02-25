@@ -35,6 +35,25 @@ def get_player_stats(user_id):
     """
     return db_query(sql, (user_id,))
 
+@router.callback_query(F.data == "mode_calc")
+async def start_calc(callback: types.CallbackQuery, state: FSMContext):
+    print("✅ تم الدخول إلى mode_calc")  # سطر للتأكد
+    await state.clear()
+    uid = callback.from_user.id
+    saved_p = get_saved_players(uid)
+    data = {
+        "all_players": saved_p, 
+        "selected": [], 
+        "ceiling": 0, 
+        "scores": {}, 
+        "direction": "CW", 
+        "calculated_losers": [], 
+        "temp_round": {}, 
+        "current_winner": ""
+    }
+    await state.update_data(calc_data=data)
+    await render_player_manager(callback.message, state)
+    
 # --- واجهة إدارة اللاعبين ---
 @router.callback_query(F.data == "mode_calc")
 async def start_calc(callback: types.CallbackQuery, state: FSMContext):
