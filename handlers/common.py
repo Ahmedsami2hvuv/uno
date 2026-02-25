@@ -581,12 +581,11 @@ async def room_create_menu(c: types.CallbackQuery):
 
 
 
-# 1. دالة حسابي (بداخلها زر تعديل الحساب حصراً)
+# --- زر تعديل حسابي داخل خانة حسابي ---
 @router.callback_query(F.data == "my_account")
 async def show_profile(c: types.CallbackQuery):
     user_data = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
-    if not user_data:
-        return await c.answer("⚠️ لم يتم العثور على حسابك.")
+    if not user_data: return await c.answer("⚠️ حسابك غير مسجل.")
     
     user = user_data[0]
     txt = (
@@ -595,12 +594,47 @@ async def show_profile(c: types.CallbackQuery):
         f"🔑 الرمز: `{user.get('password', 'لا يوجد')}`\n"
         f"⭐ النقاط: {user.get('online_points', 0)}"
     )
-    
     kb = [
         [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account_options")],
-        [InlineKeyboardButton(text="🔙 رجوع للقائمة الرئيسية", callback_data="home")]
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# --- إنشاء غرفة وإعطاء "رابط" بدل الكود ---
+@router.callback_query(F.data.startswith("roomset_"))
+async def create_friends_room(c: types.CallbackQuery, state: FSMContext):
+    limit = int(c.data.split("_")[1])
+    data = await state.get_data()
+    p_count = data.get("p_count", 2)
+    
+    import random, string
+    room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    
+    # حفظ الغرفة في الداتابيز
+    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit) VALUES (%s, %s, %s, %s)", 
+             (room_id, c.from_user.id, p_count, limit), commit=True)
+    
+    # إضافة المنشئ
+    user_db = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
+    p_name = user_db[0]['player_name'] if user_db else c.from_user.full_name
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, join_order) VALUES (%s, %s, %s, %s)",
+             (room_id, c.from_user.id, p_name, 1), commit=True)
+             
+    # إنشاء الرابط (تلقائياً باستخدام يوزر البوت)
+    bot_info = await c.bot.get_me()
+    invite_link = f"https://t.me/{bot_info.username}?start=join_{room_id}"
+    
+    text = (
+        f"✅ **تم إنشاء الغرفة بنجاح!**\n\n"
+        f"🎯 السقف: {limit}\n"
+        f"👥 اللاعبين: {p_count}\n\n"
+        f"🔗 **رابط الدعوة المباشر:**\n`{invite_link}`\n\n"
+        f"أرسل الرابط لصديقك، وبمجرد الضغط عليه سيدخل للعبة فوراً!"
+    )
+    kb = [[InlineKeyboardButton(text="공 مشاركة الرابط", url=f"https://t.me/share/url?url={invite_link}&text=تعال العب وياي اونو!")] ,
+          [InlineKeyboardButton(text="🏠 الرئيسية", callback_data="home")]]
+    
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 # 2. دالة عرض أزرار السقف (للعب مع الأصدقاء)
 @router.callback_query(F.data.startswith("setp_"))
