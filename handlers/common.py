@@ -612,27 +612,36 @@ async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         parse_mode="Markdown"
     )
+    
 @router.callback_query(F.data == "my_account")
 async def show_profile(c: types.CallbackQuery):
+    # جلب بيانات المستخدم من قاعدة البيانات
     user_data = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
     if not user_data:
         return await c.answer("⚠️ لم يتم العثور على حسابك.")
     
     user = user_data[0]
+    
+    # النص اللي يظهر للمستخدم
     txt = (
-        f"👤 **معلومات حسابك**\n\n"
+        f"👤 **معلومات حسابك الشخصي**\n\n"
         f"📛 الاسم: {user['player_name']}\n"
         f"🔑 الرمز: `{user.get('password', 'لا يوجد')}`\n"
-        f"⭐ النقاط: {user.get('online_points', 0)}\n"
-        f"🆔 معرفك: `{user['user_id']}`"
+        f"⭐ النقاط: {user.get('online_points', 0)}\n\n"
+        f"تگدر تعدل اسمك أو رمزك من الزر الجوة 👇"
     )
     
+    # هنا "زر التعديل" اللي شلع قلبك، صار بداخل خانة حسابي
     kb = [
-        [InlineKeyboardButton(text="✏️ تعديل الاسم أو الرمز", callback_data="edit_account_options")],
+        [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account_options")],
         [InlineKeyboardButton(text="🔙 رجوع للقائمة الرئيسية", callback_data="home")]
     ]
     
-    await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    await c.message.edit_text(
+        text=txt, 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), 
+        parse_mode="Markdown"
+    )
 
 @router.callback_query(F.data.startswith("limit_"))
 async def finalize_room(c: types.CallbackQuery, state: FSMContext):
