@@ -141,7 +141,56 @@ async def del_p(callback: types.CallbackQuery, state: FSMContext):
     await render_player_manager(callback.message, state)
 
 
-@router.callback_query(F.data.startswith("set_")) # أو setl_ حسب ما يرسله ملف common
+@router.callback_query(F.data.startswith("cset_"))
+async def start_session(callback: types.CallbackQuery, state: FSMContext):
+    val = int(callback.data.split("_")[1])
+    state_data = await state.get_data()
+    
+    if 'calc_data' not in state_data:
+        return await callback.answer("⚠️ خطأ في البيانات، ابدأ من جديد.", show_alert=True)
+        
+    d = state_data['calc_data']
+    d['ceiling'] = val
+    # تهيئة السكور لكل لاعب مختار
+    d['scores'] = {p: 0 for p in d['selected']}
+    await state.update_data(calc_data=d)
+    
+    await callback.answer(f"🚀 تم تحديد السقف: {val}")
+    await render_main_ui(callback.message, state)
+
+async def render_main_ui(message, state, extra=""):
+    d = (await state.get_data())['calc_data']
+    img = IMG_CW if d['direction'] == "CW" else IMG_CCW
+    table = f"🏆 **السقف: {d['ceiling']}**\n━━━━━━━━━━━━━━\n"
+    for p, s in d['scores'].items(): 
+        table += f"👤 {p}: `{s}`\n"
+    table += "━━━━━━━━━━━━━━\n"
+    table += f"🔄 الاتجاه: {'مع العقارب' if d['direction'] == 'CW' else 'عكس العقارب'}"
+    if extra: 
+        table += f"\n\n📢 {extra}"
+    
+    kb = [
+        [InlineKeyboardButton(text="🔄 تغيير الاتجاه", callback_data="c_dir"), 
+         InlineKeyboardButton(text="🔔 إنهاء الجولة", callback_data="c_end_round")]
+    ]
+    
+    # إرسال الصورة مع الكابشن
+    if hasattr(message, 'photo') and message.photo:
+        await message.edit_media(
+            media=InputMediaPhoto(media=img, caption=table), 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+    else: 
+        await bot.send_photo(
+            message.chat.id, 
+            photo=img, 
+            caption=table, 
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+        try: 
+            await message.delete()
+        except: 
+            pass
 
 async def render_main_ui(message, state, extra=""):
     d = (await state.get_data())['calc_data']
