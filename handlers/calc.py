@@ -292,37 +292,37 @@ async def next_rnd(callback: types.CallbackQuery, state: FSMContext):
     await render_main_ui(callback.message, state, "بدأت جولة جديدة، بالتوفيق!")
 
 
-# 1. دالة اختيار سقف الحاسبة
 @router.callback_query(F.data == "go_ceiling")
 async def choose_ceiling(callback: types.CallbackQuery, state: FSMContext):
+    # مصفوفة الأزرار بـ callback خاص للحاسبة فقط: cset_
     limits = [100, 150, 200, 250, 300, 400, 500]
     kb = []
     row = []
     for val in limits:
-        # هنا استخدمنا calcset_ لكي تكون خاصة بالحاسبة فقط
-        row.append(InlineKeyboardButton(text=str(val), callback_data=f"calcset_{val}"))
+        row.append(InlineKeyboardButton(text=str(val), callback_data=f"cset_{val}"))
         if len(row) == 3:
             kb.append(row)
             row = []
     if row: kb.append(row)
-    
     kb.append([InlineKeyboardButton(text="🔙 رجوع للاعبين", callback_data="mode_calc")])
+    
     await callback.message.edit_text("🎯 **حدد سقف الخسارة للحاسبة:**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-# 2. دالة تشغيل الجلسة (تشتغل فوراً بعد تحديد سقف الحاسبة)
-@router.callback_query(F.data.startswith("calcset_"))
+@router.callback_query(F.data.startswith("cset_"))
 async def start_session(callback: types.CallbackQuery, state: FSMContext):
     val = int(callback.data.split("_")[1])
     state_data = await state.get_data()
     
     if 'calc_data' not in state_data:
-        return await callback.answer("⚠️ انتهت الجلسة، ارجع للقائمة الرئيسية وابدأ من جديد.", show_alert=True)
+        return await callback.answer("⚠️ خطأ في البيانات، ابدأ من جديد.", show_alert=True)
         
     d = state_data['calc_data']
     d['ceiling'] = val
+    # تهيئة السكور لكل لاعب مختار
     d['scores'] = {p: 0 for p in d['selected']}
     await state.update_data(calc_data=d)
     
     await callback.answer(f"🚀 تم تحديد السقف: {val}")
+    # هذه الدالة موجودة بملفك وهي التي تفتح واجهة الحساب الفعلية
     await render_main_ui(callback.message, state)
 
