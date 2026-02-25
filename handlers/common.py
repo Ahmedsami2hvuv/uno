@@ -579,69 +579,77 @@ async def room_create_menu(c: types.CallbackQuery):
     await c.message.edit_text("👥 اختر عدد اللاعبين:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 
-@router.callback_query(F.data.startswith("setp_"))
-@router.callback_query(F.data.startswith("setp_"))
-async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
-    # استخراج عدد اللاعبين وتخزينه في الـ State
-    try:
-        p_count = int(c.data.split("_")[1])
-        await state.update_data(p_count=p_count)
-    except:
-        p_count = 2 # افتراضي
 
-    # قائمة حدود النقاط
-    limits = [100, 150, 200, 250, 300, 400, 500]
 
-    kb = []
-    row = []
-    for val in limits:
-        # ملاحظة: استخدمنا setl_ لكي تتطابق مع الهاندلر الموجود بملفك
-        row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"setl_{val}"))
-        if len(row) == 2:
-            kb.append(row)
-            row = []
-    if row: kb.append(row)
-
-    kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="setl_0")])
-    
-    # زر الرجوع المهم جداً
-    kb.append([InlineKeyboardButton(text="🔙 رجوع للبداية", callback_data="room_create_start")])
-
-    await c.message.edit_text(
-        f"🔢 تم اختيار {p_count} لاعبين.\nالآن حدد **سقف النقاط** لإنهاء اللعبة:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-        parse_mode="Markdown"
-    )
-    
+# 1. دالة حسابي (بداخلها زر تعديل الحساب حصراً)
 @router.callback_query(F.data == "my_account")
 async def show_profile(c: types.CallbackQuery):
-    # جلب بيانات المستخدم من قاعدة البيانات
     user_data = db_query("SELECT * FROM users WHERE user_id = %s", (c.from_user.id,))
     if not user_data:
         return await c.answer("⚠️ لم يتم العثور على حسابك.")
     
     user = user_data[0]
-    
-    # النص اللي يظهر للمستخدم
     txt = (
-        f"👤 **معلومات حسابك الشخصي**\n\n"
+        f"👤 **معلومات حسابك**\n\n"
         f"📛 الاسم: {user['player_name']}\n"
         f"🔑 الرمز: `{user.get('password', 'لا يوجد')}`\n"
-        f"⭐ النقاط: {user.get('online_points', 0)}\n\n"
-        f"تگدر تعدل اسمك أو رمزك من الزر الجوة 👇"
+        f"⭐ النقاط: {user.get('online_points', 0)}"
     )
     
-    # هنا "زر التعديل" اللي شلع قلبك، صار بداخل خانة حسابي
     kb = [
         [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account_options")],
         [InlineKeyboardButton(text="🔙 رجوع للقائمة الرئيسية", callback_data="home")]
     ]
+    await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# 2. دالة عرض أزرار السقف (للعب مع الأصدقاء)
+@router.callback_query(F.data.startswith("setp_"))
+async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
+    p_count = int(c.data.split("_")[1])
+    await state.update_data(p_count=p_count)
+    
+    limits = [100, 150, 200, 250, 300, 400, 500]
+    kb = []
+    row = []
+    for val in limits:
+        # لاحظ هنا استخدمنا roomset_ لكي لا تتداخل مع الحاسبة
+        row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"roomset_{val}"))
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row: kb.append(row)
+    
+    kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="roomset_0")])
+    kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="home")])
     
     await c.message.edit_text(
-        text=txt, 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), 
-        parse_mode="Markdown"
+        f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط لإنهاء اللعبة:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
+
+# 3. دالة إنشاء الغرفة (تشتغل فوراً بعد ما اللاعب يختار السقف)
+@router.callback_query(F.data.startswith("roomset_"))
+async def create_friends_room(c: types.CallbackQuery, state: FSMContext):
+    limit = int(c.data.split("_")[1])
+    data = await state.get_data()
+    p_count = data.get("p_count", 2)
+    
+    # توليد كود الغرفة وحفظها
+    import random, string
+    room_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit) VALUES (%s, %s, %s, %s)", 
+             (room_id, c.from_user.id, p_count, limit), commit=True)
+    
+    # إضافة المنشئ للغرفة
+    user_db = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
+    p_name = user_db[0]['player_name'] if user_db else c.from_user.full_name
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, join_order) VALUES (%s, %s, %s, %s)",
+             (room_id, c.from_user.id, p_name, 1), commit=True)
+             
+    text = f"✅ **تم إنشاء الغرفة بنجاح!**\n\n🔢 الكود: `{room_id}`\n👥 العدد: {p_count}\n🎯 السقف: {limit}\n\nأرسل الكود لأصدقائك للانضمام."
+    kb = [[InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="home")]]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    
 
 @router.callback_query(F.data.startswith("limit_"))
 async def finalize_room(c: types.CallbackQuery, state: FSMContext):
