@@ -140,36 +140,9 @@ async def del_p(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(calc_data=d)
     await render_player_manager(callback.message, state)
 
-# --- نظام اللعب ---
-@router.callback_query(F.data == "go_ceiling")
-async def choose_ceiling(callback: types.CallbackQuery, state: FSMContext):
-    kb = [
-        [InlineKeyboardButton(text="100", callback_data="set_100"),
-         InlineKeyboardButton(text="150", callback_data="set_150"),
-         InlineKeyboardButton(text="200", callback_data="set_200")],
-        [InlineKeyboardButton(text="250", callback_data="set_250"),
-         InlineKeyboardButton(text="300", callback_data="set_300"),
-         InlineKeyboardButton(text="400", callback_data="set_400")],
-        [InlineKeyboardButton(text="500", callback_data="set_500")],
-        [InlineKeyboardButton(text="🔙 رجوع لاختيار اللاعبين", callback_data="mode_calc")] # زر الرجوع
-    ]
-    await callback.message.edit_text("🎯 **حدد سقف الخسارة للحاسبة:**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
 @router.callback_query(F.data.startswith("set_")) # أو setl_ حسب ما يرسله ملف common
-async def start_session(callback: types.CallbackQuery, state: FSMContext):
-    val = int(callback.data.split("_")[1])
-    state_data = await state.get_data()
-    
-    # التأكد من وجود البيانات لتجنب الخطأ
-    if 'calc_data' not in state_data:
-        return await callback.answer("⚠️ حدث خطأ، يرجى إعادة تشغيل الحاسبة.")
-        
-    d = state_data['calc_data']
-    d['ceiling'] = val
-    d['scores'] = {p: 0 for p in d['selected']}
-    await state.update_data(calc_data=d)
-    
-    await callback.answer(f"🚀 بدأت الجلسة بسقف {val} نقطة")
-    await render_main_ui(callback.message, state)
+
 async def render_main_ui(message, state, extra=""):
     d = (await state.get_data())['calc_data']
     img = IMG_CW if d['direction'] == "CW" else IMG_CCW
@@ -318,35 +291,38 @@ async def next_rnd(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(calc_data=d)
     await render_main_ui(callback.message, state, "بدأت جولة جديدة، بالتوفيق!")
 
-@router.callback_query(F.data == "c_next_round")
-async def next_rnd(callback: types.CallbackQuery, state: FSMContext):
-    await render_main_ui(callback.message, state, "جولة جديدة!")
 
-
-@router.callback_query(F.data.startswith("setl_"))
-async def start_calc_with_limit(c: types.CallbackQuery, state: FSMContext):
-    # استخراج السقف المختار
-    limit = int(c.data.split("_")[1])
-    data = await state.get_data()
+# 1. دالة اختيار سقف الحاسبة
+@router.callback_query(F.data == "go_ceiling")
+async def choose_ceiling(callback: types.CallbackQuery, state: FSMContext):
+    limits = [100, 150, 200, 250, 300, 400, 500]
+    kb = []
+    row = []
+    for val in limits:
+        # هنا استخدمنا calcset_ لكي تكون خاصة بالحاسبة فقط
+        row.append(InlineKeyboardButton(text=str(val), callback_data=f"calcset_{val}"))
+        if len(row) == 3:
+            kb.append(row)
+            row = []
+    if row: kb.append(row)
     
-    # التأكد أن المستخدم فعلاً في مسار الحاسبة (وليس إنشاء غرفة أونلاين)
-    # ملاحظة: سأفترض أنك تضع علامة في الـ state تسمى mode
-    if data.get("mode") == "calculator":
-        p_count = data.get("p_count", 2)
-        # تهيئة بيانات الحاسبة
-        calc_initial_data = {
-            'scores': {}, # سيتم ملؤها بأسماء اللاعبين
-            'score_limit': limit,
-            'names': [],
-            'history': [],
-            'round': 1
-        }
-        await state.update_data(calc_data=calc_initial_data)
+    kb.append([InlineKeyboardButton(text="🔙 رجوع للاعبين", callback_data="mode_calc")])
+    await callback.message.edit_text("🎯 **حدد سقف الخسارة للحاسبة:**", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# 2. دالة تشغيل الجلسة (تشتغل فوراً بعد تحديد سقف الحاسبة)
+@router.callback_query(F.data.startswith("calcset_"))
+async def start_session(callback: types.CallbackQuery, state: FSMContext):
+    val = int(callback.data.split("_")[1])
+    state_data = await state.get_data()
+    
+    if 'calc_data' not in state_data:
+        return await callback.answer("⚠️ انتهت الجلسة، ارجع للقائمة الرئيسية وابدأ من جديد.", show_alert=True)
         
-        # هنا يتم توجيه المستخدم لإدخال أسماء اللاعبين أو اختيارهم
-        await c.message.edit_text(f"✅ تم تحديد السقف: {limit}\nالآن اختر اللاعبين أو أضف أسماءهم:")
-        # استدعاء دالة عرض قائمة اللاعبين (الموجودة أصلاً في ملفك)
-        await show_calc_main(c, state)
-    else:
-        # إذا لم يكن في وضع الحاسبة، نترك الأمر لملف common.py ليعالج إنشاء الغرفة
-        pass
+    d = state_data['calc_data']
+    d['ceiling'] = val
+    d['scores'] = {p: 0 for p in d['selected']}
+    await state.update_data(calc_data=d)
+    
+    await callback.answer(f"🚀 تم تحديد السقف: {val}")
+    await render_main_ui(callback.message, state)
+
