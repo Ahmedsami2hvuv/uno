@@ -52,12 +52,12 @@ async def clean_chat_messages(message: types.Message):
     deleted_count = 0
     
     for mid in range(current_msg_id, max(current_msg_id - 200, 0), -1):
-    try:
-    await message.bot.delete_message(chat_id, mid)
-    deleted_count += 1
-    except:
-    pass
-    
+        try:
+            await message.bot.delete_message(chat_id, mid)
+            deleted_count += 1
+        except Exception:
+            pass
+
     name = message.from_user.full_name
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     if user:
@@ -75,35 +75,35 @@ async def cmd_start_with_deeplink(message: types.Message, state: FSMContext):
     text = (message.text or "").strip()
     parts = text.split(maxsplit=1)
     if len(parts) >= 2 and parts[1].startswith("join_"):
-    code = parts[1][5:].strip()
-    if code:
-    user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
-    if user and user[0].get("is_registered"):
-    await _join_room_by_code(message, code, user[0])
-    return
-    if not user:
-    db_query(
-    "INSERT INTO users (user_id, username, is_registered) VALUES (%s, %s, FALSE)",
-    (message.from_user.id, message.from_user.username or ""),
-    commit=True,
-    )
-    await state.update_data(pending_join=code)
-    uid = message.from_user.id
-    lang = get_lang(uid)
-    set_lang(uid, lang)
-    kb = InlineKeyboardMarkup(
-    inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
-    [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")],
-    ]
-    )
-    welcome = t(uid, "welcome_new") + "\n\n🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً."
-    await message.answer(welcome, reply_markup=kb)
-    return
+        code = parts[1][5:].strip()
+        if code:
+            user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
+            if user and user[0].get("is_registered"):
+                await _join_room_by_code(message, code, user[0])
+                return
+            if not user:
+                db_query(
+                    "INSERT INTO users (user_id, username, is_registered) VALUES (%s, %s, FALSE)",
+                    (message.from_user.id, message.from_user.username or ""),
+                    commit=True,
+                )
+                await state.update_data(pending_join=code)
+                uid = message.from_user.id
+                lang = get_lang(uid)
+                set_lang(uid, lang)
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
+                        [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")],
+                    ]
+                )
+                welcome = t(uid, "welcome_new") + "\n\n🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً."
+                await message.answer(welcome, reply_markup=kb)
+                return
     try:
-    await message.delete()
+        await message.delete()
     except Exception:
-    pass
+        pass
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     name = user[0]["player_name"] if user else message.from_user.full_name
     await show_main_menu(message, name, user_id=message.from_user.id, state=state)
@@ -112,9 +112,9 @@ async def cmd_start_with_deeplink(message: types.Message, state: FSMContext):
 @router.message(F.text == "ستارت")
 async def quick_start_button(message: types.Message, state: FSMContext):
     try:
-    await message.delete()
+        await message.delete()
     except Exception:
-    pass
+        pass
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     name = user[0]["player_name"] if user else message.from_user.full_name
     await show_main_menu(message, name, user_id=message.from_user.id, state=state)
@@ -353,37 +353,37 @@ async def _join_room_by_code(message, code, user_data):
     players_list += f"{marker} {rp['player_name']}\n"
 
     if p_count >= max_p:
-    db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
-    all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
-    if max_p == 2:
-    for p in all_players:
-    try: 
-    await message.bot.send_message(p['user_id'], t(p['user_id'], "🎮 بدأت اللعبة! استعد..."))
-    except: 
-    pass
-    await asyncio.sleep(0.5) # ⬅�� السطر المضاف للإصلاح
-    from handlers.room_2p import start_new_round
-    await start_new_round(code, message.bot, start_turn_idx=0)
+        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
+        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+        if max_p == 2:
+            for p in all_players:
+                try:
+                    await message.bot.send_message(p['user_id'], t(p['user_id'], "🎮 بدأت اللعبة! استعد..."))
+                except Exception:
+                    pass
+            await asyncio.sleep(0.5)
+            from handlers.room_2p import start_new_round
+            await start_new_round(code, message.bot, start_turn_idx=0)
+        else:
+            for p in all_players:
+                try:
+                    await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
+                except Exception:
+                    pass
+            await asyncio.sleep(0.5)
+            from handlers.room_multi import start_game_multi
+            await start_game_multi(code, message.bot)
     else:
-    for p in all_players:
-    try: 
-    await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
-    except: 
-    pass
-    await asyncio.sleep(0.5) # ⬅️ السطر المضاف للإصلاح
-    from handlers.room_multi import start_game_multi
-    await start_game_multi(code, message.bot)
-    else:
-    wait_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-    ])
-    await message.answer(t(uid, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list), reply_markup=wait_kb)
-    try:
-    notify_text = t(creator_id, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list)
-    notify_text += t(creator_id, "waiting_players", n=max_p - p_count)
-    await message.bot.send_message(creator_id, notify_text, reply_markup=wait_kb)
-    except:
-    pass
+        wait_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await message.answer(t(uid, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list), reply_markup=wait_kb)
+        try:
+            notify_text = t(creator_id, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list)
+            notify_text += t(creator_id, "waiting_players", n=max_p - p_count)
+            await message.bot.send_message(creator_id, notify_text, reply_markup=wait_kb)
+        except Exception:
+            pass
 
 @router.callback_query(F.data == "auth_register")
 async def auth_register(c: types.CallbackQuery, state: FSMContext):
@@ -396,15 +396,15 @@ async def register_name(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     name = message.text.strip()
     if not name or len(name) < 2:
-    await message.answer(t(uid, "name_too_short"))
-    return
+        await message.answer(t(uid, "name_too_short"))
+        return
     if len(name) > 20:
-    await message.answer(t(uid, "name_too_long"))
-    return
+        await message.answer(t(uid, "name_too_long"))
+        return
     existing = db_query("SELECT * FROM users WHERE player_name = %s", (name,))
     if existing:
-    await message.answer(t(uid, "name_taken"))
-    return
+        await message.answer(t(uid, "name_taken"))
+        return
     await state.update_data(reg_name=name)
     await message.answer(t(uid, "ask_password"))
     await state.set_state(RoomStates.register_password)
@@ -414,16 +414,16 @@ async def register_password(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     password = message.text.strip()
     if len(password) < 4:
-    await message.answer(t(uid, "password_too_short"))
-    return
+        await message.answer(t(uid, "password_too_short"))
+        return
     data = await state.get_data()
     name = data.get('reg_name', 'Player')
     lang = get_lang(uid)
     user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
     if user:
-    db_query("UPDATE users SET player_name = %s, password = %s, is_registered = TRUE, language = %s WHERE user_id = %s", (name, password, lang, uid), commit=True)
+        db_query("UPDATE users SET player_name = %s, password_key = %s, is_registered = TRUE, language = %s WHERE user_id = %s", (name, password, lang, uid), commit=True)
     else:
-    db_query("INSERT INTO users (user_id, username, player_name, password, is_registered, language) VALUES (%s, %s, %s, %s, TRUE, %s)", (uid, message.from_user.username or '', name, password, lang), commit=True)
+        db_query("INSERT INTO users (user_id, username, player_name, password_key, is_registered, language) VALUES (%s, %s, %s, %s, TRUE, %s)", (uid, message.from_user.username or '', name, password, lang), commit=True)
     await state.clear()
     await message.answer(t(uid, "register_success", name=name, password=password))
     await message.answer("يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
@@ -442,12 +442,12 @@ async def login_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
     user = db_query("SELECT * FROM users WHERE player_name = %s", (name,))
     if not user:
-    await message.answer(t(uid, "login_fail"))
-    return
-    if not user[0].get('password'):
-    await message.answer(t(uid, "login_fail"))
-    await state.clear()
-    return
+        await message.answer(t(uid, "login_fail"))
+        return
+    if not user[0].get('password') and not user[0].get('password_key'):
+        await message.answer(t(uid, "login_fail"))
+        await state.clear()
+        return
     await state.update_data(login_target_name=name)
     await message.answer(t(uid, "login_ask_password"))
     await state.set_state(RoomStates.login_password)
@@ -459,12 +459,13 @@ async def login_password(message: types.Message, state: FSMContext):
     name = data.get('login_target_name')
     user = db_query("SELECT * FROM users WHERE player_name = %s", (name,))
     if not user:
-    await message.answer(t(uid, "login_fail"))
-    await state.clear()
-    return
-    if message.text.strip() != user[0].get('password', ''):
-    await message.answer(t(uid, "login_fail"))
-    return
+        await message.answer(t(uid, "login_fail"))
+        await state.clear()
+        return
+    pwd = user[0].get('password_key') or user[0].get('password', '')
+    if message.text.strip() != pwd:
+        await message.answer(t(uid, "login_fail"))
+        return
     old_id = user[0]['user_id']
     db_query("UPDATE users SET user_id = %s, username = %s, is_registered = TRUE WHERE player_name = %s", (uid, message.from_user.username or '', name), commit=True)
     data_state = await state.get_data()
@@ -472,10 +473,10 @@ async def login_password(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(t(uid, "login_success", name=name))
     if pending_join:
-    user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
-    if user_data:
-    await _join_room_by_code(message, pending_join, user_data[0])
-    return
+        user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+        if user_data:
+            await _join_room_by_code(message, pending_join, user_data[0])
+        return
     await show_main_menu(message, name, user_id=uid)
 
 @router.callback_query(F.data == "random_play")
@@ -483,8 +484,8 @@ async def menu_random(c: types.CallbackQuery):
     uid = c.from_user.id
     user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
     if not user:
-    await c.answer(t(uid, "room_not_found"), show_alert=True)
-    return
+        await c.answer(t(uid, "room_not_found"), show_alert=True)
+        return
 
     # البحث عن غرفة عشوائية تنتظر لاعب ثانٍ
     waiting = db_query("""
