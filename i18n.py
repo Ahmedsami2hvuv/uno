@@ -1,133 +1,234 @@
+# -*- coding: utf-8 -*-
+"""
+ترجمة البوت: عربي (ar)، إنجليزي (en)، فارسي إيراني (fa)
+"""
 from database import db_query
 
-_cache = {}
+# الترجمة الافتراضية عند غياب المفتاح
+DEFAULT_LANG = "ar"
 
-def get_lang(user_id):
-    if user_id in _cache:
-        return _cache[user_id]
-    row = db_query("SELECT language FROM users WHERE user_id = %s", (user_id,))
-    lang = row[0]['language'] if row and row[0].get('language') else 'ar'
-    _cache[user_id] = lang
-    return lang
+def get_lang(user_id: int) -> str:
+    try:
+        r = db_query("SELECT language FROM users WHERE user_id = %s", (user_id,))
+        if r and r[0].get("language") in ("ar", "en", "fa"):
+            return r[0]["language"]
+    except Exception:
+        pass
+    return DEFAULT_LANG
 
-def set_lang(user_id, lang):
-    _cache[user_id] = lang
+def set_lang(user_id: int, lang: str):
+    try:
+        db_query("UPDATE users SET language = %s WHERE user_id = %s", (lang, user_id), commit=True)
+    except Exception:
+        pass
 
-def t(user_id, key, **kwargs):
+def t(user_id: int, key: str, **kwargs) -> str:
     lang = get_lang(user_id)
-    # البحث عن المفتاح، وإذا لم يوجد نرجع المفتاح نفسه كـ string
-    text = TEXTS.get(key, {}).get(lang, key)
+    texts = TEXTS.get(lang) or TEXTS.get(DEFAULT_LANG) or {}
+    s = texts.get(key) or TEXTS.get("ar", {}).get(key) or key
     if kwargs:
         try:
-            text = text.format(**kwargs)
-        except: pass
-    return text
+            s = s.format(**kwargs)
+        except KeyError:
+            pass
+    return s
 
+# --- النصوص حسب اللغة ---
 TEXTS = {
-    "choose_lang": {
-        "ar": "🌍 اختر لغتك / Choose your language:",
-        "en": "🌍 Choose your language / اختر لغتك:",
+    "ar": {
+        "welcome_new": "مرحباً! 👋\nسجّل الدخول أو أنشئ حساباً للعب.",
+        "btn_register": "📝 تسجيل",
+        "btn_login": "🔐 دخول",
+        "ask_name": "✍️ أرسل اسمك (اسم اللاعب):",
+        "ask_password": "🔑 أرسل كلمة السر (4 أحرف أو أكثر):",
+        "name_too_short": "❌ الاسم قصير جداً. أرسل اسمك مرة ثانية:",
+        "name_too_long": "❌ الاسم طويل جداً. اختصر وأرسل:",
+        "name_taken": "❌ هذا الاسم مستخدم. اختر غيره:",
+        "password_too_short": "❌ كلمة السر ضعيفة. أرسل 4 أحرف أو أكثر:",
+        "reg_success": "✅ تم التسجيل! مرحباً {name}، يوزرك: @{username}",
+        "profile_complete": "✅ تم! مرحباً {name}. كلمة السر محفوظة.",
+        "register_success": "✅ تم التسجيل بنجاح! مرحباً {name}، كلمة السر: {password}",
+        "login_ask_name": "🔐 أدخل اسم المستخدم (اليوزر نيم) للدخول:",
+        "login_ask_password": "🔑 أدخل كلمة السر:",
+        "login_fail": "❌ فشل الدخول. تحقق من اليوزر نيم وكلمة السر.",
+        "login_success": "✅ تم الدخول! مرحباً {name}.",
+        "room_not_found": "❌ الغرفة غير موجودة أو انتهت.",
+        "already_in_room": "⚠️ أنت بالفعل في غرفة.",
+        "room_full": "⚠️ الغرفة ممتلئة.",
+        "game_starting_2p": "🎮 بدأت اللعبة! استعد...",
+        "game_starting_multi": "🎮 بدأت اللعبة! عدد اللاعبين: {n}. استعد...",
+        "🎮 بدأت اللعبة! استعد...": "🎮 بدأت اللعبة! استعد...",
+        "btn_home": "🏠 الرئيسية",
+        "player_joined": "✅ انضم {name} للغرفة ({count}/{max}). اللاعبون: {list}",
+        "waiting_players": " ⏳ بانتظار {n} لاعب.",
+        "🤌🏻اصبر شوي ": "🤌🏻 اصبر شوي",
+        "➕ إنشاء غرفة": "➕ إنشاء غرفة",
+        "🚪 انضمام لغرفة": "🚪 انضمام لغرفة",
+        "الغرف المفتوحة": "الغرف المفتوحة",
+        "الرجوع": "🔙 رجوع",
+        "friends_menu": "🎮 اللعب مع الأصدقاء\n\nاختر:",
+        "no_open_rooms": "⚠️ لا توجد غرف مفتوحة.",
+        "open_rooms_list": "📋 غرفك المفتوحة:",
+        "room_detail": "🛏 غرفة: {code}\n👥 اللاعبون ({count}/{max}): {players}\n\n🔗 رابط الدخول:\n{link}",
+        "btn_close_room": "🚪 إغلاق الغرفة",
+        "btn_back": "🔙 رجوع",
+        "my_open_rooms": "الغرف المفتوحة",
+        "room_gone": "⚠️ الغرفة لم تعد موجودة.",
+        "room_closed_notification": "⚠️ تم إغلاق الغرفة من قبل صاحبها.",
+        "room_closed": "✅ تم إغلاق الغرفة.",
+        "no_open_rooms_text": "لا توجد غرف مفتوحة. أنشئ غرفة أو انضم بكود.",
+        "send_room_code": "🔑 أرسل رمز الغرفة (5 أحرف):",
+        "btn_random_play": "🎲 لعب عشوائي",
+        "btn_play_friends": "👥 لعب مع الأصدقاء",
+        "btn_my_account": "👤 حسابي",
+        "main_menu": "🎮 أهلاً {name}\n\nاختر:",
+        "lang_changed": "✅ تم تغيير اللغة.",
+        "status_online": "🟢 متصل الآن",
+        "status_offline": "⚫ آخر ظهور: {time}",
+        "profile_title": "👤 **{name}**\n🆔 @{username}\n⭐ نقاط: {points}\n{status}",
+        "btn_follow": "➕ متابعة",
+        "btn_unfollow": "➖ إلغاء المتابعة",
+        "btn_invite_play": "🎮 دعوة للعب",
+        "btn_followers_list": "👥 المتابعون",
+        "btn_following_list": "👥 المتابَعون",
+        "btn_friends": "👥 الأصدقاء",
+        "btn_calc": "🧮 حاسبة أونو",
+        "btn_rules": "📜 القوانين",
+        "btn_leaderboard": "📊 الإحصائيات",
+        "btn_change_lang": "🌍 تغيير اللغة",
+        "choose_language": "🌍 **اختر اللغة:**",
+        "menu_updated": "تم تحديث القائمة 🎮",
+        "invite_pending_room": "🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً.",
     },
-    # --- نظام التسجيل والترقية الجديد ---
-    "reg_upgrade_notice": {
-        "ar": "⚠️ مهلاً عزيزي اللاعب..\n\nلقد أطلقنا تحديثاً جديداً لنظام الحسابات! يرجى اختيار 'اسم مستخدم' (Username) وكلمة سر لتتمكن من إضافة الأصدقاء ومتابعتهم.",
-        "en": "⚠️ Wait, dear player..\n\nWe launched a new account system! Please choose a 'Username' and password to be able to follow and add friends.",
+    "en": {
+        "welcome_new": "Welcome! 👋\nLog in or register to play.",
+        "btn_register": "📝 Register",
+        "btn_login": "🔐 Log in",
+        "ask_name": "✍️ Send your name (player name):",
+        "ask_password": "🔑 Send your password (4+ characters):",
+        "name_too_short": "❌ Name too short. Send again:",
+        "name_too_long": "❌ Name too long. Shorten and send:",
+        "name_taken": "❌ This name is taken. Choose another:",
+        "password_too_short": "❌ Password too weak. Send 4+ characters:",
+        "reg_success": "✅ Registered! Hi {name}, username: @{username}",
+        "profile_complete": "✅ Done! Welcome {name}. Password saved.",
+        "register_success": "✅ Registered! Hi {name}, password: {password}",
+        "login_ask_name": "🔐 Enter username to log in:",
+        "login_ask_password": "🔑 Enter password:",
+        "login_fail": "❌ Login failed. Check username and password.",
+        "login_success": "✅ Logged in! Hi {name}.",
+        "room_not_found": "❌ Room not found or expired.",
+        "already_in_room": "⚠️ You are already in a room.",
+        "room_full": "⚠️ Room is full.",
+        "game_starting_2p": "🎮 Game started! Get ready...",
+        "game_starting_multi": "🎮 Game started! Players: {n}. Get ready...",
+        "🎮 بدأت اللعبة! استعد...": "🎮 Game started! Get ready...",
+        "btn_home": "🏠 Home",
+        "player_joined": "✅ {name} joined the room ({count}/{max}). Players: {list}",
+        "waiting_players": " ⏳ Waiting for {n} player(s).",
+        "🤌🏻اصبر شوي ": "🤌🏻 Hold on...",
+        "➕ إنشاء غرفة": "➕ Create room",
+        "🚪 انضمام لغرفة": "🚪 Join room",
+        "الغرف المفتوحة": "Open rooms",
+        "الرجوع": "🔙 Back",
+        "friends_menu": "🎮 Play with friends\n\nChoose:",
+        "no_open_rooms": "⚠️ No open rooms.",
+        "open_rooms_list": "📋 Your open rooms:",
+        "room_detail": "🛏 Room: {code}\n👥 Players ({count}/{max}): {players}\n\n🔗 Join link:\n{link}",
+        "btn_close_room": "🚪 Close room",
+        "btn_back": "🔙 Back",
+        "my_open_rooms": "Open rooms",
+        "room_gone": "⚠️ Room no longer exists.",
+        "room_closed_notification": "⚠️ The room was closed by the host.",
+        "room_closed": "✅ Room closed.",
+        "no_open_rooms_text": "No open rooms. Create one or join with a code.",
+        "send_room_code": "🔑 Send the room code (5 characters):",
+        "btn_random_play": "🎲 Random play",
+        "btn_play_friends": "👥 Play with friends",
+        "btn_my_account": "👤 My account",
+        "main_menu": "🎮 Hello {name}\n\nChoose:",
+        "lang_changed": "✅ Language changed.",
+        "status_online": "🟢 Online",
+        "status_offline": "⚫ Last seen: {time}",
+        "profile_title": "👤 **{name}**\n🆔 @{username}\n⭐ Points: {points}\n{status}",
+        "btn_follow": "➕ Follow",
+        "btn_unfollow": "➖ Unfollow",
+        "btn_invite_play": "🎮 Invite to play",
+        "btn_followers_list": "👥 Followers",
+        "btn_following_list": "👥 Following",
+        "btn_friends": "👥 Friends",
+        "btn_calc": "🧮 Uno Calculator",
+        "btn_rules": "📜 Rules",
+        "btn_leaderboard": "📊 Statistics",
+        "btn_change_lang": "🌍 Change language",
+        "choose_language": "🌍 **Choose language:**",
+        "menu_updated": "Menu updated 🎮",
+        "invite_pending_room": "🎮 You have an invite to join a room! Log in or register and you will join automatically.",
     },
-    "ask_username_key": {
-        "ar": "✍️ أرسل الآن 'اسم المستخدم' الذي تريده (بالإنجليزية والأرقام فقط، مثال: ahmed_uno):",
-        "en": "✍️ Send the 'Username' you want (English & numbers only, e.g., ahmed_uno):",
+    "fa": {
+        "welcome_new": "خوش آمدید! 👋\nبرای بازی وارد شوید یا ثبت‌نام کنید.",
+        "btn_register": "📝 ثبت‌نام",
+        "btn_login": "🔐 ورود",
+        "ask_name": "✍️ نام خود را بفرستید (نام بازیکن):",
+        "ask_password": "🔑 رمز عبور را بفرستید (حداقل ۴ کاراکتر):",
+        "name_too_short": "❌ نام خیلی کوتاه است. دوباره بفرستید:",
+        "name_too_long": "❌ نام خیلی بلند است. کوتاه کنید و بفرستید:",
+        "name_taken": "❌ این نام قبلاً استفاده شده. یکی دیگر انتخاب کنید:",
+        "password_too_short": "❌ رمز عبور ضعیف است. حداقل ۴ کاراکتر بفرستید:",
+        "reg_success": "✅ ثبت‌نام شد! سلام {name}، نام کاربری: @{username}",
+        "profile_complete": "✅ انجام شد! خوش آمدید {name}. رمز ذخیره شد.",
+        "register_success": "✅ ثبت‌نام انجام شد! سلام {name}، رمز: {password}",
+        "login_ask_name": "🔐 نام کاربری را برای ورود وارد کنید:",
+        "login_ask_password": "🔑 رمز عبور را وارد کنید:",
+        "login_fail": "❌ ورود ناموفق. نام کاربری و رمز را بررسی کنید.",
+        "login_success": "✅ وارد شدید! سلام {name}.",
+        "room_not_found": "❌ اتاق پیدا نشد یا منقضی شده.",
+        "already_in_room": "⚠️ شما الان در یک اتاق هستید.",
+        "room_full": "⚠️ اتاق پر است.",
+        "game_starting_2p": "🎮 بازی شروع شد! آماده باشید...",
+        "game_starting_multi": "🎮 بازی شروع شد! بازیکنان: {n}. آماده باشید...",
+        "🎮 بدأت اللعبة! استعد...": "🎮 بازی شروع شد! آماده باشید...",
+        "btn_home": "🏠 خانه",
+        "player_joined": "✅ {name} به اتاق پیوست ({count}/{max}). بازیکنان: {list}",
+        "waiting_players": " ⏳ در انتظار {n} بازیکن.",
+        "🤌🏻اصبر شوي ": "🤌🏻 صبر کنید...",
+        "➕ إنشاء غرفة": "➕ ساخت اتاق",
+        "🚪 انضمام لغرفة": "🚪 پیوستن به اتاق",
+        "الغرف المفتوحة": "اتاق‌های باز",
+        "الرجوع": "🔙 بازگشت",
+        "friends_menu": "🎮 بازی با دوستان\n\nانتخاب کنید:",
+        "no_open_rooms": "⚠️ اتاق بازی وجود ندارد.",
+        "open_rooms_list": "📋 اتاق‌های باز شما:",
+        "room_detail": "🛏 اتاق: {code}\n👥 بازیکنان ({count}/{max}): {players}\n\n🔗 لینک ورود:\n{link}",
+        "btn_close_room": "🚪 بستن اتاق",
+        "btn_back": "🔙 بازگشت",
+        "my_open_rooms": "اتاق‌های باز",
+        "room_gone": "⚠️ اتاق دیگر وجود ندارد.",
+        "room_closed_notification": "⚠️ اتاق توسط سازنده بسته شد.",
+        "room_closed": "✅ اتاق بسته شد.",
+        "no_open_rooms_text": "اتاق بازی ندارید. یکی بسازید یا با کد وارد شوید.",
+        "send_room_code": "🔑 کد اتاق (۵ کاراکتر) را بفرستید:",
+        "btn_random_play": "🎲 بازی تصادفی",
+        "btn_play_friends": "👥 بازی با دوستان",
+        "btn_my_account": "👤 حساب من",
+        "main_menu": "🎮 سلام {name}\n\nانتخاب کنید:",
+        "lang_changed": "✅ زبان تغییر کرد.",
+        "status_online": "🟢 آنلاین",
+        "status_offline": "⚫ آخرین بازدید: {time}",
+        "profile_title": "👤 **{name}**\n🆔 @{username}\n⭐ امتیاز: {points}\n{status}",
+        "btn_follow": "➕ دنبال کردن",
+        "btn_unfollow": "➖ لغو دنبال",
+        "btn_invite_play": "🎮 دعوت به بازی",
+        "btn_followers_list": "👥 دنبال‌کنندگان",
+        "btn_following_list": "👥 دنبال‌شده‌ها",
+        "btn_friends": "👥 دوستان",
+        "btn_calc": "🧮 ماشین‌حساب اونو",
+        "btn_rules": "📜 قوانین",
+        "btn_leaderboard": "📊 آمار",
+        "btn_change_lang": "🌍 تغییر زبان",
+        "choose_language": "🌍 **زبان را انتخاب کنید:**",
+        "menu_updated": "منو به‌روز شد 🎮",
+        "invite_pending_room": "🎮 دعوت برای پیوستن به اتاق داری! وارد شو یا ثبت‌نام کن تا خودکار به اتاق بیایی.",
     },
-    "ask_password_key": {
-        "ar": "🔒 ممتاز! الآن أرسل رمزاً سرياً (Password) لحماية حسابك:",
-        "en": "🔒 Great! Now send a secret code (Password) to protect your account:",
-    },
-    "username_taken": {
-        "ar": "❌ عذراً، هذا الاسم محجوز للاعب آخر. جرب اسماً مختلفاً:",
-        "en": "❌ Sorry, this username is taken. Try another one:",
-    },
-    "reg_success": {
-        "ar": "🎉 تهانينا {name}! تم إنشاء حسابك بنجاح.\nاسمك الفريد هو: @{username}",
-        "en": "🎉 Congratulations {name}! Your account is ready.\nYour unique ID is: @{username}",
-    },
-    # --- البروفايل والنظام الاجتماعي ---
-    "profile_title": {
-        "ar": "👤 ملف اللاعب: {name}\n🆔 المعرف: @{username}\n🏆 النقاط: {points}\n📊 الحالة: {status}",
-        "en": "👤 Player Profile: {name}\n🆔 Username: @{username}\n🏆 Points: {points}\n📊 Status: {status}",
-    },
-    "status_online": {"ar": "🟢 متصل الآن", "en": "🟢 Online"},
-    "status_offline": {"ar": "⚪ غير متصل ({time})", "en": "⚪ Offline ({time})"},
-    "btn_follow": {"ar": "➕ متابعة", "en": "➕ Follow"},
-    "btn_unfollow": {"ar": "➖ إلغاء المتابعة", "en": "➖ Unfollow"},
-    "btn_invite_play": {"ar": "🎮 دعوة للعب", "en": "🎮 Invite to Play"},
-    "btn_spectate": {"ar": "👁 مشاهدة اللعب", "en": "👁 Spectate"},
-    "btn_following_list": {"ar": "📉 من أتابعهم", "en": "📉 Following"},
-    "btn_followers_list": {"ar": "📈 المتابعون", "en": "📈 Followers"},
-    
-    # --- نظام الإسكات (Mute) ---
-    "mute_settings": {
-        "ar": "🔕 هل تريد إسكات دعوات اللعب من هذا اللاعب؟",
-        "en": "🔕 Do you want to mute play invites from this player?",
-    },
-    "btn_mute_1h": {"ar": "ساعة واحدة", "en": "1 Hour"},
-    "btn_mute_24h": {"ar": "يوم كامل", "en": "24 Hours"},
-    "btn_mute_forever": {"ar": "للأبد", "en": "Forever"},
-    "btn_unmute": {"ar": "إلغاء الإسكات", "en": "Unmute"},
-
-    # --- القائمة الرئيسية والترحيب ---
-    "welcome_new": {
-        "ar": "🎮 أهلاً بك في بوت UNO!\n\nاختر:",
-        "en": "🎮 Welcome to UNO Bot!\n\nChoose:",
-    },
-    "btn_register": {
-        "ar": "📝 إنشاء حساب",
-        "en": "📝 Create Account",
-    },
-    "btn_login": {
-        "ar": "🔑 تسجيل دخول",
-        "en": "🔑 Login",
-    },
-    "main_menu": {
-        "ar": "🏠 القائمة الرئيسية\n\nأهلاً {name}! 👋\n\nأنت حالياً بالقائمة الرئيسية، اختر اللي تريده:\n\n🎲 لعب عشوائي - العب مع لاعبين حول العالم\n👥 الأصدقاء - تابع أصدقاءك وشوف المتصلين\n👤 حسابي - إعداداتك وخصوصيتك واليوزر مالتك",
-        "en": "🏠 Main Menu\n\nHello {name}! 👋\n\nYou're on the main menu, choose:\n\n🎲 Random Play - Play with players worldwide\n👥 Friends - Follow and see online friends\n👤 My Account - Your settings, privacy and username",
-    },
-    "btn_random_play": {"ar": "🎲 لعب عشوائي", "en": "🎲 Random Play"},
-    "btn_play_friends": {"ar": "👥 العب مع الأصدقاء", "en": "👥 Play with Friends"},
-    "btn_calculator": {"ar": "🧮 حاسبة الاونو", "en": "🧮 UNO Calculator"},
-    "btn_my_account": {"ar": "👤 حسابي", "en": "👤 My Account"},
-    "btn_friends": {"ar": "👥 الأصدقاء والمتابعة", "en": "👥 Friends & Following"},
-    "btn_rules": {"ar": "📖 قوانين اللعبة", "en": "📖 Game Rules"},
-    "btn_language": {"ar": "🌍 تغيير اللغة", "en": "🌍 Change Language"},
-    "btn_home": {"ar": "🏠 القائمة الرئيسية", "en": "🏠 Main Menu"},
-    "btn_back": {"ar": "🔙 رجوع", "en": "🔙 Back"},
-
-    # --- الخصوصية ---
-    "settings_privacy": {
-        "ar": "⚙️ إعدادات الخصوصية:\n\n- حساب خاص: {private}\n- السماح بالمشاهدة: {spectate}",
-        "en": "⚙️ Privacy Settings:\n\n- Private Account: {private}\n- Allow Spectating: {spectate}",
-    },
-    "btn_toggle_private": {"ar": "🔒 تبديل حالة الحساب", "en": "🔒 Toggle Private Status"},
-    "btn_toggle_spectate": {"ar": "🎥 تبديل ميزة المشاهدة", "en": "🎥 Toggle Spectate"},
-    "val_on": {"ar": "مفعل ✅", "en": "ON ✅"},
-    "val_off": {"ar": "معطل ❌", "en": "OFF ❌"},
-
-    # --- بقية المفاتيح القديمة (لضمان عمل البوت) ---
-    "ask_name": {"ar": "📝 أرسل الاسم الذي تريده:", "en": "📝 Send the name you want:"},
-    "name_taken": {"ar": "❌ هذا الاسم مستخدم، اختر اسماً آخر:", "en": "❌ This name is taken:"},
-    "ask_password": {"ar": "🔑 أرسل الرمز السري (4 أحرف أو أكثر):", "en": "🔑 Send your secret code:"},
-    "register_success": {
-        "ar": "✅ تم إنشاء حسابك بنجاح!\n\n📛 الاسم: {name}\n🔑 الرمز السري: {password}",
-        "en": "✅ Account created!\n\n📛 Name: {name}\n🔑 Code: {password}",
-    },
-    "room_created": {
-        "ar": "✅ تم إنشاء الغرفة بنجاح!\n{link}",
-        "en": "✅ Room created!\n{link}",
-    },
-    "not_your_turn": {"ar": "مو دورك! ❌", "en": "Not your turn! ❌"},
-    "btn_draw": {"ar": "📥 اسحب ورقة", "en": "📥 Draw Card"},
-    "btn_uno": {"ar": "🔔 UNO!", "en": "🔔 UNO!"},
-    "btn_catch": {"ar": "🚨 إمسك!", "en": "🚨 Catch!"},
-    "rules_full": {
-        "ar": "📖 قوانين لعبة UNO الكاملة...\n(كما في الكود السابق)",
-        "en": "📖 Complete UNO Rules...\n(As in previous code)",
-    }
 }
+
