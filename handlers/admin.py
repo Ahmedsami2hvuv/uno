@@ -38,13 +38,23 @@ class AdminStates(StatesGroup):
     edit_user_value = State()
 
 
-# --- /admin ---
+# --- /admin وزر القائمة الرئيسية ---
 @router.message(Command("admin"))
 async def cmd_admin(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
     await state.clear()
     await _send_admin_menu(message, message.from_user.id)
+
+
+@router.callback_query(F.data == "admin_open_panel")
+async def admin_open_from_menu(c: types.CallbackQuery, state: FSMContext):
+    """فتح لوحة الإدارة من زر «لوحة الإدارة» في القائمة الرئيسية"""
+    if not _admin_only(c):
+        return await c.answer("⛔ غير مسموح.", show_alert=True)
+    await state.clear()
+    await _send_admin_menu(c.message, c.from_user.id)
+    await c.answer()
 
 
 def _admin_menu_kb():
