@@ -1018,6 +1018,19 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
         await _cleanup_last_messages(message, limit=15)
         await message.answer(msg_text, reply_markup=markup)
 
+@router.callback_query(F.data == "change_lang")
+async def change_lang_menu(c: types.CallbackQuery):
+    """عرض قائمة اختيار اللغة عند الضغط على زر تغيير اللغة"""
+    uid = c.from_user.id
+    text = "🌍 **اختر اللغة / Choose language:**"
+    kb = [
+        [InlineKeyboardButton(text="🇮🇶 العربية", callback_data="switch_lang_ar")],
+        [InlineKeyboardButton(text="🇬🇧 English", callback_data="switch_lang_en")],
+        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    await c.answer()
+
 @router.callback_query(F.data.startswith("switch_lang_"))
 async def switch_lang(c: types.CallbackQuery):
     uid = c.from_user.id
@@ -1946,47 +1959,54 @@ async def show_rules(c: types.CallbackQuery):
     
     await c.answer()
 
-# --- 1. دالة إرسال الطلب (عندما تضغط على "إرسال دعوة") ---
+# --- دالة إرسال دعوة اللعب من بروفايل اللاعب ---
 @router.callback_query(F.data.startswith("invite_"))
 async def send_game_invite(c: types.CallbackQuery):
     sender_id = c.from_user.id
-    target_id = int(c.data.split("_")[1])
-    
-    if sender_id == target_id:
-        return await c.answer("🚫 لا يمكنك دعوة نفسك!", show_alert=True)
+    try:
+        target_id = int(c.data.split("_")[1])
+    except (IndexError, ValueError):
+        await c.answer("⚠️ خطأ في البيانات.", show_alert=True)
+        return
 
-    # 1. جلب بيانات المرسل
+    if sender_id == target_id:
+        await c.answer("🚫 لا يمكنك دعوة نفسك!", show_alert=True)
+        return
+
     sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
     if not sender_data:
+        await c.answer("⚠️ لم يتم العثور على بياناتك.", show_alert=True)
         return
     sender = sender_data[0]
 
-    # 2. جلب بيانات المستهدف مع عمود الوقت (invite_expiry)
     target_data = db_query("SELECT player_name, allow_invites, invite_expiry FROM users WHERE user_id = %s", (target_id,))
     if not target_data:
+        await c.answer("⚠️ اللاعب غير موجود.", show_alert=True)
         return
     target = target_data[0]
-    
-    # --- 3. الفحص الذكي للمؤقت (الدقيقة، الساعة، الخ) ---
-    import datetime
-    if target['invite_expiry']:
-        if datetime.datetime.now() > target['invite_expiry']:
-            db_query("UPDATE users SET allow_invites = 0, invite_expiry = NULL WHERE user_id = %s", (target_id,), commit=True)
-            return await c.answer("❌ انتهى وقت استقبال الطلبات لهذا اللاعب حالياً.", show_alert=True)
-    if not target['allow_invites']:
-        return await c.answer("❌ هذا اللاعب يغلق استقبال طلبات اللعب حالياً.", show_alert=True)
 
-    kb = [
+    import datetime
+    invite_expiry = target.get("invite_expiry")
+    if invite_expiry and datetime.datetime.now() > invite_expiry:
+        db_query("UPDATE users SET allow_invites = 0, invite_expiry = NULL WHERE user_id = %s", (target_id,), commit=True)
+        await c.answer("❌ انتهى وقت استقبال الطلبات لهذا اللاعب حالياً.", show_alert=True)
+        return
+    if not target.get("allow_invites", 1):
+        await c.answer("❌ هذا اللاعب يغلق استقبال طلبات اللعب حالياً.", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ قبول", callback_data=f"accept_inv_{sender_id}"),
             InlineKeyboardButton(text="❌ رفض", callback_data=f"reject_inv_{sender_id}")
         ]
-    ]
+    ])
     try:
         await c.bot.send_message(
             target_id,
             f"📩 **طلب لعب جديد!**\n\nاللاعب **{sender['player_name']}** يدعوك للانضمام إلى جولة أونو.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+            reply_markup=kb,
+            parse_mode="Markdown"
         )
         await c.answer("✅ تم إرسال طلب اللعب بنجاح!", show_alert=True)
     except Exception:
