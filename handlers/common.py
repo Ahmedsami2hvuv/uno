@@ -255,15 +255,16 @@ async def set_lang_callback(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
     user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
     if user:
-    db_query("UPDATE users SET language = %s WHERE user_id = %s", (lang, uid), commit=True)
+        db_query("UPDATE users SET language = %s WHERE user_id = %s", (lang, uid), commit=True)
     else:
-    db_query("INSERT INTO users (user_id, username, language, is_registered) VALUES (%s, %s, %s, FALSE)", (uid, c.from_user.username or '', lang), commit=True)
+        db_query("INSERT INTO users (user_id, username, language, is_registered) VALUES (%s, %s, %s, FALSE)", (uid, c.from_user.username or '', lang), commit=True)
     set_lang(uid, lang)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
-    [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")]
+        [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
+        [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")]
     ])
     await c.message.edit_text(t(uid, "welcome_new"), reply_markup=kb)
+
 
 @router.callback_query(F.data == "cp_name_ok")
 async def cp_name_ok(c: types.CallbackQuery, state: FSMContext):
