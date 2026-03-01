@@ -542,20 +542,17 @@ async def random_play(c: types.CallbackQuery):
     uid = c.from_user.id
     user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
     if not user:
-    await c.answer(t(uid, "room_not_found"), show_alert=True)
-    return
-
-    # عرض قائمة التأكيد قبل البحث
+        await c.answer(t(uid, "room_not_found"), show_alert=True)
+        return
     kb = [
-    [InlineKeyboardButton(text="✅ نعم، ابحث عن خصم", callback_data="random_search_confirm")],
-    [InlineKeyboardButton(text="❌ لا، رجوع", callback_data="home")]
+        [InlineKeyboardButton(text="✅ نعم، ابحث عن خصم", callback_data="random_search_confirm")],
+        [InlineKeyboardButton(text="❌ لا، رجوع", callback_data="home")]
     ]
-    
     await c.message.edit_text(
-    "🎮 **اللعب العشوائي**\n\n"
-    "سيتم البحث عن خصم مناسب لك.\n"
-    "هل أنت متأكد من البدء؟",
-    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        "🎮 **اللعب العشوائي**\n\n"
+        "سيتم البحث عن خصم مناسب لك.\n"
+        "هل أنت متأكد من البدء؟",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 @router.callback_query(F.data == "random_search_confirm")
@@ -563,55 +560,46 @@ async def random_search_confirm(c: types.CallbackQuery):
     uid = c.from_user.id
     user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
     if not user:
-    await c.answer(t(uid, "room_not_found"), show_alert=True)
-    return
-
-    # البحث عن غرفة عشوائية تنتظر لاعب ثانٍ
+        await c.answer(t(uid, "room_not_found"), show_alert=True)
+        return
     waiting = db_query("""
-    SELECT r.room_id FROM rooms r 
-    WHERE r.max_players = 2 
-    AND r.status = 'waiting' 
-    AND r.is_random = TRUE 
-    AND NOT EXISTS (SELECT 1 FROM room_players rp WHERE rp.room_id = r.room_id AND rp.user_id = %s) 
-    LIMIT 1""", (uid,))
-
+        SELECT r.room_id FROM rooms r
+        WHERE r.max_players = 2
+        AND r.status = 'waiting'
+        AND r.is_random = TRUE
+        AND NOT EXISTS (SELECT 1 FROM room_players rp WHERE rp.room_id = r.room_id AND rp.user_id = %s)
+        LIMIT 1""", (uid,))
     if waiting:
-    code = waiting[0]['room_id']
-    u_name = user[0]['player_name']
-
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
-    (code, uid, u_name), commit=True)
-    db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
-
-    all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
-    for p in all_players:
-    try:
-    await c.bot.send_message(p['user_id'], "🎮 بدأت اللعبة! استعد...")
-    except:
-    pass
-
-    from handlers.room_2p import start_new_round
-    await start_new_round(code, c.bot, start_turn_idx=0)
-
+        code = waiting[0]['room_id']
+        u_name = user[0]['player_name']
+        db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
+                 (code, uid, u_name), commit=True)
+        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
+        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+        for p in all_players:
+            try:
+                await c.bot.send_message(p['user_id'], "🎮 بدأت اللعبة! استعد...")
+            except Exception:
+                pass
+        from handlers.room_2p import start_new_round
+        await start_new_round(code, c.bot, start_turn_idx=0)
     else:
-    code = generate_room_code()
-    u_name = user[0]['player_name']
-
-    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, is_random) VALUES (%s, %s, 2, 0, 'waiting', TRUE)",
-    (code, uid), commit=True)
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
-    (code, uid, u_name), commit=True)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
-    ])
-    await c.message.edit_text("⏳ جاري البحث عن خصم... يرجى الانتظار", reply_markup=kb)
+        code = generate_room_code()
+        u_name = user[0]['player_name']
+        db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, is_random) VALUES (%s, %s, 2, 0, 'waiting', TRUE)",
+                 (code, uid), commit=True)
+        db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
+                 (code, uid, u_name), commit=True)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+        ])
+        await c.message.edit_text("⏳ جاري البحث عن خصم... يرجى الانتظار", reply_markup=kb)
     
 @router.callback_query(F.data == "room_create_start")
 async def room_create_menu(c: types.CallbackQuery):
     kb, row = [], []
     for i in range(2, 11):
-    row.append(InlineKeyboardButton(text=f"{i} لاعبين", callback_data=f"setp_{i}"))
+        row.append(InlineKeyboardButton(text=f"{i} لاعبين", callback_data=f"setp_{i}"))
     if len(row) == 2: kb.append(row); row = []
     if row: kb.append(row)
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_friends")])
