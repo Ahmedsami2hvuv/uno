@@ -1,3 +1,4 @@
+import os
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -9,6 +10,66 @@ import random, string, json, asyncio
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 router = Router()
+
+# --- اشتراك القناة (CHANNEL_ID) ---
+CHANNEL_ID = os.getenv("CHANNEL_ID", "").strip() or None  # مثال: @ko_kseb أو -100xxxx
+
+async def is_channel_member(bot, user_id: int) -> bool:
+    if not CHANNEL_ID:
+        return True
+    try:
+        m = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return m.status in ("member", "administrator", "creator")
+    except Exception:
+        return False
+
+def _channel_subscribe_kb():
+    if not CHANNEL_ID:
+        return None
+    s = str(CHANNEL_ID).strip()
+    if s.startswith("@"):
+        username = s.lstrip("@")
+        url = f"https://t.me/{username}"
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 اشترك في القناة", url=url)]])
+    if s.startswith("-"):
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 القناة", url="https://t.me/")]])
+    url = f"https://t.me/{s}"
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 اشترك في القناة", url=url)]])
+
+async def channel_subscribe_message_middleware(handler, event: types.Message, data: dict):
+    if not CHANNEL_ID:
+        return await handler(event, data)
+    user_id = event.from_user.id if event.from_user else None
+    if not user_id:
+        return await handler(event, data)
+    if await is_channel_member(event.bot, user_id):
+        return await handler(event, data)
+    kb = _channel_subscribe_kb()
+    if kb and kb.inline_keyboard:
+        kb.inline_keyboard.append([InlineKeyboardButton(text="✅ تحقق", callback_data="check_channel_sub")])
+    await event.answer("⛔ يجب الاشتراك في القناة أولاً لاستخدام البوت.\n\nاشترك ثم اضغط «تحقق».", reply_markup=kb)
+    return
+
+async def channel_subscribe_callback_middleware(handler, event: types.CallbackQuery, data: dict):
+    if not CHANNEL_ID:
+        return await handler(event, data)
+    user_id = event.from_user.id if event.from_user else None
+    if not user_id:
+        return await handler(event, data)
+    if await is_channel_member(event.bot, user_id):
+        return await handler(event, data)
+    try:
+        await event.answer()
+    except Exception:
+        pass
+    kb = _channel_subscribe_kb()
+    if kb and kb.inline_keyboard:
+        kb.inline_keyboard.append([InlineKeyboardButton(text="✅ تحقق", callback_data="check_channel_sub")])
+    await event.message.edit_text("⛔ يجب الاشتراك في القناة أولاً لاستخدام البوت.\n\nاشترك ثم اضغط «تحقق».", reply_markup=kb)
+    return
+
+router.message.middleware(channel_subscribe_message_middleware)
+router.callback_query.middleware(channel_subscribe_callback_middleware)
 
     
 replay_data = {}
@@ -2248,6 +2309,20 @@ async def reject_game_invite(c: types.CallbackQuery):
     except Exception:
         await c.message.edit_text("❌ تم رفض الطلب.")
 
+
+@router.callback_query(F.data == "check_channel_sub")
+async def on_check_channel_sub(c: types.CallbackQuery, state: FSMContext):
+    if not CHANNEL_ID:
+        await c.answer()
+        return
+    if await is_channel_member(c.bot, c.from_user.id):
+        await state.clear()
+        user = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
+        name = user[0]['player_name'] if user else c.from_user.full_name
+        await show_main_menu(c.message, name, user_id=c.from_user.id, state=state)
+        await c.answer()
+    else:
+        await c.answer("⛔ ما زلت غير مشترك. اشترك ثم اضغط «تحقق».", show_alert=True)
 
 @router.callback_query(F.data == "home")
 async def home_callback(c: types.CallbackQuery, state: FSMContext):
