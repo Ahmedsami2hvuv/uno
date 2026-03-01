@@ -185,20 +185,20 @@ async def render_main_ui(message, state, extra=""):
         except Exception:
             await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
     else:
-        try:
-            await message.bot.send_photo(
-                message.chat.id,
-                photo=img,
-                caption=table,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
-        try:
-            await message.delete()
-        except Exception:
-            pass
+ try:
+ await message.bot.send_photo(
+ message.chat.id,
+ photo=img,
+ caption=table,
+ reply_markup=markup,
+ parse_mode="Markdown"
+ )
+ try:
+ await message.delete()
+ except Exception:
+ pass
+ except Exception:
+ await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
 
 @router.callback_query(F.data == "c_dir")
 async def c_toggle_dir(callback: types.CallbackQuery, state: FSMContext):
