@@ -55,12 +55,12 @@ async def clean_chat_messages(message: types.Message):
         try:
             await message.bot.delete_message(chat_id, mid)
             deleted_count += 1
-        except:
+        except Exception:
             pass
-    
+
     name = message.from_user.full_name
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
-    if user:
+    if user::
         name = user[0]['player_name']
     
     await show_main_menu(message, name, user_id=message.from_user.id, cleanup=False)
