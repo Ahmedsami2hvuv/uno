@@ -248,6 +248,13 @@ async def process_final_name(message: types.Message, state: FSMContext):
     await (message, name, user_id)
     
 
+# --- زر تعديل حسابي داخل خانة حسابي ---
+def _get_follow_counts(user_id):
+ """عدد المتابعين (الذين يتابعونه) وعدد من يتابع (الذي يتابعهم)"""
+ fol = db_query("SELECT COUNT(*) AS c FROM follows WHERE following_id = %s", (user_id,))
+ ing = db_query("SELECT COUNT(*) AS c FROM follows WHERE follower_id = %s", (user_id,))
+ return (fol[0]['c'] if fol else 0), (ing[0]['c'] if ing else 0)
+
 
 @router.callback_query(F.data.startswith("set_lang_"))
 async def set_lang_callback(c: types.CallbackQuery, state: FSMContext):
@@ -302,7 +309,7 @@ async def complete_profile_password_handler(message: types.Message, state: FSMCo
     if len(password) < 4:
         await message.answer(t(uid, "password_too_short"))
         return
-    db_query("UPDATE users SET password = %s WHERE user_id = %s", (password, uid), commit=True)
+     db_query("UPDATE users SET password_key = %s WHERE user_id = %s", (password, uid), commit=True)
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
     name = user[0]['player_name'] if user else 'Player'
     data = await state.get_data()
@@ -629,11 +636,14 @@ async def show_profile(c: types.CallbackQuery):
     txt = (
         f"👤 **معلومات حسابك**\n\n"
         f"📛 الاسم: {user['player_name']}\n"
-        f"🔑 الرمز: `{user.get('password', 'لا يوجد')}`\n"
-        f"⭐ النقاط: {user.get('online_points', 0)}"
+        f"🔑 الرمز السري: `{user.get('password_key') or user.get('password') or 'لا يوجد'}`\n"
+        f"🆔 اليوزر نيم: @{user.get('username_key') or '---'}\n"
+        f"⭐ عدد النقاط: {user.get('online_points', 0)}\n"
+        f"📈 عدد المتابعين (الذين يتابعونك): {followers_count}\n"
+        f"📉 عدد من تتابعهم: {following_count}"
     )
     kb = [
-        [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account_options")],
+        [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -1457,7 +1467,9 @@ async def process_new_name(message: types.Message, state: FSMContext):
     user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
     if user:
         u = user[0]
-        txt = f"👤 حسابي\n\n📛 الاسم: {u['player_name']}\n🔑 الرمز: {u.get('password', 'لا يوجد')}\n⭐ النقاط: {u.get('online_points', 0)}"
+        uid = message.from_user.id
+         fc, ing = _get_follow_counts(uid)
+         txt = f"👤 حسابي\n\n📛 اسم اللاعب: {u['player_name']}\n🔑 الرمز السري: {u.get('password_key') or 'لا يوجد'}\n🆔 اليوزر نيم: @{u.get('username_key') or '---'}\n⭐ النقاط: {u.get('online_points', 0)}\n📈 المتابعون: {fc}\n📉 من تتابع: {ing}"
         kb = [
             [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
             [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
@@ -1475,13 +1487,14 @@ async def process_new_password(message: types.Message, state: FSMContext):
     new_pass = message.text.strip()
     if len(new_pass) < 1 or len(new_pass) > 30:
         return await message.answer("❌ الرمز لازم يكون بين 1 و 30 حرف. حاول مرة ثانية:")
-    db_query("UPDATE users SET password = %s WHERE user_id = %s", (new_pass, message.from_user.id), commit=True)
+    db_query("UPDATE users SET password_key = %s WHERE user_id = %s", (new_pass, message.from_user.id), commit=True)
     await state.clear()
     await message.answer("✅ تم تغيير الرمز السري بنجاح!")
     user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
     if user:
         u = user[0]
-        txt = f"👤 حسابي\n\n📛 الاسم: {u['player_name']}\n🔑 الرمز: {u.get('password', 'لا يوجد')}\n⭐ النقاط: {u.get('online_points', 0)}"
+        fc, ing = _get_follow_counts(uid)
+         txt = f"👤 حسابي\n\n📛 اسم اللاعب: {u['player_name']}\n🔑 الرمز السري: {u.get('password_key') or 'لا يوجد'}\n🆔 اليوزر نيم: @{u.get('username_key') or '---'}\n⭐ النقاط: {u.get('online_points', 0)}\n📈 المتابعون: {fc}\n📉 من تتابع: {ing}"
         kb = [
             [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
             [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
