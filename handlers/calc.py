@@ -1,9 +1,20 @@
+import os
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
-from config import bot, IMG_CW, IMG_CCW
+from config import bot
 from database import db_query
+
+# صور اتجاه اللعب من متغيرات Railway (الفايربل)
+try:
+    from config import IMG_CW, IMG_CCW
+except ImportError:
+    IMG_CW = IMG_CCW = None
+if not IMG_CW:
+    IMG_CW = os.getenv("IMG_CW")
+if not IMG_CCW:
+    IMG_CCW = os.getenv("IMG_CCW")
 
 router = Router()
 
@@ -144,15 +155,16 @@ async def render_main_ui(message, state, extra=""):
         table += f"\n\n📢 {extra}"
     kb = [
         [InlineKeyboardButton(text="🔄 تغيير الاتجاه", callback_data="c_dir"), InlineKeyboardButton(text="🔔 إنهاء الجولة", callback_data="c_end_round")],
-        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_account"), InlineKeyboardButton(text="✏️ تعديل حسابي", callback_data="edit_account"), InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    if getattr(message, 'photo', None) and message.photo:
+    use_photo = bool(img)
+    if getattr(message, 'photo', None) and message.photo and use_photo:
         try:
             await message.edit_media(media=InputMediaPhoto(media=img, caption=table), reply_markup=markup)
         except Exception:
             await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
-    else:
+    elif use_photo:
         try:
             await message.bot.send_photo(message.chat.id, photo=img, caption=table, reply_markup=markup, parse_mode="Markdown")
             try:
@@ -161,6 +173,11 @@ async def render_main_ui(message, state, extra=""):
                 pass
         except Exception:
             await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
+    else:
+        try:
+            await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
+        except Exception:
+            await message.bot.send_message(message.chat.id, table, reply_markup=markup, parse_mode="Markdown")
 
 
 @router.callback_query(F.data == "c_dir")
