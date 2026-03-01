@@ -955,8 +955,10 @@ async def process_user_search_by_id(c: types.CallbackQuery, target_id: int):
     kb = [
         [InlineKeyboardButton(text=follow_btn_text, callback_data=follow_callback)],
         [InlineKeyboardButton(text=t(uid, "btn_invite_play"), callback_data=f"invite_{target_id}")],
-        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")]
     ]
+    if (uid, target_id) in invite_mutes:
+        kb.append([InlineKeyboardButton(text="✏️ تعديل الكتم", callback_data=f"mute_inv_{target_id}")])
+    kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     
 
@@ -1755,8 +1757,9 @@ async def process_user_search(message: types.Message, state: FSMContext):
     
     kb.append([InlineKeyboardButton(text=follow_btn_text, callback_data=follow_callback)])
     kb.append([InlineKeyboardButton(text=t(uid, "btn_invite_play"), callback_data=f"invite_{t_uid}")])
+    if (uid, t_uid) in invite_mutes:
+        kb.append([InlineKeyboardButton(text="✏️ تعديل الكتم", callback_data=f"mute_inv_{t_uid}")])
     kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="social_menu")])
-    
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.clear() # إنهاء حالة البحث
 
@@ -2042,10 +2045,26 @@ async def mute_invite_confirm(c: types.CallbackQuery):
         pass
 
 
+@router.callback_query(F.data.startswith("mute_inv_unmute_"))
+async def mute_invite_unmute(c: types.CallbackQuery):
+    """إلغاء الكتم عن اللاعب"""
+    try:
+        sender_id = int(c.data.split("_")[3])
+    except (IndexError, ValueError):
+        await c.answer("⚠️ خطأ.", show_alert=True)
+        return
+    muter_id = c.from_user.id
+    key = (muter_id, sender_id)
+    if key in invite_mutes:
+        del invite_mutes[key]
+    await c.answer("✅ تم إلغاء الكتم. يمكن لهذا اللاعب إرسال دعوات لك مجدداً.", show_alert=True)
+    await process_user_search_by_id(c, sender_id)
+
+
 @router.callback_query(F.data.startswith("mute_inv_"))
 async def mute_invite_options(c: types.CallbackQuery):
-    """عرض خيارات الكتم (لا يطابق mute_inv_confirm_)"""
-    if c.data.startswith("mute_inv_confirm_"):
+    """عرض خيارات الكتم (لا يطابق confirm أو unmute)"""
+    if c.data.startswith("mute_inv_confirm_") or c.data.startswith("mute_inv_unmute_"):
         await c.answer()
         return
     parts = c.data.split("_")
@@ -2059,9 +2078,10 @@ async def mute_invite_options(c: types.CallbackQuery):
         [InlineKeyboardButton(text="كتم 10 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_600")],
         [InlineKeyboardButton(text="كتم 24 ساعة", callback_data=f"mute_inv_confirm_{sender_id}_1440")],
         [InlineKeyboardButton(text="كتم للأبد", callback_data=f"mute_inv_confirm_{sender_id}_0")],
+        [InlineKeyboardButton(text="❌ إلغاء الكتم", callback_data=f"mute_inv_unmute_{sender_id}")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"view_profile_{sender_id}")]
     ]
-    await c.message.edit_text("🔇 اختر مدة الكتم لهذا اللاعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await c.message.edit_text("🔇 اختر مدة الكتم أو ألغِ الكتم:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await c.answer()
 
 # --- 1. عرض خيارات الوقت (تعديل الرسالة الحالية) ---
