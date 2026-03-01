@@ -283,11 +283,11 @@ async def complete_profile_name_handler(message: types.Message, state: FSMContex
     uid = message.from_user.id
     name = message.text.strip()
     if not name or len(name) < 2:
-    await message.answer(t(uid, "name_too_short"))
-    return
+        await message.answer(t(uid, "name_too_short"))
+        return
     if len(name) > 20:
-    await message.answer(t(uid, "name_too_long"))
-    return
+        await message.answer(t(uid, "name_too_long"))
+        return
     existing = db_query("SELECT * FROM users WHERE player_name = %s AND user_id != %s", (name, uid))
     if existing:
         await message.answer(t(uid, "name_taken"))
