@@ -600,9 +600,9 @@ async def room_create_menu(c: types.CallbackQuery):
     kb, row = [], []
     for i in range(2, 11):
         row.append(InlineKeyboardButton(text=f"{i} لاعبين", callback_data=f"setp_{i}"))
-    if len(row) == 2: 
-        kb.append(row); 
-        row = []
+        if len(row) == 2:
+            kb.append(row)
+            row = []
     if row:
         kb.append(row)
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="menu_friends")])
