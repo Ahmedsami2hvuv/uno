@@ -161,7 +161,7 @@ async def cmd_start_with_deeplink(message: types.Message, state: FSMContext):
                         [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")],
                     ]
                 )
-                welcome = t(uid, "welcome_new") + "\n\n🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً."
+                welcome = t(uid, "welcome_new") + "\n\n" + t(uid, "invite_pending_room")
                 await message.answer(welcome, reply_markup=kb)
                 return
     try:
@@ -1043,12 +1043,12 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
     kb = [
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
-        [InlineKeyboardButton(text="👥 الأصدقاء", callback_data="social_menu")],
+        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")],
         [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
-         InlineKeyboardButton(text="🧮 حاسبة أونو", callback_data="mode_calc")],
-        [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
-        [InlineKeyboardButton(text="📊 الإحصائيات", callback_data="leaderboard")],
-        [InlineKeyboardButton(text="🌍 تغيير اللغة", callback_data="change_lang")],
+         InlineKeyboardButton(text=t(uid, "btn_calc"), callback_data="mode_calc")],
+        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
+        [InlineKeyboardButton(text=t(uid, "btn_leaderboard"), callback_data="leaderboard")],
+        [InlineKeyboardButton(text=t(uid, "btn_change_lang"), callback_data="change_lang")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
@@ -1074,7 +1074,7 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
             await message.message.edit_text(msg_text, reply_markup=markup)
         except Exception:
             await message.message.answer(msg_text, reply_markup=markup)
-        await message.answer("تم تحديث القائمة 🎮")
+        await message.answer(t(uid, "menu_updated"))
     else:
         await _cleanup_last_messages(message, limit=15)
         await message.answer(msg_text, reply_markup=markup)
@@ -1083,10 +1083,11 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
 async def change_lang_menu(c: types.CallbackQuery):
     """عرض قائمة اختيار اللغة عند الضغط على زر تغيير اللغة"""
     uid = c.from_user.id
-    text = "🌍 **اختر اللغة / Choose language:**"
+    text = t(uid, "choose_language")
     kb = [
         [InlineKeyboardButton(text="🇮🇶 العربية", callback_data="switch_lang_ar")],
         [InlineKeyboardButton(text="🇬🇧 English", callback_data="switch_lang_en")],
+        [InlineKeyboardButton(text="🇮🇷 فارسی", callback_data="switch_lang_fa")],
         [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
