@@ -179,13 +179,13 @@ async def process_username_step(message: types.Message, state: FSMContext):
 
     # التحقق من شروط اليوزرنيم
     if not username.isalnum() or len(username) < 3:
-    await message.answer("✍️ يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
-    return
+        await message.answer("✍️ يرجى إدخال اسم مستخدم (يوزر نيم) خاص بك (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
+        return
 
     check = db_query("SELECT user_id FROM users WHERE username_key = %s", (username,))
     if check:
-    await message.answer("❌ هذا اليوزر نيم مستخدم من قبل، اختر غيره.")
-    return
+        await message.answer("❌ هذا اليوزر نيم مستخدم من قبل، اختر غيره.")
+        return
 
     db_query("UPDATE users SET username_key = %s WHERE user_id = %s", (username, user_id), commit=True)
     user_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
@@ -202,29 +202,29 @@ async def process_password_step(message: types.Message, state: FSMContext):
     
     # التأكد من طول الباسورد
     if len(password) < 4:
-    return await message.answer(t(user_id, "password_too_short"))
+        return await message.answer(t(user_id, "password_too_short"))
 
     data = await state.get_data()
     username = data['chosen_username']
     current_state = await state.get_state()
     
     if current_state == RoomStates.upgrade_password:
-    # حالة الترقية: اللاعب مسجل أصلاً بس ينقصه يوزر وباسورد جديد
-    db_query("UPDATE users SET username_key = %s, password_key = %s WHERE user_id = %s", 
-    (username, password, user_id), commit=True)
-    
-    user_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
-    p_name = user_info[0]['player_name'] if user_info else "لاعب"
-    
-    await message.answer(t(user_id, "reg_success", name=p_name, username=username))
-    await state.clear()
-    await (message, p_name, user_id)
-    
+        # حالة الترقية: اللاعب مسجل أصلاً بس ينقصه يوزر وباسورد جديد
+        db_query(
+            "UPDATE users SET username_key = %s, password_key = %s WHERE user_id = %s",
+            (username, password, user_id),
+            commit=True,
+        )
+        user_info = db_query("SELECT player_name FROM users WHERE user_id = %s", (user_id,))
+        p_name = user_info[0]['player_name'] if user_info else "لاعب"
+        await message.answer(t(user_id, "reg_success", name=p_name, username=username))
+        await state.clear()
+        await show_main_menu(message, p_name, user_id=user_id, state=state)
     else:
-    # حالة التسجيل الجديد: نحفظ اليوزر والباسورد مؤقتاً ونطلب "الاسم"
-    await state.update_data(chosen_password=password)
-    await message.answer(t(user_id, "ask_name"))
-    await state.set_state(RoomStates.reg_ask_name)
+        # حالة التسجيل الجديد: نحفظ اليوزر والباسورد مؤقتاً ونطلب "الاسم"
+        await state.update_data(chosen_password=password)
+        await message.answer(t(user_id, "ask_name"))
+        await state.set_state(RoomStates.reg_ask_name)
 
 @router.message(RoomStates.reg_ask_name)
 async def process_final_name(message: types.Message, state: FSMContext):
@@ -232,7 +232,7 @@ async def process_final_name(message: types.Message, state: FSMContext):
     name = message.text.strip()[:20]
     
     if len(name) < 2:
-    return await message.answer(t(user_id, "name_too_short"))
+        return await message.answer(t(user_id, "name_too_short"))
 
     data = await state.get_data()
     username = data['chosen_username']
