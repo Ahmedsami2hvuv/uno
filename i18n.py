@@ -7,16 +7,24 @@ from database import db_query
 # الترجمة الافتراضية عند غياب المفتاح
 DEFAULT_LANG = "ar"
 
+# كاش لتقليل استدعاءات قاعدة البيانات (لغة المستخدم)
+_lang_cache = {}
+
 def get_lang(user_id: int) -> str:
+    if user_id in _lang_cache:
+        return _lang_cache[user_id]
     try:
         r = db_query("SELECT language FROM users WHERE user_id = %s", (user_id,))
         if r and r[0].get("language") in ("ar", "en", "fa"):
-            return r[0]["language"]
+            _lang_cache[user_id] = r[0]["language"]
+            return _lang_cache[user_id]
     except Exception:
         pass
+    _lang_cache[user_id] = DEFAULT_LANG
     return DEFAULT_LANG
 
 def set_lang(user_id: int, lang: str):
+    _lang_cache[user_id] = lang if lang in ("ar", "en", "fa") else DEFAULT_LANG
     try:
         db_query("UPDATE users SET language = %s WHERE user_id = %s", (lang, user_id), commit=True)
     except Exception:
@@ -99,6 +107,28 @@ TEXTS = {
         "choose_language": "🌍 **اختر اللغة:**",
         "menu_updated": "تم تحديث القائمة 🎮",
         "invite_pending_room": "🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً.",
+        "rules_text": "📜 **قوانين أونو العراق 🇮🇶 - الدليل الكامل**\n\nالهدف من اللعبة هو إنك تخلص أوراقك قبل الكل. إذا وصلت لآخر ورقة، لازم تدوس زر \"أونو\" فوراً، وإلا راح تسحب أوراق عقوبة!\n\n🔹 **الأوراق الخاصة:**\n1️⃣ **سحب 2 (+2):** اللاعب اللي وراك يسحب ورقتين ويعبر دوره، إلا إذا عنده +2 يكدر يذبها عليك وتصير \"تراكمية\" (سحب 4).\n2️⃣ **عكس الدور (🔄):** يقلب اتجاه اللعب من اليمين لليسار أو العكس.\n3️⃣ **المنع (🚫):** يطفر اللاعب اللي وراك وما يخلي يلعب هالجولة.\n4️⃣ **الجوكر (🌈):** يغير اللون للون اللي أنت تريده.\n5️⃣ **جوكر سحب 4 (🌈+4):** أقوى ورقة! تغير اللون وتخلي الخصم يسحب 4 ورقات، بس تكدر \"تتحداه\" إذا جان عنده نفس اللون الأساسي.\n\n🔹 **قوانين التحدي والعقوبات:**\n- **تحدي الـ +4:** إذا ذبوا عليك +4 وتشك إن الخصم عنده نفس اللون اللي جان عالكاع، تكدر \"تتحداه\". إذا طلع غاش، هو يسحب الـ 4. إذا طلع صادق، أنت تسحب 6!\n- **نسيان الأونو:** إذا بقت عندك ورقة وحدة وما كلت \"أونو\" وكشفك الخصم، راح تسحب ورقتين عقوبة.\n\n🔹 **نهاية اللعبة:**\nتنتهي الجولة بس يخلص أول لاعب أوراقه. تنحسب نقاط الأوراق اللي بقت بيد البقية وتضاف لرصيدك.",
+        "btn_back_short": "🔙 عودة",
+        "tutorial_title": "🎓 مرحباً! جولة سريعة على البوت",
+        "tutorial_body": "• **لعب عشوائي:** البوت يلاقي لك خصم وتبدأون.\n• **لعب مع الأصدقاء:** تنشئ غرفة أو تنضم بكود أو رابط.\n• **حسابي:** تعديل الاسم والإعدادات.\n• **القوانين:** قوانين أونو كاملة.\n\nاضغط «جرب الآن» لفتح القائمة والبدء!",
+        "tutorial_btn": "✅ جرب الآن",
+        "invite_reminder": "⏰ تذكير: ما زال عندك دعوة للعب! الرد خلال 15 ثانية المتبقية.",
+        "leaderboard_title": "📊 **لوحة المتصدرين**",
+        "leaderboard_global": "🌍 الكل",
+        "leaderboard_friends": "👥 أصدقائي فقط",
+        "leaderboard_empty": "لا يوجد لاعبون بعد.",
+        "leaderboard_row": "{rank}. {name} — {points} نقطة",
+        "round_summary_won": "فاز بالجولة",
+        "match_history_title": "📜 آخر مبارياتك",
+        "match_history_none": "لا توجد مباريات مسجلة بعد.",
+        "match_history_row": "جولة {round} — فزت 🏆 (غرفة {room})",
+        "public_rooms_title": "🚪 **غرف عامة**\nاختر غرفة للانضمام:",
+        "public_rooms_none": "لا توجد غرف مفتوحة حالياً.",
+        "public_room_row": "غرفة {code} — {current}/{max} لاعبين",
+        "btn_join": "انضم",
+        "replay_again_btn": "🔄 لعب مرة أخرى",
+        "replay_again_msg": "🏁 انتهت الجولة! اضغط «لعب مرة أخرى» لدعوة نفس الفريق.",
+        "btn_public_rooms": "🚪 غرف عامة",
     },
     "en": {
         "welcome_new": "Welcome! 👋\nLog in or register to play.",
@@ -164,6 +194,28 @@ TEXTS = {
         "choose_language": "🌍 **Choose language:**",
         "menu_updated": "Menu updated 🎮",
         "invite_pending_room": "🎮 You have an invite to join a room! Log in or register and you will join automatically.",
+        "rules_text": "📜 **Uno Iraq 🇮🇶 - Full Rules**\n\nThe goal is to get rid of all your cards first. When you have one card left, you must press \"Uno\" immediately, or you draw penalty cards!\n\n🔹 **Special cards:**\n1️⃣ **Draw 2 (+2):** The next player draws 2 and skips their turn, unless they have +2 and stack it (draw 4).\n2️⃣ **Reverse (🔄):** Reverses play direction.\n3️⃣ **Skip (🚫):** The next player is skipped.\n4️⃣ **Wild (🌈):** Choose the new color.\n5️⃣ **Wild Draw 4 (🌈+4):** Strongest card! Choose color and the next player draws 4. They can challenge if they think you had a matching color.\n\n🔹 **Challenge & penalties:**\n- **+4 challenge:** If you get +4 and suspect the player had a matching color, you can challenge. If they cheated, they draw 4. If not, you draw 6!\n- **Forgot Uno:** If you had one card and didn't say \"Uno\" and get caught, you draw 2.\n\n🔹 **End of game:**\nThe round ends when one player runs out of cards. Remaining cards in others' hands are counted as points and added to the winner's score.",
+        "btn_back_short": "🔙 Back",
+        "tutorial_title": "🎓 Hi! Quick tour of the bot",
+        "tutorial_body": "• **Random play:** The bot finds you an opponent and you start.\n• **Play with friends:** Create a room or join with a code/link.\n• **My account:** Edit name and settings.\n• **Rules:** Full Uno rules.\n\nPress «Try now» to open the menu and start!",
+        "tutorial_btn": "✅ Try now",
+        "invite_reminder": "⏰ Reminder: You still have a game invite! Reply within the next 15 seconds.",
+        "leaderboard_title": "📊 **Leaderboard**",
+        "leaderboard_global": "🌍 Everyone",
+        "leaderboard_friends": "👥 Friends only",
+        "leaderboard_empty": "No players yet.",
+        "leaderboard_row": "{rank}. {name} — {points} pts",
+        "round_summary_won": "won the round",
+        "match_history_title": "📜 Your last matches",
+        "match_history_none": "No matches recorded yet.",
+        "match_history_row": "Round {round} — You won 🏆 (room {room})",
+        "public_rooms_title": "🚪 **Public rooms**\nChoose a room to join:",
+        "public_rooms_none": "No open rooms at the moment.",
+        "public_room_row": "Room {code} — {current}/{max} players",
+        "btn_join": "Join",
+        "replay_again_btn": "🔄 Play again",
+        "replay_again_msg": "🏁 Round over! Press «Play again» to invite the same team.",
+        "btn_public_rooms": "🚪 Public rooms",
     },
     "fa": {
         "welcome_new": "خوش آمدید! 👋\nبرای بازی وارد شوید یا ثبت‌نام کنید.",
@@ -229,6 +281,28 @@ TEXTS = {
         "choose_language": "🌍 **زبان را انتخاب کنید:**",
         "menu_updated": "منو به‌روز شد 🎮",
         "invite_pending_room": "🎮 دعوت برای پیوستن به اتاق داری! وارد شو یا ثبت‌نام کن تا خودکار به اتاق بیایی.",
+        "rules_text": "📜 **قوانین اونو عراق 🇮🇶 - راهنمای کامل**\n\nهدف بازی این است که قبل از همه کارت‌هایت را تمام کنی. وقتی یک کارت ماند، باید فوراً «اوونو» بزنی وگرنه کارت جریمه می‌کشی!\n\n🔹 **کارت‌های خاص:**\n1️⃣ **سحب ۲ (+۲):** بازیکن بعد ۲ کارت می‌کشد و نوبتش می‌افتد؛ مگر +۲ داشته باشد و بگذارد (۴ کارت).\n2️⃣ **برعکس (🔄):** جهت بازی عوض می‌شود.\n3️⃣ **منع (🚫):** بازیکن بعد نوبت نمی‌گیرد.\n4️⃣ **جوكر (🌈):** رنگ جدید را انتخاب کن.\n5️⃣ **جوكر +۴ (🌈+۴):** قوی‌ترین کارت! رنگ را عوض کن و بازیکن بعد ۴ کارت بکشد. در صورت داشتن رنگ همانند می‌تواند «چالش» بدهد.\n\n🔹 **چالش و جریمه:**\n- **چالش +۴:** اگر +۴ خوردی و فکر می‌کنی بازیکن رنگ همانند داشت، چالش بده. اگر تقلب کرده باشد ۴ کارت می‌کشد؛ وگرنه تو ۶ کارت می‌کشی!\n- **فراموشی اوونو:** اگر یک کارت داشتی و «اوونو» نگفتی و گیر افتادی، ۲ کارت جریمه می‌کشی.\n\n🔹 **پایان بازی:**\nوقتی یک بازیکن کارتش تمام شد دور تمام می‌شود. مجموع امتیاز کارت‌های باقی‌مانده به امتیاز برنده اضافه می‌شود.",
+        "btn_back_short": "🔙 بازگشت",
+        "tutorial_title": "🎓 سلام! راهنمای سریع ربات",
+        "tutorial_body": "• **بازی تصادفی:** ربات حریف پیدا می‌کند و بازی شروع می‌شود.\n• **بازی با دوستان:** ساخت اتاق یا پیوستن با کد/لینک.\n• **حساب من:** تغییر نام و تنظیمات.\n• **قوانین:** قوانین کامل اونو.\n\n«الان امتحان کن» را بزن تا منو باز شود!",
+        "tutorial_btn": "✅ الان امتحان کن",
+        "invite_reminder": "⏰ یادآوری: هنوز دعوت بازی داری! تا ۱۵ ثانیهٔ بعد پاسخ بده.",
+        "leaderboard_title": "📊 **جدول امتیازات**",
+        "leaderboard_global": "🌍 همه",
+        "leaderboard_friends": "👥 فقط دوستان",
+        "leaderboard_empty": "هنوز بازیکنی نیست.",
+        "leaderboard_row": "{rank}. {name} — {points} امتیاز",
+        "round_summary_won": "برندهٔ دور شد",
+        "match_history_title": "📜 آخرین بازی‌های شما",
+        "match_history_none": "هنوز بازی‌ای ثبت نشده.",
+        "match_history_row": "دور {round} — بردی 🏆 (اتاق {room})",
+        "public_rooms_title": "🚪 **اتاق‌های عمومی**\nیک اتاق برای پیوستن انتخاب کنید:",
+        "public_rooms_none": "الان اتاق بازی باز نیست.",
+        "public_room_row": "اتاق {code} — {current}/{max} بازیکن",
+        "btn_join": "پیوستن",
+        "replay_again_btn": "🔄 بازی دوباره",
+        "replay_again_msg": "🏁 دور تمام شد! «بازی دوباره» را بزن تا همان تیم دعوت شوند.",
+        "btn_public_rooms": "🚪 اتاق‌های عمومی",
     },
 }
 
