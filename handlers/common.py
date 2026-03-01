@@ -1459,7 +1459,7 @@ async def process_new_name(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "change_username")
 async def ask_new_username(c: types.CallbackQuery, state: FSMContext):
- أرسل اليوزر نيم الجديد (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")    await c.message.edit_text("🆔
+    await c.message.edit_text("🆔 أرسل اليوزر نيم الجديد (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")
     await state.set_state(RoomStates.edit_username)
 
 @router.message(RoomStates.edit_username)
