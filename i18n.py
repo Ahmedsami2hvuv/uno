@@ -129,6 +129,8 @@ TEXTS = {
         "replay_again_btn": "🔄 لعب مرة أخرى",
         "replay_again_msg": "🏁 انتهت الجولة! اضغط «لعب مرة أخرى» لدعوة نفس الفريق.",
         "btn_public_rooms": "🚪 غرف عامة",
+        "player_removed_5_skips": "⛔ تم إزالتك من اللعب تلقائياً لأنك تركت الدور 5 مرات.",
+        "player_removed_5_skips_others": "⛔ تم إزالة {name} من اللعب (ترك الدور 5 مرات).",
     },
     "en": {
         "welcome_new": "Welcome! 👋\nLog in or register to play.",
@@ -216,6 +218,8 @@ TEXTS = {
         "replay_again_btn": "🔄 Play again",
         "replay_again_msg": "🏁 Round over! Press «Play again» to invite the same team.",
         "btn_public_rooms": "🚪 Public rooms",
+        "player_removed_5_skips": "⛔ You were removed from the game for skipping your turn 5 times.",
+        "player_removed_5_skips_others": "⛔ {name} was removed from the game (skipped 5 times).",
     },
     "fa": {
         "welcome_new": "خوش آمدید! 👋\nبرای بازی وارد شوید یا ثبت‌نام کنید.",
@@ -303,6 +307,8 @@ TEXTS = {
         "replay_again_btn": "🔄 بازی دوباره",
         "replay_again_msg": "🏁 دور تمام شد! «بازی دوباره» را بزن تا همان تیم دعوت شوند.",
         "btn_public_rooms": "🚪 اتاق‌های عمومی",
+        "player_removed_5_skips": "⛔ به‌دلیل ۵ بار رد کردن نوبت، از بازی خارج شدید.",
+        "player_removed_5_skips_others": "⛔ {name} به‌دلیل ۵ بار رد کردن نوبت از بازی خارج شد.",
     },
 }
 
