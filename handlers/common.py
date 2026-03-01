@@ -284,23 +284,25 @@ async def cp_edit_name(c: types.CallbackQuery, state: FSMContext):
     await c.message.edit_text(t(uid, "ask_name"))
     await state.set_state(RoomStates.complete_profile_name)
 
-@router.message(RoomStates.complete_profile_name)
-async def complete_profile_name_handler(message: types.Message, state: FSMContext):
+@router.message(RoomStates.complete_profile_password)
+async def complete_profile_password_handler(message: types.Message, state: FSMContext):
     uid = message.from_user.id
-    name = message.text.strip()
-    if not name or len(name) < 2:
-        await message.answer(t(uid, "name_too_short"))
+    password = message.text.strip()
+    if len(password) < 4:
+        await message.answer(t(uid, "password_too_short"))
         return
-    if len(name) > 20:
-        await message.answer(t(uid, "name_too_long"))
+    db_query("UPDATE users SET password_key = %s WHERE user_id = %s", (password, uid), commit=True)
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
+    name = user[0]['player_name'] if user else 'Player'
+    data = await state.get_data()
+    pending_join = data.get('pending_join')
+    await state.clear()
+    await message.answer(t(uid, "profile_complete", name=name, password=password))
+    if pending_join:
+        user_data = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+        if user_data:
+            await _join_room_by_code(message, pending_join, user_data[0])
         return
-    existing = db_query("SELECT * FROM users WHERE player_name = %s AND user_id != %s", (name, uid))
-    if existing:
-        await message.answer(t(uid, "name_taken"))
-        return
-    db_query("UPDATE users SET player_name = %s WHERE user_id = %s", (name, uid), commit=True)
-    await message.answer(t(uid, "ask_password"))
-    await state.set_state(RoomStates.complete_profile_password)
 
 @router.message(RoomStates.complete_profile_password)
 async def complete_profile_password_handler(message: types.Message, state: FSMContext):
@@ -328,7 +330,7 @@ async def _join_room_by_code(message, code, user_data):
     room = db_query("SELECT * FROM rooms WHERE room_id = %s AND status = 'waiting'", (code,))
     if not room:
         await message.answer(t(uid, "room_not_found"))
-        await (message, user_data['player_name'], uid)
+        await show_main_menu(message, user_data['player_name'], uid)
         return
 
     existing = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (code, uid))
