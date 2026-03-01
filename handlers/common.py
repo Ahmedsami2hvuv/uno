@@ -983,9 +983,10 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
         [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play")],
         [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
         [InlineKeyboardButton(text="👥 الأصدقاء", callback_data="social_menu")],
-        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_profile"),
+        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
          InlineKeyboardButton(text="🧮 حاسبة أونو", callback_data="mode_calc")], # عدلت الكول باك هنا
         [InlineKeyboardButton(text="📜 القوانين", callback_data="rules")],
+        [InlineKeyboardButton(text="📊 الإحصائيات", callback_data="leaderboard")],
         [InlineKeyboardButton(text="🌍 تغيير اللغة", callback_data="change_lang")],
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
@@ -1425,7 +1426,7 @@ async def process_my_account_callback(c: types.CallbackQuery):
     
     # الأزرار (تعديل الحساب ورجوع)
     kb = [
-        [InlineKeyboardButton(text=t(uid, "تعديل الحساب"), callback_data="edit_account")],
+        [InlineKeyboardButton(text="✏️ تعديل حسابي", callback_data="edit_account")],
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]
     
