@@ -43,31 +43,7 @@ persistent_kb = ReplyKeyboardMarkup(
     persistent=True
 )
 
-@router.callback_query(F.data == "random_play")
-async def test_random_play(c: types.CallbackQuery):
-    print("✅ random_play callback works!")
-    await c.answer("🎲 زر اللعب العشوائي يعمل!", show_alert=True)
-    await c.message.edit_text("تم الضغط على زر اللعب العشوائي")
 
-@router.callback_query(F.data == "play_friends")
-async def test_play_friends(c: types.CallbackQuery):
-    print("✅ play_friends callback works!")
-    await c.answer("👥 زر اللعب مع الأصدقاء يعمل!", show_alert=True)
-    await c.message.edit_text("تم الضغط على زر اللعب مع الأصدقاء")
-
-@router.callback_query(F.data == "mode_calc")
-async def test_mode_calc(c: types.CallbackQuery):
-    print("✅ mode_calc callback works!")
-    await c.answer("🧮 زر الحاسبة يعمل!", show_alert=True)
-    await c.message.edit_text("تم الضغط على زر الحاسبة")
-    
-@router.callback_query()
-async def debug_callback(callback: types.CallbackQuery):
-    """دالة تشخيص - تطبع كل الكول باكات في التيرمينال"""
-    print(f"📩 Callback received: {callback.data}")
-    # لا نعترض الكول باك، نمرره للدوال الأخرى
-    await callback.answer()  # نرسل إشعار للمستخدم أن الكول باك وصل
-    
 @router.message(F.text == "🧹 تنظيف الرسائل")
 async def clean_chat_messages(message: types.Message):
     """يمسح جميع رسائل البوت في المحادثة (تنظيف سجل الرسائل)"""
