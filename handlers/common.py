@@ -1347,6 +1347,12 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
         [InlineKeyboardButton(text=t(uid, "btn_leaderboard"), callback_data="leaderboard")],
         [InlineKeyboardButton(text=t(uid, "btn_change_lang"), callback_data="change_lang")],
     ]
+    try:
+        from handlers.admin import is_admin
+        if is_admin(uid):
+            kb.append([InlineKeyboardButton(text="⚙️ لوحة الإدارة", callback_data="admin_open_panel")])
+    except Exception:
+        pass
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
     msg_text = t(uid, "main_menu", name=name)
@@ -1375,6 +1381,11 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
     else:
         await _cleanup_last_messages(message, limit=15)
         await message.answer(msg_text, reply_markup=markup)
+        # إظهار أزرار ستارت وتنظيف الرسائل دائماً تحت القائمة عند الدخول من /start أو تنظيف
+        try:
+            await message.answer("—", reply_markup=persistent_kb)
+        except Exception:
+            pass
 
 @router.callback_query(F.data == "tutorial_done")
 async def tutorial_done(c: types.CallbackQuery, state: FSMContext):
