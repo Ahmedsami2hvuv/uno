@@ -87,17 +87,17 @@ async def cmd_start_with_deeplink(message: types.Message, state: FSMContext):
                     (message.from_user.id, message.from_user.username or ""),
                     commit=True,
                 )
-            await state.update_data(pending_join=code)
-            uid = message.from_user.id
-            lang = get_lang(uid)
-            set_lang(uid, lang)
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
-                    [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")],
-                ]
-            )
-            welcome = t(uid, "welcome_new") + "\n\n🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً."
+                await state.update_data(pending_join=code)
+                uid = message.from_user.id
+                lang = get_lang(uid)
+                set_lang(uid, lang)
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
+                        [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")],
+                    ]
+                )
+                welcome = t(uid, "welcome_new") + "\n\n🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً."
             await message.answer(welcome, reply_markup=kb)
             return
     try:
