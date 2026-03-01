@@ -5,6 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from config import bot
 from database import db_query
+from handlers.common import channel_subscribe_message_middleware, channel_subscribe_callback_middleware
 
 # صور اتجاه اللعب من متغيرات Railway (الفايربل)
 try:
@@ -17,6 +18,8 @@ if not IMG_CCW:
     IMG_CCW = os.getenv("IMG_CCW")
 
 router = Router()
+router.message.middleware(channel_subscribe_message_middleware)
+router.callback_query.middleware(channel_subscribe_callback_middleware)
 
 class CalcStates(StatesGroup):
     adding_new_player = State()
