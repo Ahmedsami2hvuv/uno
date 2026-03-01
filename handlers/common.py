@@ -684,19 +684,17 @@ async def ask_score_limit(c: types.CallbackQuery, state: FSMContext):
     kb = []
     row = []
     for val in limits:
-    # لاحظ هنا استخدمنا roomset_ لكي لا تتداخل مع الحاسبة
-    row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"roomset_{val}"))
-    if len(row) == 2:
-    kb.append(row)
-    row = []
-    if row: kb.append(row)
-    
+        row.append(InlineKeyboardButton(text=f"🎯 {val}", callback_data=f"roomset_{val}"))
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
     kb.append([InlineKeyboardButton(text="🃏 جولة واحدة", callback_data="roomset_0")])
     kb.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="home")])
-    
     await c.message.edit_text(
-    f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط لإنهاء اللعبة:",
-    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        f"🔢 الغرفة لـ {p_count} لاعبين.\nحدد سقف النقاط لإنهاء اللعبة:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 # 3. دالة إنشاء الغرفة (تشتغل فوراً بعد ما اللاعب يختار السقف)
