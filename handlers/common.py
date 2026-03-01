@@ -69,17 +69,54 @@ def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
 
 
-@router.message(F.text.in_(["ستارت", "/start"]))
+@router.message(Command("start"))
+async def cmd_start_with_deeplink(message: types.Message, state: FSMContext):
+    """معالجة /start مع رابط الدعوة: /start join_ROOMCODE"""
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) >= 2 and parts[1].startswith("join_"):
+        code = parts[1][5:].strip()
+        if code:
+            user = db_query("SELECT * FROM users WHERE user_id = %s", (message.from_user.id,))
+            if user and user[0].get("is_registered"):
+                await _join_room_by_code(message, code, user[0])
+                return
+            if not user:
+                db_query(
+                    "INSERT INTO users (user_id, username, is_registered) VALUES (%s, %s, FALSE)",
+                    (message.from_user.id, message.from_user.username or ""),
+                    commit=True,
+                )
+            await state.update_data(pending_join=code)
+            uid = message.from_user.id
+            lang = get_lang(uid)
+            set_lang(uid, lang)
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=t(uid, "btn_register"), callback_data="auth_register")],
+                    [InlineKeyboardButton(text=t(uid, "btn_login"), callback_data="auth_login")],
+                ]
+            )
+            welcome = t(uid, "welcome_new") + "\n\n🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً."
+            await message.answer(welcome, reply_markup=kb)
+            return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
+    name = user[0]["player_name"] if user else message.from_user.full_name
+    await show_main_menu(message, name, user_id=message.from_user.id, state=state)
+
+
+@router.message(F.text == "ستارت")
 async def quick_start_button(message: types.Message, state: FSMContext):
     try:
         await message.delete()
-    except:
+    except Exception:
         pass
-
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
-    name = user[0]['player_name'] if user else message.from_user.full_name
-
-    # استدعاء دالة المنيو اللي راح نضيفها جوه
+    name = user[0]["player_name"] if user else message.from_user.full_name
     await show_main_menu(message, name, user_id=message.from_user.id, state=state)
 
 @router.message(RoomStates.upgrade_username)
