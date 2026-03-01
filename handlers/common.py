@@ -336,9 +336,9 @@ async def _join_room_by_code(message, code, user_data):
     p_count = db_query("SELECT count(*) as count FROM room_players WHERE room_id = %s", (code,))[0]['count']
     max_p = room[0]['max_players']
     if p_count >= max_p:
-    await message.answer(t(uid, "room_full"))
-    await (message, user_data['player_name'], uid)
-    return
+        await message.answer(t(uid, "room_full"))
+        await (message, user_data['player_name'], uid)
+        return
 
     u_name = user_data['player_name']
     db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
@@ -350,8 +350,8 @@ async def _join_room_by_code(message, code, user_data):
     num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
     players_list = ""
     for idx, rp in enumerate(all_in_room):
-    marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
-    players_list += f"{marker} {rp['player_name']}\n"
+        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
+        players_list += f"{marker} {rp['player_name']}\n"
 
     if p_count >= max_p:
         db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
