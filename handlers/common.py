@@ -125,12 +125,12 @@ async def process_upgrade_username(message: types.Message, state: FSMContext):
 
     # التأكد من الطول وشكل اليوزر
     if len(new_username) < 3 or not new_username.isalnum():
-    return await message.answer("❌ اليوزر نيم يجب أن يكون 3 أحرف أو أكثر (إنجليزي وأرقام فقط):")
+        return await message.answer("❌ اليوزر نيم يجب أن يكون 3 أحرف أو أكثر (إنجليزي وأرقام فقط):")
 
     # التأكد إذا اليوزر محجوز لغير لاعب
     check = db_query("SELECT user_id FROM users WHERE username_key = %s", (new_username,))
     if check:
-    return await message.answer("❌ هذا اليوزر نيم محجوز لشخص آخر، اختر غيره:")
+        return await message.answer("❌ هذا اليوزر نيم محجوز لشخص آخر، اختر غيره:")
 
     # حفظ اليوزر مؤقتاً بالـ state والانتقال لطلب كلمة السر
     await state.update_data(temp_username=new_username)
@@ -141,7 +141,7 @@ async def process_upgrade_username(message: types.Message, state: FSMContext):
 async def process_upgrade_password(message: types.Message, state: FSMContext):
     password = message.text.strip()
     if len(password) < 4:
-    return await message.answer("❌ كلمة السر ضعيفة، أرسل 4 أحرف أو أكثر:")
+        return await message.answer("❌ كلمة السر ضعيفة، أرسل 4 أحرف أو أكثر:")
 
     data = await state.get_data()
     username = data.get('temp_username')
@@ -164,9 +164,9 @@ async def on_play_friends(c: types.CallbackQuery):
     uid = c.from_user.id
     text = "🎮 **اللعب مع الأصدقاء**\n\nاختر:"
     kb = [
-    [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")],
-    [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="room_join_input")],
-    [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")],
+        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="room_join_input")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
 
