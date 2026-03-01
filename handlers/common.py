@@ -17,6 +17,8 @@ pending_next_round = {}
 next_round_ready = {}
 friend_invite_selections = {}
 kick_selections = {}
+# كتم دعوات اللعب: (muter_id, muted_id) -> muted_until (datetime أو None للابد)
+invite_mutes = {}
 
 class RoomStates(StatesGroup):
     wait_for_code = State()
@@ -738,31 +740,27 @@ async def finalize_room(c: types.CallbackQuery, state: FSMContext):
     (code, uid, data.get('p_count', 2), limit), commit=True)
     db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
 
-    friends = db_query("""
-    SELECT u.user_id, u.player_name FROM friends f
-    JOIN users u ON (CASE WHEN f.user_id = %s THEN f.friend_id ELSE f.user_id END) = u.user_id
-    WHERE (f.user_id = %s OR f.friend_id = %s) AND f.status = 'accepted'
-    """, (uid, uid, uid))
+    followed = db_query("""
+    SELECT u.user_id, u.player_name FROM follows f
+    JOIN users u ON f.following_id = u.user_id
+    WHERE f.follower_id = %s
+    ORDER BY u.player_name
+    """, (uid,))
+    bot_info = await c.bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=join_{code}"
 
-    if friends:
-        kb_invite = []
-        for f in friends:
+    kb_invite = []
+    if followed:
+        for f in followed:
             kb_invite.append([InlineKeyboardButton(text=f"👤 {f['player_name']}", callback_data=f"finv_{code}_{f['user_id']}")])
         kb_invite.append([InlineKeyboardButton(text="📨 إرسال الدعوات", callback_data=f"finvsend_{code}")])
-        kb_invite.append([InlineKeyboardButton(text="🔗 الحصول على رابط فقط", callback_data=f"finvskip_{code}")])
-        kb_invite.append([InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")])
-        if code not in friend_invite_selections:
-            friend_invite_selections[code] = set()
-        await c.message.edit_text(t(uid, "room_created_invite"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
-    else:
-        bot_info = await c.bot.get_me()
-        link = f"https://t.me/{bot_info.username}?start=join_{code}"
-        await c.message.edit_text(t(uid, "room_created_msg1"))
-        kb_link = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-        ])
-        await c.message.answer(t(uid, "room_created_msg2", link=link), reply_markup=kb_link)
+    kb_invite.append([InlineKeyboardButton(text="🔗 رابط الدعوة (أرسله لأي لاعب)", callback_data=f"finvskip_{code}")])
+    kb_invite.append([InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")])
+    if code not in friend_invite_selections:
+        friend_invite_selections[code] = set()
 
+    msg = f"✅ تم إنشاء الغرفة!\n\n👥 اختر اللاعبين الذين تتابعهم لإرسال دعوة، أو استخدم الرابط لأي لاعب:\n{link}"
+    await c.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
     await state.clear()
 
 @router.callback_query(F.data == "my_open_rooms")
@@ -1150,26 +1148,29 @@ async def toggle_friend_invite(c: types.CallbackQuery):
         sel.discard(friend_id)
     else:
         sel.add(friend_id)
-    friends = db_query("""
-    SELECT u.user_id, u.player_name FROM friends f
-    JOIN users u ON (CASE WHEN f.user_id = %s THEN f.friend_id ELSE f.user_id END) = u.user_id
-    WHERE (f.user_id = %s OR f.friend_id = %s) AND f.status = 'accepted'
-    """, (c.from_user.id, c.from_user.id, c.from_user.id))
+    followed = db_query("""
+    SELECT u.user_id, u.player_name FROM follows f
+    JOIN users u ON f.following_id = u.user_id
+    WHERE f.follower_id = %s
+    ORDER BY u.player_name
+    """, (c.from_user.id,))
     kb_invite = []
-    for f in friends:
+    for f in followed:
         check = "✅" if f['user_id'] in sel else "👤"
         kb_invite.append([InlineKeyboardButton(text=f"{check} {f['player_name']}", callback_data=f"finv_{code}_{f['user_id']}")])
     kb_invite.append([InlineKeyboardButton(text=f"📨 إرسال الدعوات ({len(sel)})", callback_data=f"finvsend_{code}")])
-    kb_invite.append([InlineKeyboardButton(text="🔗 الحصول على رابط فقط", callback_data=f"finvskip_{code}")])
+    kb_invite.append([InlineKeyboardButton(text="🔗 رابط الدعوة (أرسله لأي لاعب)", callback_data=f"finvskip_{code}")])
     kb_invite.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
-    await c.message.edit_text("✅ تم إنشاء الغرفة!\n\n👥 اختر الأصدقاء اللي تبي تدعوهم (اضغط على اسم اللاعب لتحديده):", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
+    bot_info = await c.bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=join_{code}"
+    await c.message.edit_text(f"✅ تم إنشاء الغرفة!\n\n👥 اختر اللاعبين الذين تتابعهم (اضغط على الاسم لتحديده)، أو أرسل الرابط لأي لاعب:\n{link}", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
 
 @router.callback_query(F.data.startswith("finvsend_"))
 async def send_friend_invites(c: types.CallbackQuery):
     code = c.data.split("_")[1]
     sel = friend_invite_selections.pop(code, set())
     if not sel:
-        return await c.answer("⚠️ لم تختر أي صديق!", show_alert=True)
+        return await c.answer("⚠️ لم تختر أي لاعب! أو استخدم رابط الدعوة لأي شخص.", show_alert=True)
     u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
     room = db_query("SELECT * FROM rooms WHERE room_id = %s", (code,))
     max_p = room[0]['max_players'] if room else 10
@@ -1960,8 +1961,26 @@ async def show_rules(c: types.CallbackQuery):
     await c.answer()
 
 # --- دالة إرسال دعوة اللعب من بروفايل اللاعب ---
+def _is_invite_muted(muter_id, muted_id):
+    import datetime
+    key = (muter_id, muted_id)
+    if key not in invite_mutes:
+        return None
+    until = invite_mutes[key]
+    if until is None:
+        return "للأبد"
+    if datetime.datetime.now() > until:
+        del invite_mutes[key]
+        return None
+    delta = until - datetime.datetime.now()
+    mins = int(delta.total_seconds() // 60)
+    if mins >= 60:
+        return f"{mins // 60} ساعة"
+    return f"{mins} دقيقة"
+
 @router.callback_query(F.data.startswith("invite_"))
 async def send_game_invite(c: types.CallbackQuery):
+    import datetime
     sender_id = c.from_user.id
     try:
         target_id = int(c.data.split("_")[1])
@@ -1974,43 +1993,70 @@ async def send_game_invite(c: types.CallbackQuery):
         return
 
     sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
-    if not sender_data:
-        await c.answer("⚠️ لم يتم العثور على بياناتك.", show_alert=True)
-        return
-    sender = sender_data[0]
+    sender_name = sender_data[0]["player_name"] if sender_data else c.from_user.full_name or "لاعب"
 
-    target_data = db_query("SELECT player_name, allow_invites, invite_expiry FROM users WHERE user_id = %s", (target_id,))
-    if not target_data:
-        await c.answer("⚠️ اللاعب غير موجود.", show_alert=True)
-        return
-    target = target_data[0]
-
-    import datetime
-    invite_expiry = target.get("invite_expiry")
-    if invite_expiry and datetime.datetime.now() > invite_expiry:
-        db_query("UPDATE users SET allow_invites = 0, invite_expiry = NULL WHERE user_id = %s", (target_id,), commit=True)
-        await c.answer("❌ انتهى وقت استقبال الطلبات لهذا اللاعب حالياً.", show_alert=True)
-        return
-    if not target.get("allow_invites", 1):
-        await c.answer("❌ هذا اللاعب يغلق استقبال طلبات اللعب حالياً.", show_alert=True)
+    muted_remaining = _is_invite_muted(target_id, sender_id)
+    if muted_remaining:
+        await c.answer(f"⛔ أنت مكتوم من إرسال دعوات لهذا اللاعب خلال: {muted_remaining}", show_alert=True)
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ قبول", callback_data=f"accept_inv_{sender_id}"),
-            InlineKeyboardButton(text="❌ رفض", callback_data=f"reject_inv_{sender_id}")
+            InlineKeyboardButton(text="✅ اقبل", callback_data=f"accept_inv_{sender_id}"),
+            InlineKeyboardButton(text="❌ ارفض", callback_data=f"reject_inv_{sender_id}"),
+            InlineKeyboardButton(text="🔇 اكتم", callback_data=f"mute_inv_{sender_id}")
         ]
     ])
     try:
         await c.bot.send_message(
             target_id,
-            f"📩 **طلب لعب جديد!**\n\nاللاعب **{sender['player_name']}** يدعوك للانضمام إلى جولة أونو.",
+            f"📩 **{sender_name}** يطلبك للعب معه",
             reply_markup=kb,
             parse_mode="Markdown"
         )
         await c.answer("✅ تم إرسال طلب اللعب بنجاح!", show_alert=True)
     except Exception:
         await c.answer("⚠️ تعذر إرسال الطلب (ربما قام اللاعب بحظر البوت).", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mute_inv_"))
+async def mute_invite_options(c: types.CallbackQuery):
+    """عرض خيارات الكتم: ساعة، 5 ساعات، 10 ساعات، 24 ساعة، للأبد"""
+    parts = c.data.split("_")
+    if len(parts) < 3:
+        await c.answer("⚠️ خطأ.", show_alert=True)
+        return
+    sender_id = int(parts[2])
+    muter_id = c.from_user.id
+    kb = [
+        [InlineKeyboardButton(text="كتم ساعة", callback_data=f"mute_inv_confirm_{sender_id}_60")],
+        [InlineKeyboardButton(text="كتم 5 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_300")],
+        [InlineKeyboardButton(text="كتم 10 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_600")],
+        [InlineKeyboardButton(text="كتم 24 ساعة", callback_data=f"mute_inv_confirm_{sender_id}_1440")],
+        [InlineKeyboardButton(text="كتم للأبد", callback_data=f"mute_inv_confirm_{sender_id}_0")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"view_profile_{sender_id}")]
+    ]
+    await c.message.edit_text("🔇 اختر مدة الكتم لهذا اللاعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("mute_inv_confirm_"))
+async def mute_invite_confirm(c: types.CallbackQuery):
+    import datetime
+    parts = c.data.split("_")
+    if len(parts) < 5:
+        await c.answer("⚠️ خطأ.", show_alert=True)
+        return
+    sender_id = int(parts[3])
+    minutes = int(parts[4])
+    muter_id = c.from_user.id
+    if minutes == 0:
+        invite_mutes[(muter_id, sender_id)] = None
+        await c.answer("✅ تم كتم هذا اللاعب للأبد من إرسال دعوات لك.", show_alert=True)
+    else:
+        invite_mutes[(muter_id, sender_id)] = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+        await c.answer(f"✅ تم كتم هذا اللاعب لمدة {minutes} دقيقة.", show_alert=True)
+    await c.message.edit_text("✅ تم تطبيق الكتم.")
 
 # --- 1. عرض خيارات الوقت (تعديل الرسالة الحالية) ---
 @router.callback_query(F.data.startswith("allow_invites_"))
