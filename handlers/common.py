@@ -29,6 +29,7 @@ class RoomStates(StatesGroup):
     search_user = State()
     # ابقينا القديمة لضمان عدم تعطل أي كود مرتبط بها حالياً
     edit_name = State()
+    edit_username = State()
     edit_password = State()
     register_name = State()
     register_password = State()
@@ -1424,6 +1425,7 @@ async def process_my_account_callback(c: types.CallbackQuery):
 async def edit_account_menu(c: types.CallbackQuery):
     kb = [
         [InlineKeyboardButton(text="📛 تغيير الاسم", callback_data="change_name")],
+        [InlineKeyboardButton(text="🆔 تغيير اليوزر نيم", callback_data="change_username")],
         [InlineKeyboardButton(text="🔑 تغيير الرمز السري", callback_data="change_password")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="my_account")]
     ]
@@ -1446,6 +1448,35 @@ async def process_new_name(message: types.Message, state: FSMContext):
     if user:
         u = user[0]
         uid = message.from_user.id
+        fc, ing = _get_follow_counts(uid)
+        txt = f"👤 حسابي\n\n📛 اسم اللاعب: {u['player_name']}\n🔑 الرمز السري: {u.get('password_key') or 'لا يوجد'}\n🆔 اليوزر نيم: @{u.get('username_key') or '---'}\n⭐ النقاط: {u.get('online_points', 0)}\n📈 المتابعون: {fc}\n📉 من تتابع: {ing}"
+        kb = [
+            [InlineKeyboardButton(text="✏️ تعديل الحساب", callback_data="edit_account")],
+            [InlineKeyboardButton(text="🚪 تسجيل الخروج", callback_data="logout_confirm")],
+            [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        ]
+        await message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "change_username")
+async def ask_new_username(c: types.CallbackQuery, state: FSMContext):
+ أرسل اليوزر نيم الجديد (حروف إنجليزية وأرقام فقط، 3 أحرف على الأقل):")    await c.message.edit_text("🆔
+    await state.set_state(RoomStates.edit_username)
+
+@router.message(RoomStates.edit_username)
+async def process_new_username(message: types.Message, state: FSMContext):
+    uid = message.from_user.id
+    new_username = message.text.strip().lower().replace("@", "")
+    if len(new_username) < 3 or not new_username.isalnum():
+        return await message.answer("❌ اليوزر نيم لازم 3 أحرف أو أكثر (إنجليزي وأرقام فقط). حاول مرة ثانية:")
+    existing = db_query("SELECT user_id FROM users WHERE username_key = %s AND user_id != %s", (new_username, uid))
+    if existing:
+        return await message.answer("❌ هذا اليوزر نيم محجوز لشخص آخر. اختر غيره:")
+    db_query("UPDATE users SET username_key = %s WHERE user_id = %s", (new_username, uid), commit=True)
+    await state.clear()
+    await message.answer(f"✅ تم تغيير اليوزر نيم إلى: @{new_username}")
+    user = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    if user:
+        u = user[0]
         fc, ing = _get_follow_counts(uid)
         txt = f"👤 حسابي\n\n📛 اسم اللاعب: {u['player_name']}\n🔑 الرمز السري: {u.get('password_key') or 'لا يوجد'}\n🆔 اليوزر نيم: @{u.get('username_key') or '---'}\n⭐ النقاط: {u.get('online_points', 0)}\n📈 المتابعون: {fc}\n📉 من تتابع: {ing}"
         kb = [
