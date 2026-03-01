@@ -639,8 +639,8 @@ async def show_profile(c: types.CallbackQuery):
     f"📉 عدد من تتابعهم: {following_count}"
     )
     kb = [
-    [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account")],
-    [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
+        [InlineKeyboardButton(text="✏️ تعديل بيانات الحساب", callback_data="edit_account"), InlineKeyboardButton(text="⚙️ الإعدادات", callback_data="my_settings")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -1432,10 +1432,65 @@ async def process_my_account_callback(c: types.CallbackQuery):
         f"📉 عدد من تتابعهم: {following_count}"
     )
     kb = [
-        [InlineKeyboardButton(text="✏️ تعديل حسابي", callback_data="edit_account")],
+        [InlineKeyboardButton(text="✏️ تعديل حسابي", callback_data="edit_account"), InlineKeyboardButton(text="⚙️ الإعدادات", callback_data="my_settings")],
         [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@router.callback_query(F.data == "my_settings")
+async def my_settings_menu(c: types.CallbackQuery):
+    uid = c.from_user.id
+    text = "⚙️ **الإعدادات**"
+    kb = [
+        [InlineKeyboardButton(text="📩 استقبال الدعوات", callback_data="settings_invites")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="my_account")]
+    ]
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    await c.answer()
+
+def _get_invite_from(uid):
+    """من يمكنه إرسال دعوة لعب له: all / following / followers"""
+    row = db_query("SELECT * FROM users WHERE user_id = %s", (uid,))
+    if not row:
+        return "all"
+    return row[0].get("invite_from") or "all"
+
+@router.callback_query(F.data == "settings_invites")
+async def settings_invites_ui(c: types.CallbackQuery):
+    uid = c.from_user.id
+    current = _get_invite_from(uid)
+    check = "✅"
+    cross = "❌"
+    kb = [
+        [InlineKeyboardButton(text=f"من الجميع {check if current == 'all' else cross}", callback_data="set_invite_from_all")],
+        [InlineKeyboardButton(text=f"من الذين أتابعهم فقط {check if current == 'following' else cross}", callback_data="set_invite_from_following")],
+        [InlineKeyboardButton(text=f"من الذين يتابعونني فقط {check if current == 'followers' else cross}", callback_data="set_invite_from_followers")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data="my_settings")]
+    ]
+    text = (
+        "📩 **استقبال الدعوات**\n\n"
+        "اختر من يمكنه إرسال دعوة لعب لك:\n"
+        "• **من الجميع:** أي شخص يمكنه دعوتك.\n"
+        "• **من الذين أتابعهم:** فقط من تتابعهم يمكنهم دعوتك.\n"
+        "• **من الذين يتابعونني:** فقط من يتابعونك يمكنهم دعوتك."
+    )
+    await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+    await c.answer()
+
+@router.callback_query(F.data.startswith("set_invite_from_"))
+async def set_invite_from(c: types.CallbackQuery):
+    uid = c.from_user.id
+    value = c.data.replace("set_invite_from_", "")
+    if value not in ("all", "following", "followers"):
+        await c.answer("⚠️ خطأ.", show_alert=True)
+        return
+    try:
+        db_query("UPDATE users SET invite_from = %s WHERE user_id = %s", (value, uid), commit=True)
+    except Exception:
+        await c.answer("⚠️ تعذر حفظ الإعداد. (قد تحتاج إضافة عمود invite_from لجدول users)", show_alert=True)
+        return
+    await c.answer("✅ تم الحفظ.", show_alert=True)
+    await settings_invites_ui(c)
 
 @router.callback_query(F.data == "edit_account")
 async def edit_account_menu(c: types.CallbackQuery):
@@ -2002,6 +2057,18 @@ async def send_game_invite(c: types.CallbackQuery):
     if muted_remaining:
         await c.answer(f"⛔ أنت مكتوم من إرسال دعوات لهذا اللاعب خلال: {muted_remaining}", show_alert=True)
         return
+
+    invite_from = _get_invite_from(target_id)
+    if invite_from == "following":
+        row = db_query("SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s", (target_id, sender_id))
+        if not row:
+            await c.answer("⛔ هذا اللاعب يستقبل الدعوات فقط من الذين يتابعهم. أنت لست من قائمة متابعاته.", show_alert=True)
+            return
+    elif invite_from == "followers":
+        row = db_query("SELECT 1 FROM follows WHERE follower_id = %s AND following_id = %s", (sender_id, target_id))
+        if not row:
+            await c.answer("⛔ هذا اللاعب يستقبل الدعوات فقط من الذين يتابعونه. تابعَه أولاً ثم جرّب الدعوة.", show_alert=True)
+            return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
