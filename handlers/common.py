@@ -147,8 +147,11 @@ async def process_upgrade_password(message: types.Message, state: FSMContext):
     username = data.get('temp_username')
 
     # تحديث قاعدة البيانات بشكل نهائي
-    db_query("UPDATE users SET username_key = %s, password_key = %s WHERE user_id = %s",
-    (username, password, message.from_user.id), commit=True)
+    db_query(
+        "UPDATE users SET username_key = %s, password_key = %s WHERE user_id = %s",
+        (username, password, message.from_user.id),
+        commit=True,
+    )
 
     user = db_query("SELECT player_name FROM users WHERE user_id = %s", (message.from_user.id,))
     name = user[0]['player_name'] if user else message.from_user.full_name
@@ -265,7 +268,6 @@ async def set_lang_callback(c: types.CallbackQuery, state: FSMContext):
     ])
     await c.message.edit_text(t(uid, "welcome_new"), reply_markup=kb)
 
-
 @router.callback_query(F.data == "cp_name_ok")
 async def cp_name_ok(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
@@ -337,7 +339,7 @@ async def _join_room_by_code(message, code, user_data):
     max_p = room[0]['max_players']
     if p_count >= max_p:
         await message.answer(t(uid, "room_full"))
-        await (message, user_data['player_name'], uid)
+        await show_main_menu(message, user_data['player_name'], uid)
         return
 
     u_name = user_data['player_name']
@@ -498,46 +500,40 @@ async def menu_random(c: types.CallbackQuery):
     LIMIT 1""", (uid,))
 
     if waiting:
-    code = waiting[0]['room_id']
-    u_name = user[0]['player_name']
-
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
-    (code, uid, u_name), commit=True)
-    db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
-
-    all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
-    for p in all_players:
-    try:
-    await c.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
-    except:
-    pass
-
-    from handlers.room_2p import start_new_round
-    await start_new_round(code, c.bot, start_turn_idx=0)
-
+        code = waiting[0]['room_id']
+        u_name = user[0]['player_name']
+        db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
+                 (code, uid, u_name), commit=True)
+        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
+        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
+        for p in all_players:
+            try:
+                await c.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_2p"))
+            except Exception:
+                pass
+        from handlers.room_2p import start_new_round
+        await start_new_round(code, c.bot, start_turn_idx=0)
     else:
-    code = generate_room_code()
-    u_name = user[0]['player_name']
-
-    db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, is_random) VALUES (%s, %s, 2, 0, 'waiting', TRUE)",
-    (code, uid), commit=True)
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
-    (code, uid, u_name), commit=True)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-    ])
-    await c.message.edit_text(t(uid, "🤌🏻اصبر شوي "), reply_markup=kb)
+        code = generate_room_code()
+        u_name = user[0]['player_name']
+        db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status, is_random) VALUES (%s, %s, 2, 0, 'waiting', TRUE)",
+                 (code, uid), commit=True)
+        db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
+                 (code, uid, u_name), commit=True)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await c.message.edit_text(t(uid, "🤌🏻اصبر شوي "), reply_markup=kb)
 
 
 @router.callback_query(F.data == "menu_friends")
 async def menu_friends(c: types.CallbackQuery):
     uid = c.from_user.id
     kb = [
-    [InlineKeyboardButton(text=t(uid, "➕ إنشاء غرفة"), callback_data="room_create_start")],
-    [InlineKeyboardButton(text=t(uid, "🚪 انضمام لغرفة"), callback_data="room_join_input")],
-    [InlineKeyboardButton(text=t(uid, "الغرف المفتوحة"), callback_data="my_open_rooms")],
-    [InlineKeyboardButton(text=t(uid, "الرجوع"), callback_data="home")]
+        [InlineKeyboardButton(text=t(uid, "➕ إنشاء غرفة"), callback_data="room_create_start")],
+        [InlineKeyboardButton(text=t(uid, "🚪 انضمام لغرفة"), callback_data="room_join_input")],
+        [InlineKeyboardButton(text=t(uid, "الغرف المفتوحة"), callback_data="my_open_rooms")],
+        [InlineKeyboardButton(text=t(uid, "الرجوع"), callback_data="home")]
     ]
     await c.message.edit_text(t(uid, "friends_menu"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
