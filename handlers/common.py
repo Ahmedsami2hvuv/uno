@@ -2019,27 +2019,6 @@ async def send_game_invite(c: types.CallbackQuery):
         await c.answer("⚠️ تعذر إرسال الطلب (ربما قام اللاعب بحظر البوت).", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("mute_inv_"))
-async def mute_invite_options(c: types.CallbackQuery):
-    """عرض خيارات الكتم: ساعة، 5 ساعات، 10 ساعات، 24 ساعة، للأبد"""
-    parts = c.data.split("_")
-    if len(parts) < 3:
-        await c.answer("⚠️ خطأ.", show_alert=True)
-        return
-    sender_id = int(parts[2])
-    muter_id = c.from_user.id
-    kb = [
-        [InlineKeyboardButton(text="كتم ساعة", callback_data=f"mute_inv_confirm_{sender_id}_60")],
-        [InlineKeyboardButton(text="كتم 5 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_300")],
-        [InlineKeyboardButton(text="كتم 10 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_600")],
-        [InlineKeyboardButton(text="كتم 24 ساعة", callback_data=f"mute_inv_confirm_{sender_id}_1440")],
-        [InlineKeyboardButton(text="كتم للأبد", callback_data=f"mute_inv_confirm_{sender_id}_0")],
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"view_profile_{sender_id}")]
-    ]
-    await c.message.edit_text("🔇 اختر مدة الكتم لهذا اللاعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await c.answer()
-
-
 @router.callback_query(F.data.startswith("mute_inv_confirm_"))
 async def mute_invite_confirm(c: types.CallbackQuery):
     import datetime
@@ -2052,11 +2031,38 @@ async def mute_invite_confirm(c: types.CallbackQuery):
     muter_id = c.from_user.id
     if minutes == 0:
         invite_mutes[(muter_id, sender_id)] = None
-        await c.answer("✅ تم كتم هذا اللاعب للأبد من إرسال دعوات لك.", show_alert=True)
+        msg = "✅ تم كتم هذا اللاعب للأبد من إرسال دعوات لك."
     else:
         invite_mutes[(muter_id, sender_id)] = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
-        await c.answer(f"✅ تم كتم هذا اللاعب لمدة {minutes} دقيقة.", show_alert=True)
-    await c.message.edit_text("✅ تم تطبيق الكتم.")
+        msg = f"✅ تم كتم هذا اللاعب لمدة {minutes} دقيقة."
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]])
+    try:
+        await c.message.edit_text(msg, reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("mute_inv_"))
+async def mute_invite_options(c: types.CallbackQuery):
+    """عرض خيارات الكتم (لا يطابق mute_inv_confirm_)"""
+    if c.data.startswith("mute_inv_confirm_"):
+        await c.answer()
+        return
+    parts = c.data.split("_")
+    if len(parts) < 3:
+        await c.answer("⚠️ خطأ.", show_alert=True)
+        return
+    sender_id = int(parts[2])
+    kb = [
+        [InlineKeyboardButton(text="كتم ساعة", callback_data=f"mute_inv_confirm_{sender_id}_60")],
+        [InlineKeyboardButton(text="كتم 5 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_300")],
+        [InlineKeyboardButton(text="كتم 10 ساعات", callback_data=f"mute_inv_confirm_{sender_id}_600")],
+        [InlineKeyboardButton(text="كتم 24 ساعة", callback_data=f"mute_inv_confirm_{sender_id}_1440")],
+        [InlineKeyboardButton(text="كتم للأبد", callback_data=f"mute_inv_confirm_{sender_id}_0")],
+        [InlineKeyboardButton(text="🔙 رجوع", callback_data=f"view_profile_{sender_id}")]
+    ]
+    await c.message.edit_text("🔇 اختر مدة الكتم لهذا اللاعب:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await c.answer()
 
 # --- 1. عرض خيارات الوقت (تعديل الرسالة الحالية) ---
 @router.callback_query(F.data.startswith("allow_invites_"))
@@ -2108,42 +2114,36 @@ async def process_invites_timer(c: types.CallbackQuery):
     # العودة لبروفايل اللاعب باستخدام تعديل الرسالة
     await process_user_search_by_id(c, uid)
 
-# --- 1. دالة قبول الطلب (تنفذ عند ضغط الصديق على ✅ قبول) ---
+# --- قبول الدعوة: إنشاء غرفة ثنائية وبدء اللعب فوراً (ظهور الأوراق) ---
 @router.callback_query(F.data.startswith("accept_inv_"))
 async def accept_game_invite(c: types.CallbackQuery):
-    # sender_id هو الشخص الذي أرسل الدعوة
     sender_id = int(c.data.split("_")[2])
-    # target_id هو الشخص الذي ضغط "قبول" الآن
     target_id = c.from_user.id
-    
-    # جلب أسماء اللاعبين للتنسيق
+
     sender_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (sender_id,))
     target_data = db_query("SELECT player_name FROM users WHERE user_id = %s", (target_id,))
-    
-    if not sender_data or not target_data:
-        return await c.answer("⚠️ حدث خطأ، أحد اللاعبين غير موجود.")
+    s_name = sender_data[0]['player_name'] if sender_data else "لاعب"
+    t_name = target_data[0]['player_name'] if target_data else "لاعب"
 
-    s_name = sender_data[0]['player_name']
-    t_name = target_data[0]['player_name']
+    code = generate_room_code()
+    db_query(
+        "INSERT INTO rooms (room_id, creator_id, max_players, score_limit, status) VALUES (%s, %s, 2, 0, 'playing')",
+        (code, sender_id), commit=True
+    )
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, sender_id, s_name), commit=True)
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, target_id, t_name), commit=True)
 
     try:
-        kb_sender = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🎮 دخول الغرفة الآن", callback_data=f"join_private_{target_id}")]
-        ])
-        await c.bot.send_message(
-            sender_id,
-            f"✅ وافق **{t_name}** على دعوتك!\nاضغط على الزر بالأسفل لبدء اللعب.",
-            reply_markup=kb_sender
-        )
-    except Exception:
-        return await c.answer("⚠️ يبدو أن المرسل أغلق البوت.")
-    kb_target = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎲 إنشاء الغرفة", callback_data="create_room")]
-    ])
-    await c.message.edit_text(
-        f"🚀 **تم قبول الدعوة!**\n\nأنت الآن ستلعب مع **{s_name}**.\nقم ب وأرسل الكود له أو انتظر دخوله.",
-        reply_markup=kb_target
-    )
+        from handlers.room_2p import start_new_round
+        await start_new_round(code, c.bot, start_turn_idx=0)
+        await c.answer("✅ تم قبول الدعوة! جاري بدء اللعبة...", show_alert=True)
+    except Exception as e:
+        await c.answer("⚠️ حدث خطأ في بدء اللعبة.", show_alert=True)
+        try:
+            await c.bot.send_message(sender_id, f"✅ وافق **{t_name}** على دعوتك! لكن حدث خطأ في بدء الجولة.")
+            await c.bot.send_message(target_id, f"حدث خطأ في بدء اللعبة. جرّب إنشاء غرفة من القائمة.")
+        except Exception:
+            pass
 
 # --- 2. دالة رفض الطلب (تنفذ عند ضغط الصديق على ❌ رفض) ---
 @router.callback_query(F.data.startswith("reject_inv_"))
