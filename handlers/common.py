@@ -80,6 +80,8 @@ friend_invite_selections = {}
 kick_selections = {}
 # كتم دعوات اللعب: (muter_id, muted_id) -> muted_until (datetime أو None للابد)
 invite_mutes = {}
+# تعليم تفاعلي: كاش في الذاكرة حتى لو عمود seen_tutorial غير موجود في DB
+_tutorial_done_cache = set()
 
 # --- إنجازات وبادجات (يُستدعى فتحها من room_2p عند الفوز/نهاية الجولة) ---
 ACHIEVEMENTS = {
@@ -1200,9 +1202,9 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
         return
     # 3.5 تعليم تفاعلي (أول استخدام)
     try:
-        seen = user_rows[0].get('seen_tutorial') in (True, 1, 't', 'true')
+        seen = (user_id in _tutorial_done_cache) or (user_rows[0].get('seen_tutorial') in (True, 1, 't', 'true'))
     except Exception:
-        seen = False
+        seen = user_id in _tutorial_done_cache
     if not seen:
         target_msg = message.message if isinstance(message, types.CallbackQuery) else message
         txt = t(uid, "tutorial_title") + "\n\n" + t(uid, "tutorial_body")
@@ -1255,6 +1257,7 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None):
 @router.callback_query(F.data == "tutorial_done")
 async def tutorial_done(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
+    _tutorial_done_cache.add(uid)
     try:
         db_query("UPDATE users SET seen_tutorial = TRUE WHERE user_id = %s", (uid,), commit=True)
     except Exception:
@@ -1336,54 +1339,19 @@ async def _next_round_timeout(room_id, bot):
     if room_id in pending_next_round:
         await _start_next_round(room_id, bot)
 
+# طلب الصداقة أُزيل: نستخدم المتابعة الفورية فقط. لو وُجد زر قديم addfrnd_ نحوّله لمتابعة
 @router.callback_query(F.data.startswith("addfrnd_"))
-async def add_friend(c: types.CallbackQuery):
+async def add_friend_as_follow(c: types.CallbackQuery):
     target_id = int(c.data.split("_")[1])
     uid = c.from_user.id
-    if target_id == uid:
-        return await c.answer("❌ ما تقدر تضيف نفسك!", show_alert=True)
-    existing = db_query("SELECT * FROM friends WHERE (user_id = %s AND friend_id = %s) OR (user_id = %s AND friend_id = %s)", (uid, target_id, target_id, uid))
-    if existing:
-        st = existing[0]['status']
-        if st == 'accepted':
-            return await c.answer("✅ هذا اللاعب أصلاً صديقك!", show_alert=True)
-        else:
-            return await c.answer("⏳ يوجد طلب صداقة معلق بالفعل.", show_alert=True)
-    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
-    u_name = u_name[0]['player_name'] if u_name else "لاعب"
-    db_query("INSERT INTO friends (user_id, friend_id, status) VALUES (%s, %s, 'pending')", (uid, target_id), commit=True)
-    await c.answer("✅ تم إرسال طلب الصداقة!", show_alert=True)
+    if uid == target_id:
+        return await c.answer("🧐 لا يمكنك متابعة نفسك!", show_alert=True)
     try:
-        frnd_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ قبول", callback_data=f"frndy_{uid}"),
-             InlineKeyboardButton(text="❌ رفض", callback_data=f"frndn_{uid}")]
-        ])
-        await c.bot.send_message(target_id, f"📨 {u_name} يريد إضافتك كصديق!", reply_markup=frnd_kb)
+        db_query("INSERT INTO follows (follower_id, following_id) VALUES (%s, %s)", (uid, target_id), commit=True)
+        await c.answer("✅ تمت المتابعة بنجاح!")
     except Exception:
-        pass
-
-@router.callback_query(F.data.startswith("frndy_"))
-async def accept_friend(c: types.CallbackQuery):
-    sender_id = int(c.data.split("_")[1])
-    uid = c.from_user.id
-    req = db_query("SELECT * FROM friends WHERE user_id = %s AND friend_id = %s AND status = 'pending'", (sender_id, uid))
-    if not req:
-        return await c.answer("⚠️ لا يوجد طلب صداقة.", show_alert=True)
-    db_query("UPDATE friends SET status = 'accepted' WHERE user_id = %s AND friend_id = %s", (sender_id, uid), commit=True)
-    u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (uid,))
-    u_name = u_name[0]['player_name'] if u_name else "لاعب"
-    await c.message.edit_text(f"✅ تم قبول صداقة {db_query('SELECT player_name FROM users WHERE user_id = %s', (sender_id,))[0]['player_name']}!")
-    try:
-        await c.bot.send_message(sender_id, f"✅ {u_name} قبل طلب صداقتك!")
-    except Exception:
-        pass
-
-@router.callback_query(F.data.startswith("frndn_"))
-async def reject_friend(c: types.CallbackQuery):
-    sender_id = int(c.data.split("_")[1])
-    uid = c.from_user.id
-    db_query("DELETE FROM friends WHERE user_id = %s AND friend_id = %s", (sender_id, uid), commit=True)
-    await c.message.edit_text("❌ تم رفض طلب الصداقة.")
+        await c.answer("⚠️ أنت تتابع هذا اللاعب بالفعل.", show_alert=True)
+    await process_user_search_by_id(c, target_id)
 
 @router.callback_query(F.data.startswith("finv_"))
 async def toggle_friend_invite(c: types.CallbackQuery):
@@ -2046,9 +2014,9 @@ async def show_social_menu(c: types.CallbackQuery):
     following = db_query("SELECT COUNT(*) as count FROM follows WHERE follower_id = %s", (uid,))[0]['count']
     
     text = (f"👥 **القائمة الاجتماعية**\n\n"
-    f"📈 المتابعون: {followers}\n"
-    f"📉 الذين تتابعهم: {following}\n\n"
-    "ابحث عن أصدقائك وتابعهم لتصلك إشعارات عندما يتواجدون!")
+    f"📈 يتابعونني: {followers}\n"
+    f"📉 أتابعهم: {following}\n\n"
+    "ابحث عن لاعب وتابعه لتصلك إشعارات عندما يلعب!")
     
     kb = [
     [InlineKeyboardButton(text="🔍 البحث عن لاعب", callback_data="search_user")],
@@ -2172,7 +2140,7 @@ async def show_following_list(c: types.CallbackQuery):
     if not following:
         return await c.answer("📉 أنت لا تتابع أحداً حالياً.", show_alert=True)
 
-    text = "📉 **قائمة المتابعة:**\n(اضغط على الاسم لفتح البروفايل)"
+    text = "📉 **أتابعهم:**\n(اضغط على الاسم لفتح البروفايل)"
     kb = []
     from datetime import datetime, timedelta
     
@@ -2204,7 +2172,7 @@ async def show_followers_list(c: types.CallbackQuery):
     if not followers:
         return await c.answer("📈 لا يوجد متابعون لحسابك حالياً.", show_alert=True)
 
-    text = "📈 **قائمة المتابعين:**\n\n"
+    text = "📈 **يتابعونني:**\n\n"
     kb = []
     for user in followers:
         kb.append([InlineKeyboardButton(
@@ -2288,15 +2256,14 @@ async def show_leaderboard(c: types.CallbackQuery):
     uid = c.from_user.id
     friends_only = c.data == "leaderboard_friends"
     if friends_only:
-        friend_ids = set()
+        friend_ids = {uid}
         rows = db_query(
-            "SELECT friend_id FROM friends WHERE user_id = %s AND status = 'accepted' UNION SELECT user_id FROM friends WHERE friend_id = %s AND status = 'accepted'",
+            "SELECT following_id AS id FROM follows WHERE follower_id = %s UNION SELECT follower_id AS id FROM follows WHERE following_id = %s",
             (uid, uid)
         )
         if rows:
             for r in rows:
-                friend_ids.add(r.get('friend_id') or r.get('user_id'))
-        friend_ids.add(uid)
+                friend_ids.add(r.get('id'))
         if len(friend_ids) < 2:
             await c.answer(t(uid, "leaderboard_empty"), show_alert=True)
             return
