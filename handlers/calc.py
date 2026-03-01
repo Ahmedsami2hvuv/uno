@@ -160,45 +160,47 @@ async def start_session(callback: types.CallbackQuery, state: FSMContext):
     await render_main_ui(callback.message, state)
 
 async def render_main_ui(message, state, extra=""):
-    d = (await state.get_data())['calc_data']
-    img = IMG_CW if d['direction'] == "CW" else IMG_CCW
-    table = f"🏆 **السقف: {d['ceiling']}**\n━━━━━━━━━━━━━━\n"
-    for p, s in d['scores'].items():
-        table += f"👤 {p}: `{s}`\n"
-    table += "━━━━━━━━━━━━━━\n"
-    table += f"🔄 الاتجاه: {'مع العقارب' if d['direction'] == 'CW' else 'عكس العقارب'}"
-    if extra:
-        table += f"\n\n📢 {extra}"
+ d = (await state.get_data())['calc_data']
+ img = IMG_CW if d['direction'] == "CW" else IMG_CCW
+ table = f"🏆 **السقف: {d['ceiling']}**\n━━━━━━━━━━━━━━\n"
+ for p, s in d['scores'].items():
+  table += f"👤 {p}: `{s}`\n"
+ table += "━━━━━━━━━━━━━━\n"
+ table += f"🔄 الاتجاه: {'مع العقارب' if d['direction'] == 'CW' else 'عكس العقارب'}"
+ if extra:
+  table += f"\n\n📢 {extra}"
 
-    kb = [
-        [InlineKeyboardButton(text="🔄 تغيير الاتجاه", callback_data="c_dir"),
-         InlineKeyboardButton(text="🔔 إنهاء الجولة", callback_data="c_end_round")]
-    ]
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
+ kb = [
+  [InlineKeyboardButton(text="🔄 تغيير الاتجاه", callback_data="c_dir"),
+  InlineKeyboardButton(text="🔔 إنهاء الجولة", callback_data="c_end_round")]
+ ]
+ markup = InlineKeyboardMarkup(inline_keyboard=kb)
 
-    if getattr(message, 'photo', None) and message.photo:
-        try:
-            await message.edit_media(
-                media=InputMediaPhoto(media=img, caption=table),
-                reply_markup=markup
-            )
-        except Exception:
-            await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
-    else:
- try:
- await message.bot.send_photo(
- message.chat.id,
- photo=img,
- caption=table,
- reply_markup=markup,
- parse_mode="Markdown"
- )
- try:
- await message.delete()
- except Exception:
- pass
- except Exception:
- await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
+ if getattr(message, 'photo', None) and message.photo:
+  try:
+   await message.edit_media(
+    media=InputMediaPhoto(media=img, caption=table),
+    reply_markup=markup
+   )
+  except Exception:
+   await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
+ else:
+  try:
+   await message.bot.send_photo(
+    message.chat.id,
+    photo=img,
+    caption=table,
+    reply_markup=markup,
+    parse_mode="Markdown"
+   )
+   try:
+    await message.delete()
+   except Exception:
+    pass
+  except Exception:
+   await message.edit_text(table, reply_markup=markup, parse_mode="Markdown")
+
+
 
 @router.callback_query(F.data == "c_dir")
 async def c_toggle_dir(callback: types.CallbackQuery, state: FSMContext):
