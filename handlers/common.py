@@ -741,23 +741,23 @@ async def finalize_room(c: types.CallbackQuery, state: FSMContext):
     """, (uid, uid, uid))
 
     if friends:
-    kb_invite = []
-    for f in friends:
-    kb_invite.append([InlineKeyboardButton(text=f"👤 {f['player_name']}", callback_data=f"finv_{code}_{f['user_id']}")])
-    kb_invite.append([InlineKeyboardButton(text="📨 إرسال الدعوات", callback_data=f"finvsend_{code}")])
-    kb_invite.append([InlineKeyboardButton(text="🔗 الحصول على رابط فقط", callback_data=f"finvskip_{code}")])
-    kb_invite.append([InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")])
-    if code not in friend_invite_selections:
-    friend_invite_selections[code] = set()
-    await c.message.edit_text(t(uid, "room_created_invite"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
+        kb_invite = []
+        for f in friends:
+            kb_invite.append([InlineKeyboardButton(text=f"👤 {f['player_name']}", callback_data=f"finv_{code}_{f['user_id']}")])
+        kb_invite.append([InlineKeyboardButton(text="📨 إرسال الدعوات", callback_data=f"finvsend_{code}")])
+        kb_invite.append([InlineKeyboardButton(text="🔗 الحصول على رابط فقط", callback_data=f"finvskip_{code}")])
+        kb_invite.append([InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")])
+        if code not in friend_invite_selections:
+            friend_invite_selections[code] = set()
+        await c.message.edit_text(t(uid, "room_created_invite"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_invite))
     else:
-    bot_info = await c.bot.get_me()
-    link = f"https://t.me/{bot_info.username}?start=join_{code}"
-    await c.message.edit_text(t(uid, "room_created_msg1"))
-    kb_link = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-    ])
-    await c.message.answer(t(uid, "room_created_msg2", link=link), reply_markup=kb_link)
+        bot_info = await c.bot.get_me()
+        link = f"https://t.me/{bot_info.username}?start=join_{code}"
+        await c.message.edit_text(t(uid, "room_created_msg1"))
+        kb_link = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        ])
+        await c.message.answer(t(uid, "room_created_msg2", link=link), reply_markup=kb_link)
 
     await state.clear()
 
@@ -772,15 +772,15 @@ async def my_open_rooms(c: types.CallbackQuery):
     ORDER BY r.room_id
     """, (uid,))
     if not rooms:
-    await c.answer(t(uid, "no_open_rooms"), show_alert=True)
-    return
+        await c.answer(t(uid, "no_open_rooms"), show_alert=True)
+        return
     kb = []
     for r in rooms:
-    label = f"🎮 {r['room_id']} ({r['p_count']}/{r['max_players']})"
-    kb.append([
-    InlineKeyboardButton(text=label, callback_data=f"viewroom_{r['room_id']}"),
-    InlineKeyboardButton(text="❌", callback_data=f"closeroom_{r['room_id']}")
-    ])
+        label = f"🎮 {r['room_id']} ({r['p_count']}/{r['max_players']})"
+        kb.append([
+            InlineKeyboardButton(text=label, callback_data=f"viewroom_{r['room_id']}"),
+            InlineKeyboardButton(text="❌", callback_data=f"closeroom_{r['room_id']}")
+        ])
     kb.append([InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="menu_friends")])
     await c.message.edit_text(t(uid, "open_rooms_list"), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
@@ -790,20 +790,20 @@ async def view_room(c: types.CallbackQuery):
     code = c.data.split("_", 1)[1]
     room = db_query("SELECT * FROM rooms WHERE room_id = %s AND creator_id = %s", (code, uid))
     if not room:
-    await c.answer(t(uid, "room_gone"), show_alert=True)
-    return
+        await c.answer(t(uid, "room_gone"), show_alert=True)
+        return
     players = db_query("SELECT player_name FROM room_players WHERE room_id = %s", (code,))
     num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
     plist = ""
     for idx, p in enumerate(players):
-    marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
-    plist += f"{marker} {p['player_name']}\n"
+        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
+        plist += f"{marker} {p['player_name']}\n"
     bot_info = await c.bot.get_me()
     link = f"https://t.me/{bot_info.username}?start=join_{code}"
     text = t(uid, "room_detail", code=code, count=len(players), max=room[0]['max_players'], players=plist, link=link)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_close_room"), callback_data=f"closeroom_{code}")],
-    [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="my_open_rooms")]
+        [InlineKeyboardButton(text=t(uid, "btn_close_room"), callback_data=f"closeroom_{code}")],
+        [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="my_open_rooms")]
     ])
     await c.message.edit_text(text, reply_markup=kb)
 
@@ -813,29 +813,30 @@ async def close_room(c: types.CallbackQuery):
     code = c.data.split("_", 1)[1]
     room = db_query("SELECT * FROM rooms WHERE room_id = %s AND creator_id = %s AND status = 'waiting'", (code, uid))
     if not room:
-    await c.answer(t(uid, "room_gone"), show_alert=True)
-    return
+        await c.answer(t(uid, "room_gone"), show_alert=True)
+        return
     players = db_query("SELECT user_id FROM room_players WHERE room_id = %s AND user_id != %s", (code, uid))
     for p in players:
-    try:
-    await c.bot.send_message(p['user_id'], t(p['user_id'], "room_closed_notification"))
-    except: pass
+        try:
+            await c.bot.send_message(p['user_id'], t(p['user_id'], "room_closed_notification"))
+        except Exception:
+            pass
     db_query("DELETE FROM room_players WHERE room_id = %s", (code,), commit=True)
     db_query("DELETE FROM rooms WHERE room_id = %s", (code,), commit=True)
     await c.answer(t(uid, "room_closed"), show_alert=True)
     remaining = db_query("SELECT room_id FROM rooms WHERE creator_id = %s AND status = 'waiting'", (uid,))
     if remaining:
-    await my_open_rooms(c)
+        await my_open_rooms(c)
     else:
-    await c.message.edit_text(t(uid, "no_open_rooms_text"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="menu_friends")]
-    ]))
+        await c.message.edit_text(t(uid, "no_open_rooms_text"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t(uid, "btn_back"), callback_data="menu_friends")]
+        ]))
 
 @router.callback_query(F.data == "room_join_input")
 async def join_input(c: types.CallbackQuery, state: FSMContext):
     uid = c.from_user.id
     kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
+        [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
     ])
     await c.message.edit_text(t(uid, "send_room_code"), reply_markup=kb)
     await state.set_state(RoomStates.wait_for_code)
