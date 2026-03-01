@@ -1498,7 +1498,7 @@ async def replay_menu(c: types.CallbackQuery):
     rdata = replay_data.get(replay_id)
     kb = []
     if rdata and rdata.get('creator_id') == c.from_user.id:
-    kb.append([InlineKeyboardButton(text="👥 اللعب مع نفس الفريق", callback_data=f"sameteam_{replay_id}")])
+        kb.append([InlineKeyboardButton(text="👥 اللعب مع نفس الفريق", callback_data=f"sameteam_{replay_id}")])
     kb.append([InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")])
     kb.append([InlineKeyboardButton(text="🚪 انضمام لغرفة", callback_data="room_join_input")])
     kb.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")])
@@ -1509,12 +1509,12 @@ async def same_team_invite(c: types.CallbackQuery):
     replay_id = c.data.split("_", 1)[1]
     rdata = replay_data.pop(replay_id, None)
     if not rdata:
-    return await c.answer("⚠️ انتهت صلاحية هذا الخيار.", show_alert=True)
+        return await c.answer("⚠️ انتهت صلاحية هذا الخيار.", show_alert=True)
 
     creator_id = c.from_user.id
     other_players = [(uid, uname) for uid, uname in rdata['players'] if uid != creator_id]
     if not other_players:
-    return await c.answer("⚠️ لا يوجد لاعبين آخرين للدعوة.", show_alert=True)
+        return await c.answer("⚠️ لا يوجد لاعبين آخرين للدعوة.", show_alert=True)
 
     code = generate_room_code()
     u_name = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))[0]['player_name']
@@ -1524,19 +1524,18 @@ async def same_team_invite(c: types.CallbackQuery):
     db_query("INSERT INTO room_players (room_id, user_id, player_name) VALUES (%s, %s, %s)", (code, creator_id, u_name), commit=True)
 
     pending_invites[code] = {
-    'creator': creator_id,
-    'creator_name': u_name,
-    'invited': {uid: uname for uid, uname in other_players},
-    'accepted': set(),
-    'rejected': set(),
-    'max_players': rdata['max_players'],
-    'score_limit': rdata['score_limit'],
-    'mode': rdata['mode'],
-    'replay_id': replay_id
+        'creator': creator_id,
+        'creator_name': u_name,
+        'invited': {uid: uname for uid, uname in other_players},
+        'accepted': set(),
+        'rejected': set(),
+        'max_players': rdata['max_players'],
+        'score_limit': rdata['score_limit'],
+        'mode': rdata['mode'],
+        'replay_id': replay_id
     }
-
     inv_wait_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
+        [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="home")]
     ])
     await c.message.edit_text(f"📨 تم إرسال الدعوات لـ {len(other_players)} لاعب...\n⏳ بانتظار الردود...", reply_markup=inv_wait_kb)
 
